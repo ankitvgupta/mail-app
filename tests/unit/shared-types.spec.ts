@@ -10,6 +10,7 @@ import {
   ConfigSchema,
   ModelConfigSchema,
   EAConfigSchema,
+  CliToolConfigSchema,
   resolveModelId,
   MODEL_TIER_IDS,
   DEFAULT_MODEL_CONFIG,
@@ -292,6 +293,86 @@ test.describe("ConfigSchema", () => {
   test("rejects negative undoSendDelay", () => {
     const result = ConfigSchema.safeParse({
       undoSendDelay: -1,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================
+// CliToolConfigSchema validation
+// ============================================================
+
+test.describe("CliToolConfigSchema", () => {
+  test("validates a tool with command and instructions", () => {
+    const result = CliToolConfigSchema.safeParse({
+      command: "curl",
+      instructions: "Use to fetch URLs",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.command).toBe("curl");
+      expect(result.data.instructions).toBe("Use to fetch URLs");
+    }
+  });
+
+  test("validates a tool with command only (instructions defaults to empty)", () => {
+    const result = CliToolConfigSchema.safeParse({ command: "jq" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.command).toBe("jq");
+      expect(result.data.instructions).toBe("");
+    }
+  });
+
+  test("rejects empty command string", () => {
+    const result = CliToolConfigSchema.safeParse({ command: "" });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects missing command", () => {
+    const result = CliToolConfigSchema.safeParse({ instructions: "some text" });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================
+// ConfigSchema — cliTools field
+// ============================================================
+
+test.describe("ConfigSchema cliTools", () => {
+  test("validates config with cliTools array", () => {
+    const result = ConfigSchema.safeParse({
+      cliTools: [
+        { command: "curl", instructions: "Fetch URLs" },
+        { command: "jq", instructions: "" },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cliTools).toHaveLength(2);
+      expect(result.data.cliTools![0].command).toBe("curl");
+    }
+  });
+
+  test("validates config without cliTools (optional)", () => {
+    const result = ConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cliTools).toBeUndefined();
+    }
+  });
+
+  test("validates config with empty cliTools array", () => {
+    const result = ConfigSchema.safeParse({ cliTools: [] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cliTools).toHaveLength(0);
+    }
+  });
+
+  test("rejects cliTools with invalid tool entry", () => {
+    const result = ConfigSchema.safeParse({
+      cliTools: [{ command: "" }], // empty command violates min(1)
     });
     expect(result.success).toBe(false);
   });
