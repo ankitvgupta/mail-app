@@ -1,6 +1,7 @@
 {
   "name": "exo",
   "version": "0.0.0",
+  "license": "BSL-1.1",
   "description": "Automated email draft generator using Claude AI and Gmail",
   "repository": {
     "type": "git",

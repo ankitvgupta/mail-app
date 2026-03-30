@@ -26,6 +26,35 @@ jobs:
 
       - run: npx tsc --noEmit -p tsconfig.web.json
 
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check for known vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Check built bundle for leaked credentials
+        run: |
+          npm run build
+          # Fail if any Google OAuth client ID pattern appears in the built output
+          if grep -rq 'GOCSPX-\|\.apps\.googleusercontent\.com' out/; then
+            echo "ERROR: Google OAuth credentials found in built output!"
+            echo "Ensure MAIN_VITE_GOOGLE_CLIENT_ID and MAIN_VITE_GOOGLE_CLIENT_SECRET are not set in CI."
+            exit 1
+          fi
+
   test:
     name: Tests
     runs-on: ubuntu-latest
