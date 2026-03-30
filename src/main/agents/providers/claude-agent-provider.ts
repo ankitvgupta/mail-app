@@ -82,12 +82,6 @@ export class ClaudeAgentProvider implements AgentProvider {
     };
     const allowedToolPatterns = tools.map((t) => `mcp__mail-client-tools__${t.name}`);
 
-    // Build a set of tool name prefixes that are allowed to execute.
-    // This is used by canUseTool to block system-inherited MCP servers
-    // (e.g. PostHog, Circleback from ~/.claude.json) that the SDK discovers
-    // despite settingSources: [].
-    const allowedMcpPrefixes = new Set(["mcp__mail-client-tools__"]);
-
     const browserConfig = this.frameworkConfig.browserConfig;
     if (browserConfig?.enabled) {
       mcpServerMap["chrome-devtools"] = {
@@ -98,7 +92,6 @@ export class ClaudeAgentProvider implements AgentProvider {
         ],
       };
       allowedToolPatterns.push("mcp__chrome-devtools__*");
-      allowedMcpPrefixes.add("mcp__chrome-devtools__");
     }
 
     // Add user-configured custom MCP servers
@@ -143,7 +136,6 @@ export class ClaudeAgentProvider implements AgentProvider {
         continue; // Invalid config — skip
       }
       allowedToolPatterns.push(`mcp__${name}__*`);
-      allowedMcpPrefixes.add(`mcp__${name}__`);
     }
 
     const q = query({
