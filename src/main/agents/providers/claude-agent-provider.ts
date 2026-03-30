@@ -425,6 +425,13 @@ function buildCliMcpTools(
       description,
       { args: z.string().optional().describe(`Arguments to pass to "${command}"`) },
       async (input): Promise<CallToolResult> => {
+        // Reject shell operators that could chain additional commands.
+        // This prevents the model from injecting e.g. "; rm -rf /" via args.
+        if (input.args && /[;&|`$><]/.test(input.args)) {
+          const msg = `Rejected: shell operators are not allowed in arguments. Got: "${input.args}"`;
+          completedToolCalls.push({ toolName, result: { error: msg } });
+          return { isError: true, content: [{ type: "text", text: msg }] };
+        }
         const fullCommand = input.args ? `${command} ${input.args}` : command;
         try {
           const { stdout, stderr } = await execAsync(fullCommand, {
