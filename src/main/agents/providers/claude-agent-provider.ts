@@ -1,7 +1,6 @@
 import { z } from "zod";
 import path from "path";
-import { spawn as cpSpawn, exec as cpExec } from "child_process";
-import { promisify } from "util";
+import { spawn as cpSpawn } from "child_process";
 import {
   query,
   tool as sdkTool,
@@ -10,6 +9,7 @@ import {
   type Query,
   type McpServerConfig,
   type SpawnOptions as SdkSpawnOptions,
+  type HookCallback,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentProvider,
@@ -24,8 +24,6 @@ import type {
 } from "../types";
 import type { CliToolConfig } from "../../../shared/types";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-
-const execAsync = promisify(cpExec);
 
 /**
  * Claude Agent Provider - Uses the Claude Agent SDK to run an agent that
@@ -76,10 +74,13 @@ export class ClaudeAgentProvider implements AgentProvider {
     // Built-in SDK tools handled internally by the SDK process.
     // Used for: tools list, allowedTools whitelist, and filtering
     // tool_call_start events (built-in tools never get tool_call_end).
-    // NOTE: Bash is intentionally NOT included here. CLI tool commands are
-    // exposed as individual MCP tools instead, giving us hard enforcement
-    // that the SDK subprocess cannot bypass.
-    const builtInTools: string[] = ["Glob", "Grep", "WebSearch", "AskUserQuestion"];
+    // Bash is included only when CLI tools are configured — a PreToolUse hook
+    // gates which commands are allowed based on the user's CLI tool config.
+    const hasCliTools = cliTools.some((t) => t.command.trim());
+    const builtInTools: string[] = [
+      "Glob", "Grep", "WebSearch", "AskUserQuestion",
+      ...(hasCliTools ? ["Bash"] : []),
+    ];
     const builtInToolSet = new Set<string>(builtInTools);
 
     // Build MCP server map — always include our tool server,
@@ -143,22 +144,11 @@ export class ClaudeAgentProvider implements AgentProvider {
       allowedToolPatterns.push(`mcp__${name}__*`);
     }
 
-    // Build MCP tools for each configured CLI command.
-    // We intentionally do NOT use the SDK's built-in Bash tool because the
-    // subprocess handles Bash permissions internally and we cannot reliably
-    // block unconfigured commands. Instead, each CLI command gets its own
-    // MCP tool that runs ONLY that specific command via child_process.exec.
-    const cliMcpTools = buildCliMcpTools(cliTools, completedToolCalls);
-    for (const tool of cliMcpTools) {
-      mcpTools.push(tool);
-    }
-    // Add CLI tool names to allowed patterns so the SDK subprocess can call them
-    for (const ct of cliTools.filter((t) => t.command.trim())) {
-      const toolName = `cli_${ct.command.trim().replace(/[^a-zA-Z0-9_]/g, "_")}`;
-      allowedToolPatterns.push(`mcp__mail-app-tools__${toolName}`);
-    }
+    // Build the PreToolUse hook for Bash command filtering.
+    // When CLI tools are configured, we allow Bash but gate each invocation:
+    // only commands matching a configured CLI tool are permitted.
+    const bashPreToolUseHook = buildBashPreToolUseHook(cliTools);
 
-    // Recreate MCP server with all tools (app tools + CLI tools)
     const mcpServer = createSdkMcpServer({
       name: "mail-app-tools",
       version: "1.0.0",
@@ -181,6 +171,7 @@ export class ClaudeAgentProvider implements AgentProvider {
         includePartialMessages: true,
         maxTurns: 25,
         permissionMode: "dontAsk",
+        ...(bashPreToolUseHook ? { hooks: { PreToolUse: [bashPreToolUseHook] } } : {}),
         settingSources: [],
         // Don't persist sessions for SDK calls from within the app
         persistSession: false,
@@ -401,63 +392,52 @@ function buildMcpToolWithTracking(
 }
 
 /**
- * Build one MCP tool per configured CLI command.
+ * Build a PreToolUse hook that gates Bash commands against the CLI tool allowlist.
  *
- * Each tool runs ONLY its specific command via child_process.exec.
- * This gives hard enforcement — the SDK subprocess has no Bash tool,
- * so unconfigured commands simply cannot be executed.
+ * Returns null if no CLI tools are configured (Bash won't be in the tools list).
+ * When active, each Bash invocation is checked: the base command (first token)
+ * must match one of the configured CLI tool commands. Non-matching commands
+ * are denied with an explanation.
  */
-function buildCliMcpTools(
+function buildBashPreToolUseHook(
   cliTools: CliToolConfig[],
-  completedToolCalls: { toolName: string; result: unknown }[],
-) {
+): { matcher: string; hooks: HookCallback[] } | null {
   const activeCli = cliTools.filter((t) => t.command.trim());
+  if (activeCli.length === 0) return null;
 
-  return activeCli.map((cliTool) => {
-    const command = cliTool.command.trim();
-    const toolName = `cli_${command.replace(/[^a-zA-Z0-9_]/g, "_")}`;
-    const description = cliTool.instructions.trim()
-      ? `Run the "${command}" command. ${cliTool.instructions.trim()}`
-      : `Run the "${command}" command.`;
+  const allowedCommands = new Set(activeCli.map((t) => t.command.trim()));
 
-    return sdkTool(
-      toolName,
-      description,
-      { args: z.string().optional().describe(`Arguments to pass to "${command}"`) },
-      async (input): Promise<CallToolResult> => {
-        // Reject shell operators that could chain additional commands.
-        // This prevents the model from injecting e.g. "; rm -rf /" via args.
-        if (input.args && /[;&|`$><]/.test(input.args)) {
-          const msg = `Rejected: shell operators are not allowed in arguments. Got: "${input.args}"`;
-          completedToolCalls.push({ toolName, result: { error: msg } });
-          return { isError: true, content: [{ type: "text", text: msg }] };
-        }
-        const fullCommand = input.args ? `${command} ${input.args}` : command;
-        try {
-          const { stdout, stderr } = await execAsync(fullCommand, {
-            timeout: 30_000,
-            maxBuffer: 1024 * 1024, // 1MB
-          });
-          const output = [
-            stdout ? `stdout:\n${stdout}` : "",
-            stderr ? `stderr:\n${stderr}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n");
-          const result = output || "(no output)";
-          completedToolCalls.push({ toolName, result });
-          return { content: [{ type: "text", text: result }] };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          completedToolCalls.push({ toolName, result: { error: message } });
-          return {
-            isError: true,
-            content: [{ type: "text", text: `Error running "${fullCommand}": ${message}` }],
-          };
-        }
+  const hook: HookCallback = async (input) => {
+    const toolInput = (input as Record<string, unknown>).tool_input as
+      | { command?: string }
+      | undefined;
+    const command = toolInput?.command ?? "";
+
+    // Extract the base command (first token, stripping any path prefix)
+    const firstToken = command.trim().split(/\s+/)[0] ?? "";
+    const baseCommand = firstToken.split("/").pop() ?? firstToken;
+
+    if (allowedCommands.has(baseCommand)) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse" as const,
+          permissionDecision: "allow" as const,
+        },
+      };
+    }
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse" as const,
+        permissionDecision: "deny" as const,
+        permissionDecisionReason:
+          `Command "${baseCommand}" is not in the allowed CLI tools list. ` +
+          `Allowed commands: ${[...allowedCommands].join(", ")}`,
       },
-    );
-  });
+    };
+  };
+
+  return { matcher: "Bash", hooks: [hook] };
 }
 
 /**
@@ -567,15 +547,12 @@ function buildSystemPrompt(context: AgentContext, tools: AgentToolSpec[], memory
   if (activeCli.length > 0) {
     parts.push("");
     parts.push("## CLI Tools");
-    parts.push("You have access to CLI tools that run specific shell commands. Each is exposed as a separate MCP tool:");
+    parts.push("You have access to the Bash tool, but ONLY for the following commands:");
     for (const t of activeCli) {
-      const toolName = `cli_${t.command.replace(/[^a-zA-Z0-9_]/g, "_")}`;
-      parts.push("");
-      parts.push(`- **${t.command}**: Use the \`${toolName}\` tool. Pass arguments via the \`args\` parameter.`);
-      if (t.instructions.trim()) {
-        parts.push(`  ${t.instructions.trim()}`);
-      }
+      parts.push(`- **${t.command}**${t.instructions.trim() ? `: ${t.instructions.trim()}` : ""}`);
     }
+    parts.push("");
+    parts.push("Any other commands will be rejected. Use the Bash tool with the allowed commands only.");
   }
 
   return parts.join("\n");
