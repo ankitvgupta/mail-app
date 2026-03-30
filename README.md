@@ -1,5 +1,7 @@
 # Exo
 
+[![Download DMG](https://img.shields.io/github/v/release/ankitvgupta/mail-app?label=Download%20.dmg&logo=apple&style=flat-square)](https://github.com/ankitvgupta/mail-app/releases/latest)
+
 An open source, AI-native desktop email client. Built with Electron, React, TypeScript, and Tailwind CSS.
 
 Exo treats AI as a first-class citizen — not a bolted-on feature. Every email gets analyzed, prioritized, and optionally drafted before you even open it. The goal is zero cognitive load: open your inbox and everything is already handled or ready to send.
