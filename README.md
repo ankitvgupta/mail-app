@@ -8,7 +8,7 @@ Exo treats AI as a first-class citizen — not a bolted-on feature. Every email 
 
 ## Getting Started 
 
-You can click the "Download .dmg" button above to download a Mac app that is ready for configuration. All you need to provide is a GCP project code (it has instructions) to set the Gmail API, and an Anthropic API Key. If you're a developer, see the instructions at the bottom, or ask Claude Code to figure it out. 
+You can click the "Download .dmg" button above to download a Mac app that is ready for configuration. All you need to provide is Gmail API information (it has instructions) and an Anthropic API Key. If you're a developer, see the instructions at the bottom, or ask Claude Code to figure it out. 
 
 ## Features
 
