@@ -99,6 +99,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   // CLI tools state
   const [cliTools, setCliTools] = useState<CliToolConfig[]>([]);
   const [isSavingCliTools, setIsSavingCliTools] = useState(false);
+  const [cliToolsSaved, setCliToolsSaved] = useState(false);
 
   // Signature management state
   const [signatures, setSignatures] = useState<Signature[]>([]);
@@ -2460,19 +2461,26 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 <button
                   onClick={async () => {
                     setIsSavingCliTools(true);
+                    setCliToolsSaved(false);
                     try {
                       // Filter out empty commands before saving
                       const validTools = cliTools.filter(t => t.command.trim());
                       await window.api.settings.set({ cliTools: validTools.length > 0 ? validTools : undefined });
                       setCliTools(validTools);
+                      setCliToolsSaved(true);
+                      setTimeout(() => setCliToolsSaved(false), 2000);
                     } finally {
                       setIsSavingCliTools(false);
                     }
                   }}
                   disabled={isSavingCliTools}
-                  className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                  className={`px-4 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors ${
+                    cliToolsSaved
+                      ? "bg-green-600 dark:bg-green-500"
+                      : "bg-purple-600 hover:bg-purple-700"
+                  }`}
                 >
-                  {isSavingCliTools ? "Saving..." : "Save"}
+                  {isSavingCliTools ? "Saving..." : cliToolsSaved ? "Saved" : "Save"}
                 </button>
               </div>
             </div>
