@@ -1,6 +1,7 @@
 import { z } from "zod";
 import path from "path";
-import { spawn as cpSpawn } from "child_process";
+import { spawn as cpSpawn, exec as cpExec } from "child_process";
+import { promisify } from "util";
 import {
   query,
   tool as sdkTool,
@@ -23,6 +24,8 @@ import type {
 } from "../types";
 import type { CliToolConfig } from "../../../shared/types";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+
+const execAsync = promisify(cpExec);
 
 /**
  * Claude Agent Provider - Uses the Claude Agent SDK to run an agent that
@@ -62,13 +65,6 @@ export class ClaudeAgentProvider implements AgentProvider {
       buildMcpToolWithTracking(spec, toolExecutor, completedToolCalls),
     );
 
-    // Create in-process MCP server with our tools
-    const mcpServer = createSdkMcpServer({
-      name: "mail-app-tools",
-      version: "1.0.0",
-      tools: mcpTools,
-    });
-
     const cliTools = this.frameworkConfig.cliTools ?? [];
     const systemPrompt = buildSystemPrompt(context, tools, context.memoryContext, cliTools);
     const abortController = new AbortController();
@@ -80,14 +76,15 @@ export class ClaudeAgentProvider implements AgentProvider {
     // Built-in SDK tools handled internally by the SDK process.
     // Used for: tools list, allowedTools whitelist, and filtering
     // tool_call_start events (built-in tools never get tool_call_end).
-    const builtInTools = ["Glob", "Grep", "WebSearch", "AskUserQuestion"] as const;
+    // NOTE: Bash is intentionally NOT included here. CLI tool commands are
+    // exposed as individual MCP tools instead, giving us hard enforcement
+    // that the SDK subprocess cannot bypass.
+    const builtInTools: string[] = ["Glob", "Grep", "WebSearch", "AskUserQuestion"];
     const builtInToolSet = new Set<string>(builtInTools);
 
     // Build MCP server map — always include our tool server,
     // conditionally include Chrome DevTools for browser automation
-    const mcpServerMap: Record<string, McpServerConfig> = {
-      "mail-app-tools": mcpServer,
-    };
+    const mcpServerMap: Record<string, McpServerConfig> = {};
     const allowedToolPatterns = tools.map((t) => `mcp__mail-app-tools__${t.name}`);
 
     const browserConfig = this.frameworkConfig.browserConfig;
@@ -146,10 +143,28 @@ export class ClaudeAgentProvider implements AgentProvider {
       allowedToolPatterns.push(`mcp__${name}__*`);
     }
 
-    // Add user-configured CLI tools as allowed Bash patterns
-    for (const cliTool of cliTools) {
-      allowedToolPatterns.push(`Bash(${cliTool.command}:*)`);
+    // Build MCP tools for each configured CLI command.
+    // We intentionally do NOT use the SDK's built-in Bash tool because the
+    // subprocess handles Bash permissions internally and we cannot reliably
+    // block unconfigured commands. Instead, each CLI command gets its own
+    // MCP tool that runs ONLY that specific command via child_process.exec.
+    const cliMcpTools = buildCliMcpTools(cliTools, completedToolCalls);
+    for (const tool of cliMcpTools) {
+      mcpTools.push(tool);
     }
+    // Add CLI tool names to allowed patterns so the SDK subprocess can call them
+    for (const ct of cliTools.filter((t) => t.command.trim())) {
+      const toolName = `cli_${ct.command.trim().replace(/[^a-zA-Z0-9_]/g, "_")}`;
+      allowedToolPatterns.push(`mcp__mail-app-tools__${toolName}`);
+    }
+
+    // Recreate MCP server with all tools (app tools + CLI tools)
+    const mcpServer = createSdkMcpServer({
+      name: "mail-app-tools",
+      version: "1.0.0",
+      tools: mcpTools,
+    });
+    mcpServerMap["mail-app-tools"] = mcpServer;
 
     const q = query({
       prompt,
@@ -159,18 +174,13 @@ export class ClaudeAgentProvider implements AgentProvider {
         abortController,
         mcpServers: mcpServerMap,
         tools: [...builtInTools],
-        // Auto-approve built-in tools + our configured MCP tools.
-        // With dontAsk, anything NOT in this list is silently denied —
-        // this blocks system-inherited MCPs (PostHog, Circleback, etc.)
-        // from ~/.claude.json without needing fragile glob patterns.
-        allowedTools: [...builtInTools, ...allowedToolPatterns],
+        allowedTools: [
+          ...builtInTools,
+          ...allowedToolPatterns,
+        ],
         includePartialMessages: true,
         maxTurns: 25,
-        // dontAsk: only allowedTools can execute, everything else is denied.
-        // This replaces bypassPermissions — we don't need blanket bypass since
-        // we explicitly list every tool we want.
         permissionMode: "dontAsk",
-        // Don't load any filesystem settings, we provide everything
         settingSources: [],
         // Don't persist sessions for SDK calls from within the app
         persistSession: false,
@@ -391,6 +401,59 @@ function buildMcpToolWithTracking(
 }
 
 /**
+ * Build one MCP tool per configured CLI command.
+ *
+ * Each tool runs ONLY its specific command via child_process.exec.
+ * This gives hard enforcement — the SDK subprocess has no Bash tool,
+ * so unconfigured commands simply cannot be executed.
+ */
+function buildCliMcpTools(
+  cliTools: CliToolConfig[],
+  completedToolCalls: { toolName: string; result: unknown }[],
+) {
+  const activeCli = cliTools.filter((t) => t.command.trim());
+
+  return activeCli.map((cliTool) => {
+    const command = cliTool.command.trim();
+    const toolName = `cli_${command.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+    const description = cliTool.instructions.trim()
+      ? `Run the "${command}" command. ${cliTool.instructions.trim()}`
+      : `Run the "${command}" command.`;
+
+    return sdkTool(
+      toolName,
+      description,
+      { args: z.string().optional().describe(`Arguments to pass to "${command}"`) },
+      async (input): Promise<CallToolResult> => {
+        const fullCommand = input.args ? `${command} ${input.args}` : command;
+        try {
+          const { stdout, stderr } = await execAsync(fullCommand, {
+            timeout: 30_000,
+            maxBuffer: 1024 * 1024, // 1MB
+          });
+          const output = [
+            stdout ? `stdout:\n${stdout}` : "",
+            stderr ? `stderr:\n${stderr}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+          const result = output || "(no output)";
+          completedToolCalls.push({ toolName, result });
+          return { content: [{ type: "text", text: result }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          completedToolCalls.push({ toolName, result: { error: message } });
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Error running "${fullCommand}": ${message}` }],
+          };
+        }
+      },
+    );
+  });
+}
+
+/**
  * Strip the MCP server prefix from a tool name.
  * "mcp__mail-app-tools__read_email" → "read_email"
  */
@@ -497,10 +560,11 @@ function buildSystemPrompt(context: AgentContext, tools: AgentToolSpec[], memory
   if (activeCli.length > 0) {
     parts.push("");
     parts.push("## CLI Tools");
-    parts.push("The following CLI tools are available via the Bash tool:");
+    parts.push("You have access to CLI tools that run specific shell commands. Each is exposed as a separate MCP tool:");
     for (const t of activeCli) {
+      const toolName = `cli_${t.command.replace(/[^a-zA-Z0-9_]/g, "_")}`;
       parts.push("");
-      parts.push(`- **${t.command}**: Run via \`Bash(${t.command} ...)\`.`);
+      parts.push(`- **${t.command}**: Use the \`${toolName}\` tool. Pass arguments via the \`args\` parameter.`);
       if (t.instructions.trim()) {
         parts.push(`  ${t.instructions.trim()}`);
       }

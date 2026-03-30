@@ -2403,8 +2403,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   CLI Tools
                 </h4>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Allow the agent to run specific CLI commands via Bash.
-                  Each tool is added as <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">Bash(command:*)</code> in the agent&apos;s allowed tools.
+                  Allow the agent to run specific CLI commands.
+                  Each command becomes a dedicated tool the agent can call.
                 </p>
               </div>
 
@@ -2466,6 +2466,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                       // Filter out empty commands before saving
                       const validTools = cliTools.filter(t => t.command.trim());
                       await window.api.settings.set({ cliTools: validTools.length > 0 ? validTools : undefined });
+                      queryClient.invalidateQueries({ queryKey: ["general-config"] });
                       setCliTools(validTools);
                       setCliToolsSaved(true);
                       setTimeout(() => setCliToolsSaved(false), 2000);
@@ -2494,7 +2495,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 <li><strong>Web search:</strong> Search the web for context</li>
                 <li><strong>Browser:</strong> Navigate and extract from web pages (requires Chrome debugging)</li>
                 <li><strong>Custom MCP:</strong> Any tools provided by your configured MCP servers</li>
-                <li><strong>CLI tools:</strong> Run configured CLI commands via Bash</li>
+                <li><strong>CLI tools:</strong> Run configured CLI commands</li>
                 <li><strong>Batch operations:</strong> Modify labels on multiple emails at once</li>
               </ul>
             </div>
