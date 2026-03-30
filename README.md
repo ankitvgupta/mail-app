@@ -6,6 +6,10 @@ An open source, AI-native desktop email client. Built with Electron, React, Type
 
 Exo treats AI as a first-class citizen — not a bolted-on feature. Every email gets analyzed, prioritized, and optionally drafted before you even open it. The goal is zero cognitive load: open your inbox and everything is already handled or ready to send.
 
+## Getting Started 
+
+You can click the "Download .dmg" button above to download a Mac app that is ready for configuration. All you need to provide is a GCP project code (it has instructions) to set the Gmail API, and an Anthropic API Key. If you're a developer, see the instructions at the bottom, or ask Claude Code to figure it out. 
+
 ## Features
 
 ### AI-Powered Email
