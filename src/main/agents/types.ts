@@ -163,6 +163,10 @@ export interface ProviderSettings {
   apiKey?: string;
   gatewayUrl?: string;
   gatewayToken?: string;
+  /** Model override for providers that support it (e.g. Cloclo). */
+  model?: string;
+  /** Extra CLI flags for providers that shell out to a CLI (e.g. Cloclo). */
+  extraFlags?: string[];
 }
 
 // --- IPC message types (utility process <-> main process) ---

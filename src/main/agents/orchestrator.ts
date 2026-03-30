@@ -14,6 +14,7 @@ import type {
 import { AgentProviderRegistry } from "./providers/registry";
 import { ClaudeAgentProvider } from "./providers/claude-agent-provider";
 import { OpenClawAgentProvider } from "./providers/openclaw/openclaw-agent-provider";
+import { ClocloAgentProvider } from "./providers/cloclo/cloclo-agent-provider";
 import { PermissionGate } from "./permission-gate";
 import type { ToolRegistry } from "./tools/registry";
 import type { ProxyContext } from "./tools/types";
@@ -66,6 +67,16 @@ export class AgentOrchestrator {
         enabled: ocSettings?.enabled ?? false,
         gatewayUrl: ocSettings?.gatewayUrl ?? "",
         gatewayToken: ocSettings?.gatewayToken ?? "",
+      }),
+    );
+
+    // Register the Cloclo provider
+    const clocloSettings = deps.config.providers?.["cloclo-agent"];
+    this.providerRegistry.register(
+      new ClocloAgentProvider({
+        enabled: clocloSettings?.enabled ?? false,
+        model: clocloSettings?.model,
+        extraFlags: clocloSettings?.extraFlags,
       }),
     );
 

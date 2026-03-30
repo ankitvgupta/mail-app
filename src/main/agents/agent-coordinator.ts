@@ -188,6 +188,11 @@ export class AgentCoordinator {
           gatewayUrl: appConfig.openclaw?.gatewayUrl ?? "",
           gatewayToken: appConfig.openclaw?.gatewayToken ?? "",
         },
+        "cloclo-agent": {
+          enabled: appConfig.cloclo?.enabled ?? false,
+          model: appConfig.cloclo?.model,
+          extraFlags: appConfig.cloclo?.extraFlags,
+        },
       },
     };
     this.workerReady = populatePrivateProviderConfig(baseConfig).then(
