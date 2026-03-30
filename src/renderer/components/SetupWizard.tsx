@@ -271,7 +271,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                     type="text"
                     value={googleClientId}
                     onChange={(e) => setGoogleClientId(e.target.value)}
-                    placeholder="123456789-abc.apps.googleusercontent.com"
+                    placeholder="your-client-id.apps.google..."
                     className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
@@ -284,7 +284,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                     value={googleClientSecret}
                     onChange={(e) => setGoogleClientSecret(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !isLoading && handleSaveCredentials()}
-                    placeholder="GOCSPX-..."
+                    placeholder="your-client-secret"
                     className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
