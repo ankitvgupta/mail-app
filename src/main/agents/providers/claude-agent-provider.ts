@@ -69,6 +69,7 @@ export class ClaudeAgentProvider implements AgentProvider {
       tools: mcpTools,
     });
 
+    const cliTools = this.frameworkConfig.cliTools ?? [];
     const systemPrompt = buildSystemPrompt(context, tools, context.memoryContext, cliTools);
     const abortController = new AbortController();
 
@@ -146,7 +147,6 @@ export class ClaudeAgentProvider implements AgentProvider {
     }
 
     // Add user-configured CLI tools as allowed Bash patterns
-    const cliTools = this.frameworkConfig.cliTools ?? [];
     for (const cliTool of cliTools) {
       allowedToolPatterns.push(`Bash(${cliTool.command}:*)`);
     }
