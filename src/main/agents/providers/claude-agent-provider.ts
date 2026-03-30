@@ -75,6 +75,12 @@ export class ClaudeAgentProvider implements AgentProvider {
     const onAbort = () => abortController.abort();
     signal.addEventListener("abort", onAbort, { once: true });
 
+    // Built-in SDK tools that are handled internally by the SDK process.
+    // These don't flow through our MCP tool handler, so they never get
+    // tool_call_end events. We skip emitting tool_call_start for them
+    // to avoid orphaned spinners in the UI.
+    const builtInTools = new Set(["Glob", "Grep", "WebSearch", "AskUserQuestion"]);
+
     // Build MCP server map — always include our tool server,
     // conditionally include Chrome DevTools for browser automation
     const mcpServerMap: Record<string, McpServerConfig> = {
@@ -226,6 +232,11 @@ export class ClaudeAgentProvider implements AgentProvider {
         // Key by the base tool name (without MCP prefix) since the MCP handler
         // only knows the short name when it pushes to completedToolCalls.
         for (const event of mapSdkMessage(message)) {
+          // Skip built-in tool events — they're handled internally by the SDK
+          // and never produce tool_call_end, which would leave orphaned spinners.
+          if (event.type === "tool_call_start" && builtInTools.has(event.toolName)) {
+            continue;
+          }
           if (event.type === "tool_call_start") {
             const key = baseToolName(event.toolName);
             if (!pendingToolCallIds.has(key)) {
