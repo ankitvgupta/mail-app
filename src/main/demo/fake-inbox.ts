@@ -50,7 +50,7 @@ const RICH_HTML_EMAIL_BODY = `<html>
 
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ddd;">
       <p style="margin: 0;">Best regards,</p>
-      <p style="margin: 4px 0; font-weight: bold;">Emily Watson</p>
+      <p style="margin: 4px 0; font-weight: bold;">Garry Tan</p>
       <p style="margin: 0; color: #666; font-size: 12px;">Head of Analytics | TechCorp Inc.</p>
       <img src="https://via.placeholder.com/100x30?text=TechCorp" alt="TechCorp Logo" style="margin-top: 8px;">
     </div>
@@ -81,7 +81,7 @@ const INLINE_IMAGE_EMAIL_BODY = `<html>
 
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ddd;">
       <p style="margin: 0;">Cheers,</p>
-      <p style="margin: 4px 0; font-weight: bold;">Rachel Lee</p>
+      <p style="margin: 4px 0; font-weight: bold;">Surbhi Sarna</p>
       <p style="margin: 0; color: #666; font-size: 12px;">Senior Designer | CreativeStudio</p>
     </div>
   </div>
@@ -94,7 +94,7 @@ export const DEMO_INBOX_EMAILS: Email[] = [
     id: "demo-html-001",
     threadId: "thread-html-report",
     subject: "Q3 Quarterly Report - Action Required",
-    from: "Emily Watson <emily.watson@techcorp.com>",
+    from: "Garry Tan <garry.tan@techcorp.com>",
     to: "me@example.com",
     date: new Date(now - 15 * 60 * 1000).toISOString(), // 15 mins ago (shows first)
     body: RICH_HTML_EMAIL_BODY,
@@ -129,7 +129,7 @@ export const DEMO_INBOX_EMAILS: Email[] = [
     id: "demo-001",
     threadId: "thread-project-alpha",
     subject: "Project Alpha - Timeline Discussion",
-    from: "Sarah Chen <sarah.chen@acmecorp.com>",
+    from: "Jared Friedman <jared.friedman@acmecorp.com>",
     to: "me@example.com",
     date: new Date(now - 2 * day).toISOString(),
     body: `Hi,
@@ -144,42 +144,42 @@ Key milestones:
 Can you review and let me know if this aligns with your expectations?
 
 Thanks,
-Sarah`,
+Jared`,
     snippet: "I wanted to kick off the discussion about Project Alpha's timeline...",
   },
   {
     id: "demo-002",
     threadId: "thread-project-alpha",
     subject: "Re: Project Alpha - Timeline Discussion",
-    from: "Mike Johnson <mike.j@acmecorp.com>",
-    to: "me@example.com, sarah.chen@acmecorp.com",
+    from: "Michael Seibel <michael.s@acmecorp.com>",
+    to: "me@example.com, jared.friedman@acmecorp.com",
     cc: "engineering-leads@acmecorp.com",
     date: new Date(now - 1.5 * day).toISOString(),
-    body: `Sarah, team,
+    body: `Jared, team,
 
 The timeline looks reasonable. I'd suggest we add a buffer week for unexpected issues - we've learned from past projects that 6 weeks often turns into 7-8.
 
 Also, should we schedule a kickoff meeting for Monday?
 
-Mike`,
+Michael`,
     snippet: "The timeline looks reasonable. I'd suggest we add a buffer week...",
   },
   {
     id: "demo-003",
     threadId: "thread-project-alpha",
     subject: "Re: Project Alpha - Timeline Discussion",
-    from: "Sarah Chen <sarah.chen@acmecorp.com>",
-    to: "me@example.com, mike.j@acmecorp.com",
+    from: "Jared Friedman <jared.friedman@acmecorp.com>",
+    to: "me@example.com, michael.s@acmecorp.com",
     cc: "engineering-leads@acmecorp.com, product-team@acmecorp.com",
     date: new Date(now - 1 * hour).toISOString(),
-    body: `Good point Mike. Let's plan for 7 weeks then.
+    body: `Good point Michael. Let's plan for 7 weeks then.
 
 @me - can you confirm your availability for a Monday kickoff? I'm thinking 10am PT works for everyone.
 
 Also, we'll need your input on the technical architecture decisions before we finalize the design phase.
 
-Sarah`,
-    snippet: "Good point Mike. Let's plan for 7 weeks then. Can you confirm your availability...",
+Jared`,
+    snippet: "Good point Michael. Let's plan for 7 weeks then. Can you confirm your availability...",
   },
 
   // Thread 2: API question (single email, needs reply)
@@ -187,7 +187,7 @@ Sarah`,
     id: "demo-004",
     threadId: "thread-api-question",
     subject: "Quick question about API rate limits",
-    from: "Alex Rodriguez <alex.r@startup.io>",
+    from: "Gustaf Alströmer <gustaf.a@startup.io>",
     to: "me@example.com",
     date: new Date(now - 3 * hour).toISOString(),
     body: `Hey!
@@ -202,7 +202,7 @@ Questions:
 We're planning to go live next week, so any guidance would be super helpful!
 
 Thanks,
-Alex`,
+Gustaf`,
     snippet: "We're integrating with your API and running into rate limiting issues...",
   },
 
@@ -211,7 +211,7 @@ Alex`,
     id: "demo-005",
     threadId: "thread-q4-planning",
     subject: "Meeting Follow-up: Q4 Planning - Action Items",
-    from: "Jennifer Park <j.park@techcorp.com>",
+    from: "Diana Hu <d.hu@techcorp.com>",
     to: "me@example.com",
     date: new Date(now - 30 * 60 * 1000).toISOString(), // 30 mins ago
     body: `Hi,
@@ -228,7 +228,7 @@ I've attached the spreadsheet with the detailed breakdown. Let me know if you ha
 Can we schedule a quick sync tomorrow to finalize before the exec review?
 
 Best,
-Jennifer`,
+Diana`,
     snippet: "Great discussion in today's Q4 planning meeting! Action items for you...",
   },
 
@@ -367,7 +367,7 @@ HR Team`,
     id: "demo-010",
     threadId: "thread-lunch",
     subject: "Lunch this week?",
-    from: "David Kim <david.kim@gmail.com>",
+    from: "Tom Blomfield <tom.blomfield@gmail.com>",
     to: "me@example.com",
     date: new Date(now - 1 * day).toISOString(),
     body: `Hey!
@@ -377,7 +377,7 @@ It's been a while since we caught up. Want to grab lunch this week? I'm free Thu
 There's a new ramen place downtown that got great reviews - we could check it out.
 
 Let me know!
-David`,
+Tom`,
     snippet: "It's been a while since we caught up. Want to grab lunch this week?",
   },
 
@@ -389,15 +389,15 @@ David`,
     from: "Google Calendar <calendar-notification@google.com>",
     to: "me@example.com",
     date: new Date(now - 12 * hour).toISOString(),
-    body: `Sarah Chen has accepted this invitation.
+    body: `Jared Friedman has accepted this invitation.
 
 Weekly Team Sync
 When: Monday, January 27, 2025 10:00am - 11:00am PT
 Where: Conference Room A / Zoom
 
-Going: sarah.chen@acmecorp.com
-Awaiting: mike.j@acmecorp.com, you`,
-    snippet: "Sarah Chen has accepted this invitation. Weekly Team Sync...",
+Going: jared.friedman@acmecorp.com
+Awaiting: michael.s@acmecorp.com, you`,
+    snippet: "Jared Friedman has accepted this invitation. Weekly Team Sync...",
   },
 
   // Thread 5: Bug report (needs reply, high priority)
@@ -436,7 +436,7 @@ On-Call Team`,
     id: "demo-meeting",
     threadId: "thread-meeting-request",
     subject: "Coffee chat to discuss partnership opportunity",
-    from: "Lisa Thompson <lisa.t@partnerco.com>",
+    from: "Kat Mañalac <kat.m@partnerco.com>",
     to: "me@example.com",
     date: new Date(now - 4 * hour).toISOString(),
     body: `Hi,
@@ -450,7 +450,7 @@ Would you have 30 minutes sometime next week for a quick call? I'm flexible with
 Looking forward to connecting!
 
 Best regards,
-Lisa Thompson
+Kat Mañalac
 Head of Business Development
 PartnerCo`,
     snippet: "I'd love to schedule a call to discuss potential partnership opportunities...",
@@ -461,7 +461,7 @@ PartnerCo`,
     id: "demo-inline-images",
     threadId: "thread-inline-images",
     subject: "Landing Page Mockups - Inline Images",
-    from: "Rachel Lee <rachel.lee@creativestudio.com>",
+    from: "Surbhi Sarna <surbhi.sarna@creativestudio.com>",
     to: "me@example.com",
     date: new Date(now - 3 * hour).toISOString(),
     body: INLINE_IMAGE_EMAIL_BODY,
@@ -474,9 +474,9 @@ PartnerCo`,
     threadId: "thread-project-alpha",
     subject: "Re: Project Alpha - Timeline Discussion",
     from: "me@example.com",
-    to: "sarah.chen@acmecorp.com, mike.j@acmecorp.com",
+    to: "jared.friedman@acmecorp.com, michael.s@acmecorp.com",
     date: new Date(now - 25 * 60 * 1000).toISOString(), // 25 mins ago
-    body: `Sarah, Mike,
+    body: `Jared, Michael,
 
 Monday at 10am PT works perfectly for the kickoff. I'll have my calendar blocked.
 
@@ -492,28 +492,28 @@ Talk soon!`,
     labelIds: ["SENT"],
   },
 
-  // === STYLE TESTING: Casual contact (Jake Torres) ===
-  // Inbox email from Jake that needs a reply
+  // === STYLE TESTING: Casual contact (Dalton Caldwell) ===
+  // Inbox email from Dalton that needs a reply
   {
     id: "demo-casual-inbox",
-    threadId: "thread-casual-jake-11",
+    threadId: "thread-casual-dalton-11",
     subject: "friday?",
-    from: "Jake Torres <jake.torres@gmail.com>",
+    from: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     to: "me@example.com",
     date: new Date(now - 2 * hour).toISOString(),
     body: `yo you free friday? was thinking we grab tacos at that new spot on valencia
 
-jake`,
+dalton`,
     snippet: "yo you free friday? was thinking we grab tacos...",
   },
 
-  // === STYLE TESTING: Formal contact (Dr. Margaret Chen) ===
-  // Inbox email from Dr. Chen that needs a reply
+  // === STYLE TESTING: Formal contact (Dr. Geoff Ralston) ===
+  // Inbox email from Dr. Ralston that needs a reply
   {
     id: "demo-formal-inbox",
-    threadId: "thread-formal-margaret-11",
+    threadId: "thread-formal-geoff-11",
     subject: "Request for Strategic Advisory Input - FY2026 Planning",
-    from: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    from: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     to: "me@example.com",
     date: new Date(now - 3 * hour).toISOString(),
     body: `Dear Colleague,
@@ -531,7 +531,7 @@ I have attached a preliminary briefing document for your review. I would be most
 Please do not hesitate to reach out if you require any additional context or supporting documentation.
 
 With kind regards,
-Dr. Margaret Chen
+Dr. Geoff Ralston
 Managing Partner
 Whitfield & Partners`,
     snippet: "I am writing to request your input on several strategic matters...",
@@ -542,7 +542,7 @@ Whitfield & Partners`,
     id: "demo-multi-001",
     threadId: "thread-multi-sender",
     subject: "Launch Readiness Review - v2.0 Release",
-    from: "Priya Sharma <priya.sharma@acmecorp.com>",
+    from: "Nicolas Dessaigne <nicolas.d@acmecorp.com>",
     to: "me@example.com, team@acmecorp.com",
     date: new Date(now - 3 * day).toISOString(),
     body: `Hi everyone,
@@ -556,31 +556,31 @@ I'd like to kick off the launch readiness review for v2.0. Here's what we need t
 Can each of you confirm your area is on track?
 
 Thanks,
-Priya`,
+Nicolas`,
     snippet: "I'd like to kick off the launch readiness review for v2.0...",
   },
   {
     id: "demo-multi-002",
     threadId: "thread-multi-sender",
     subject: "Re: Launch Readiness Review - v2.0 Release",
-    from: "Carlos Mendez <carlos.mendez@acmecorp.com>",
-    to: "me@example.com, priya.sharma@acmecorp.com, team@acmecorp.com",
+    from: "Pete Koomen <pete.koomen@acmecorp.com>",
+    to: "me@example.com, nicolas.d@acmecorp.com, team@acmecorp.com",
     date: new Date(now - 2.8 * day).toISOString(),
-    body: `Priya,
+    body: `Nicolas,
 
 Backend is in good shape. All API endpoints are finalized and load-tested. One concern: the new search indexing needs another round of performance tuning before we can handle production traffic.
 
 I'll have an update by Thursday.
 
-Carlos`,
+Pete`,
     snippet: "Backend is in good shape. All API endpoints are finalized...",
   },
   {
     id: "demo-multi-003",
     threadId: "thread-multi-sender",
     subject: "Re: Launch Readiness Review - v2.0 Release",
-    from: "Nina Okafor <nina.okafor@acmecorp.com>",
-    to: "me@example.com, priya.sharma@acmecorp.com, team@acmecorp.com",
+    from: "Aaron Epstein <aaron.epstein@acmecorp.com>",
+    to: "me@example.com, nicolas.d@acmecorp.com, team@acmecorp.com",
     date: new Date(now - 2.5 * day).toISOString(),
     body: `Team,
 
@@ -588,33 +588,33 @@ Design is ready. All screens have been finalized and handed off to engineering. 
 
 One thing to flag: we still need final copy for the onboarding tooltips. @me - can you review the draft copy I sent last week?
 
-Nina`,
+Aaron`,
     snippet: "Design is ready. All screens have been finalized...",
   },
   {
     id: "demo-multi-004",
     threadId: "thread-multi-sender",
     subject: "Re: Launch Readiness Review - v2.0 Release",
-    from: "Tom Bradley <tom.bradley@acmecorp.com>",
-    to: "me@example.com, priya.sharma@acmecorp.com, team@acmecorp.com",
+    from: "Brad Flora <brad.flora@acmecorp.com>",
+    to: "me@example.com, nicolas.d@acmecorp.com, team@acmecorp.com",
     date: new Date(now - 2 * day).toISOString(),
     body: `All,
 
-QA is tracking 3 P1 bugs and 12 P2s. The P1s are all in the checkout flow - Carlos, can you prioritize those?
+QA is tracking 3 P1 bugs and 12 P2s. The P1s are all in the checkout flow - Pete, can you prioritize those?
 
 Test coverage is at 87% which is above our 85% threshold. Automated regression suite passes on staging.
 
 I'll share the full QA report tomorrow.
 
-Tom`,
+Brad`,
     snippet: "QA is tracking 3 P1 bugs and 12 P2s...",
   },
   {
     id: "demo-multi-005",
     threadId: "thread-multi-sender",
     subject: "Re: Launch Readiness Review - v2.0 Release",
-    from: "Aisha Patel <aisha.patel@acmecorp.com>",
-    to: "me@example.com, priya.sharma@acmecorp.com, team@acmecorp.com",
+    from: "Harj Taggar <harj.taggar@acmecorp.com>",
+    to: "me@example.com, nicolas.d@acmecorp.com, team@acmecorp.com",
     date: new Date(now - 1.5 * day).toISOString(),
     body: `Hi all,
 
@@ -623,27 +623,27 @@ Marketing is almost there. Press release is drafted, social media campaign is sc
 We need the final release notes from engineering to complete the changelog page. @me - also wanted to confirm: are we doing the launch webinar on Thursday or Friday?
 
 Best,
-Aisha`,
+Harj`,
     snippet: "Marketing is almost there. Press release is drafted...",
   },
   {
     id: "demo-multi-006",
     threadId: "thread-multi-sender",
     subject: "Re: Launch Readiness Review - v2.0 Release",
-    from: "Priya Sharma <priya.sharma@acmecorp.com>",
+    from: "Nicolas Dessaigne <nicolas.d@acmecorp.com>",
     to: "me@example.com, team@acmecorp.com",
     date: new Date(now - 6 * hour).toISOString(),
     body: `Team,
 
 Thanks for the updates. Quick summary:
-- Backend: on track, search perf needs work (Carlos)
-- Design: done, waiting on tooltip copy (Nina)
-- QA: 3 P1s to fix, overall good (Tom)
-- Marketing: nearly ready, needs release notes (Aisha)
+- Backend: on track, search perf needs work (Pete)
+- Design: done, waiting on tooltip copy (Aaron)
+- QA: 3 P1s to fix, overall good (Brad)
+- Marketing: nearly ready, needs release notes (Harj)
 
 @me - we need your input on the tooltip copy, release notes, and webinar date. Can you respond by EOD?
 
-Priya`,
+Nicolas`,
     snippet: "Thanks for the updates. We need your input on tooltip copy...",
   },
 
@@ -711,7 +711,7 @@ Priya`,
     id: "demo-ea-sched-001",
     threadId: "thread-ea-scheduling",
     subject: "Meeting to discuss partnership — finding a time",
-    from: "Tom Nguyen <tom.nguyen@partnerco.io>",
+    from: "David Lieb <david.lieb@partnerco.io>",
     to: "Ankit <ankit@example.com>",
     date: new Date(now - 2 * day - 4 * hour).toISOString(),
     body: `Hi Ankit,
@@ -721,7 +721,7 @@ Great chatting at the conference last week! I'd love to set up a 30-minute call 
 Do you have any availability next week? Happy to work around your schedule.
 
 Best,
-Tom`,
+David`,
     snippet: "Great chatting at the conference! I'd love to set up a 30-minute call...",
   },
   // User replies and CC's EA Claire
@@ -730,10 +730,10 @@ Tom`,
     threadId: "thread-ea-scheduling",
     subject: "Re: Meeting to discuss partnership — finding a time",
     from: "Ankit <ankit@example.com>",
-    to: "Tom Nguyen <tom.nguyen@partnerco.io>",
+    to: "David Lieb <david.lieb@partnerco.io>",
     cc: "Claire <testea@ycombinator.com>",
     date: new Date(now - 2 * day - 3 * hour).toISOString(),
-    body: `Hi Tom,
+    body: `Hi David,
 
 Great meeting you too! I'd be happy to chat.
 
@@ -746,16 +746,16 @@ Ankit`,
     snippet: "I've CC'd Claire, my assistant, who can help coordinate scheduling...",
     labelIds: ["SENT"],
   },
-  // EA Claire coordinates with Tom — user is CC'd
+  // EA Claire coordinates with David — user is CC'd
   {
     id: "demo-ea-sched-003",
     threadId: "thread-ea-scheduling",
     subject: "Re: Meeting to discuss partnership — finding a time",
     from: "Claire <testea@ycombinator.com>",
-    to: "Tom Nguyen <tom.nguyen@partnerco.io>",
+    to: "David Lieb <david.lieb@partnerco.io>",
     cc: "Ankit <ankit@example.com>",
     date: new Date(now - 2 * day - 2 * hour).toISOString(),
-    body: `Hi Tom,
+    body: `Hi David,
 
 Thanks for your interest in connecting with Ankit! I'd be happy to help find a time.
 
@@ -770,12 +770,12 @@ Best,
 Claire`,
     snippet: "Here are a few slots available next week: Tuesday 2:00–2:30 PM PT...",
   },
-  // Tom replies to Claire — user still CC'd. This is the latest email user sees.
+  // David replies to Claire — user still CC'd. This is the latest email user sees.
   {
     id: "demo-ea-sched-004",
     threadId: "thread-ea-scheduling",
     subject: "Re: Meeting to discuss partnership — finding a time",
-    from: "Tom Nguyen <tom.nguyen@partnerco.io>",
+    from: "David Lieb <david.lieb@partnerco.io>",
     to: "Claire <testea@ycombinator.com>",
     cc: "Ankit <ankit@example.com>",
     date: new Date(now - 1 * day - 5 * hour).toISOString(),
@@ -786,7 +786,7 @@ Wednesday at 10am PT works perfectly! Could we do it over Zoom?
 Thanks for coordinating.
 
 Best,
-Tom`,
+David`,
     snippet: "Wednesday at 10am PT works perfectly! Could we do it over Zoom?",
   },
 
@@ -795,7 +795,7 @@ Tom`,
     id: "demo-ea-direct-001",
     threadId: "thread-ea-direct",
     subject: "Partnership technical requirements — need your input",
-    from: "Tom Nguyen <tom.nguyen@partnerco.io>",
+    from: "David Lieb <david.lieb@partnerco.io>",
     to: "Ankit <ankit@example.com>",
     cc: "Claire <testea@ycombinator.com>",
     date: new Date(now - 6 * hour).toISOString(),
@@ -810,30 +810,56 @@ Before our meeting on Wednesday, I wanted to get your thoughts on a couple of te
 These will help me prepare the right materials for our discussion.
 
 Thanks,
-Tom`,
+David`,
     snippet: "Before our meeting, I wanted to get your thoughts on technical questions...",
+  },
+
+  // Intro request — YC partner asking for 5 intros to other YC people
+  {
+    id: "demo-intro-request",
+    threadId: "thread-intro-request",
+    subject: "Can you intro me to a few folks?",
+    from: "Gustaf Alströmer <gustaf.a@startup.io>",
+    to: "Ankit <ankit@example.com>",
+    date: new Date(now - 1.5 * hour).toISOString(),
+    body: `Hey Ankit,
+
+Hope you're doing well! I'm working on a growth-focused AI project and I'd love to get connected with a few people in your network who I think could be really helpful.
+
+Could you intro me to:
+
+1. Garry Tan — I'd love to get his perspective on the market landscape and how he's thinking about AI-native products
+2. Jared Friedman — heard he's been diving deep into developer tools, and I have some ideas I'd love to bounce off him
+3. Diana Hu — she has incredible insight into the technical side of scaling AI systems
+
+No rush on all three at once — happy to take them one at a time if that's easier. And of course, only if you think each one makes sense.
+
+Thanks so much!
+
+Gustaf`,
+    snippet: "Could you intro me to Garry, Jared, and Diana?",
   },
 
   // Introduction email — someone connecting two people
   {
     id: "demo-intro",
     threadId: "thread-intro",
-    subject: "Intro: Ankit <> Maya Patel (AI infrastructure)",
-    from: "Rachel Kim <rachel.kim@venturefirm.com>",
-    to: "Ankit <ankit@example.com>, Maya Patel <maya.patel@aistack.dev>",
+    subject: "Intro: Ankit <> Tim Brady (AI infrastructure)",
+    from: "Kevin Hale <kevin.hale@venturefirm.com>",
+    to: "Ankit <ankit@example.com>, Tim Brady <tim.brady@aistack.dev>",
     date: new Date(now - 3 * hour).toISOString(),
-    body: `Hi Ankit and Maya,
+    body: `Hi Ankit and Tim,
 
 I wanted to connect the two of you! I think there could be a great fit here.
 
-Ankit — Maya is the CTO at AIStack and is building some really impressive infrastructure for serving large language models at scale. She's looking for design partners who are building AI-powered products.
+Ankit — Tim is the CTO at AIStack and is building some really impressive infrastructure for serving large language models at scale. He's looking for design partners who are building AI-powered products.
 
-Maya — Ankit is building a next-gen email client with deep AI integration. He's exactly the kind of builder who would benefit from your platform, and could give you valuable feedback on the developer experience.
+Tim — Ankit is building a next-gen email client with deep AI integration. He's exactly the kind of builder who would benefit from your platform, and could give you valuable feedback on the developer experience.
 
 I'll let the two of you take it from here!
 
 Best,
-Rachel`,
+Kevin`,
     snippet: "I wanted to connect the two of you! I think there could be a great fit here...",
   },
 ];
@@ -856,19 +882,20 @@ export const DEMO_EXPECTED_ANALYSIS: Record<string, { needsReply: boolean; prior
   "demo-inline-images": { needsReply: true, priority: "medium", reason: "Design review request requiring feedback" },
   "demo-sent-reply-001": { needsReply: false, reason: "Sent by user - no reply needed" },
   "demo-multi-001": { needsReply: false, reason: "Initial kickoff email, already has follow-ups" },
-  "demo-multi-002": { needsReply: false, reason: "Status update from Carlos, not directly addressed to user" },
-  "demo-multi-003": { needsReply: false, reason: "Status update from Nina, copy review request addressed in later email" },
-  "demo-multi-004": { needsReply: false, reason: "QA status update from Tom" },
+  "demo-multi-002": { needsReply: false, reason: "Status update from Pete, not directly addressed to user" },
+  "demo-multi-003": { needsReply: false, reason: "Status update from Aaron, copy review request addressed in later email" },
+  "demo-multi-004": { needsReply: false, reason: "QA status update from Brad" },
   "demo-multi-005": { needsReply: false, reason: "Marketing status, webinar question addressed in later email" },
   "demo-multi-006": { needsReply: true, priority: "high", reason: "Direct request for tooltip copy, release notes, and webinar date by EOD" },
   "demo-html-email": { needsReply: false, reason: "Product update newsletter, no action required" },
   "demo-casual-inbox": { needsReply: true, priority: "low", reason: "Casual friend asking about weekend plans" },
   "demo-formal-inbox": { needsReply: true, priority: "medium", reason: "Strategic advisory request with deadline from managing partner" },
-  "demo-intro": { needsReply: true, priority: "high", reason: "Introduction email — should reply to Maya and BCC Rachel (the introducer) to move her to BCC" },
+  "demo-intro-request": { needsReply: true, priority: "high", reason: "Direct request for 3 introductions — requires drafting individual intro emails to Garry, Jared, and Diana" },
+  "demo-intro": { needsReply: true, priority: "high", reason: "Introduction email — should reply to Tim and BCC Kevin (the introducer) to move him to BCC" },
   "demo-ea-sched-001": { needsReply: false, reason: "Initial scheduling request, already replied in thread" },
   "demo-ea-sched-002": { needsReply: false, reason: "Sent by user — no reply needed" },
   "demo-ea-sched-003": { needsReply: false, reason: "Sent by EA Claire coordinating scheduling — no user action needed" },
-  "demo-ea-sched-004": { needsReply: true, priority: "medium", reason: "Tom confirmed a time — but Claire (EA) is handling scheduling, user is just CC'd" },
+  "demo-ea-sched-004": { needsReply: true, priority: "medium", reason: "David confirmed a time — but Claire (EA) is handling scheduling, user is just CC'd" },
   "demo-ea-direct-001": { needsReply: true, priority: "high", reason: "Direct technical questions addressed to user requiring personal expertise" },
 };
 
@@ -876,9 +903,9 @@ export const DEMO_EXPECTED_ANALYSIS: Record<string, { needsReply: boolean; prior
 export const DEMO_SENT_EMAILS: SentEmail[] = [
   {
     id: "sent-demo-001",
-    toAddress: "sarah.chen@acmecorp.com",
+    toAddress: "jared.friedman@acmecorp.com",
     subject: "Re: Project Alpha - Initial thoughts",
-    body: `Sarah,
+    body: `Jared,
 
 Thanks for putting this together. A few thoughts:
 
@@ -891,9 +918,9 @@ Happy to discuss further.`,
   },
   {
     id: "sent-demo-002",
-    toAddress: "alex.r@startup.io",
+    toAddress: "gustaf.a@startup.io",
     subject: "Re: API Integration Help",
-    body: `Hey Alex,
+    body: `Hey Gustaf,
 
 Good questions! Here's what I'd recommend:
 
@@ -908,9 +935,9 @@ Best,`,
   },
   {
     id: "sent-demo-003",
-    toAddress: "j.park@techcorp.com",
+    toAddress: "d.hu@techcorp.com",
     subject: "Re: Q3 Review",
-    body: `Jennifer,
+    body: `Diana,
 
 Thanks for the summary. I reviewed the numbers and have a few comments:
 
@@ -927,7 +954,7 @@ Thanks,`,
 
 // Mock draft responses for demo mode
 export const DEMO_DRAFT_RESPONSES: Record<string, string> = {
-  "demo-003": `Hi Sarah,
+  "demo-003": `Hi Jared,
 
 Monday at 10am PT works for me. I'll have my calendar blocked.
 
@@ -940,7 +967,7 @@ I'll share a doc before the meeting so we can hit the ground running.
 
 See you Monday!`,
 
-  "demo-004": `Hey Alex,
+  "demo-004": `Hey Gustaf,
 
 Happy to help! Here are answers to your questions:
 
@@ -952,7 +979,7 @@ Happy to help! Here are answers to your questions:
 
 Let me know if you need anything else before your launch!`,
 
-  "demo-005": `Hi Jennifer,
+  "demo-005": `Hi Diana,
 
 Thanks for capturing these. Quick responses:
 
@@ -975,7 +1002,7 @@ For the interview, I'll focus on:
 
 Thanks!`,
 
-  "demo-010": `Hey David!
+  "demo-010": `Hey Tom!
 
 Lunch sounds great - I'm free Friday. The ramen place sounds perfect.
 
@@ -992,7 +1019,7 @@ First steps I'd recommend:
 
 Hopping on Zoom now.`,
 
-  "demo-meeting": `Hi Lisa,
+  "demo-meeting": `Hi Kat,
 
 Thanks for reaching out! I'd be happy to discuss partnership opportunities with PartnerCo.
 
@@ -1000,9 +1027,11 @@ I've copied my assistant who can help coordinate scheduling. They have access to
 
 Looking forward to the conversation!`,
 
-  "demo-intro": `Hi Maya,
+  "demo-intro-request": `yup i'm on it`,
 
-Great to e-meet you! Rachel has told me great things about what you're building at AIStack.
+  "demo-intro": `Hi Tim,
+
+Great to e-meet you! Kevin has told me great things about what you're building at AIStack.
 
 I'm indeed building an AI-powered email client and we're doing a lot of LLM inference — both for email analysis and draft generation. Would love to learn more about your infrastructure and how it might help us scale.
 
@@ -1011,7 +1040,7 @@ Are you free for a 30-minute call sometime next week? Happy to work around your 
 Best,
 Ankit`,
 
-  "demo-ea-direct-001": `Hi Tom,
+  "demo-ea-direct-001": `Hi David,
 
 Great questions — here's a quick rundown:
 
@@ -1027,13 +1056,13 @@ Ankit`,
 
 // Sent emails seeded into DB for style profiling (not shown in inbox)
 export const DEMO_STYLE_SEED_EMAILS: Email[] = [
-  // 10 casual sent emails to Jake — all lowercase, ~10 words, minimal punctuation
+  // 10 casual sent emails to Dalton — all lowercase, ~10 words, minimal punctuation
   {
     id: "demo-sent-casual-01",
-    threadId: "thread-casual-jake-01",
+    threadId: "thread-casual-dalton-01",
     subject: "Re: weekend",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 3 * day).toISOString(),
     body: "yeah sounds good lets do saturday",
     snippet: "yeah sounds good lets do saturday",
@@ -1041,10 +1070,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-02",
-    threadId: "thread-casual-jake-02",
+    threadId: "thread-casual-dalton-02",
     subject: "Re: that new show",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 5 * day).toISOString(),
     body: "haha nice ill check it out tonight",
     snippet: "haha nice ill check it out tonight",
@@ -1052,10 +1081,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-03",
-    threadId: "thread-casual-jake-03",
+    threadId: "thread-casual-dalton-03",
     subject: "Re: dinner tonight",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 8 * day).toISOString(),
     body: "hey running late be there in 10",
     snippet: "hey running late be there in 10",
@@ -1063,10 +1092,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-04",
-    threadId: "thread-casual-jake-04",
+    threadId: "thread-casual-dalton-04",
     subject: "Re: extra ticket",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 12 * day).toISOString(),
     body: "nah im good thanks tho",
     snippet: "nah im good thanks tho",
@@ -1074,10 +1103,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-05",
-    threadId: "thread-casual-jake-05",
+    threadId: "thread-casual-dalton-05",
     subject: "Re: last night",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 15 * day).toISOString(),
     body: "lol yeah that was wild",
     snippet: "lol yeah that was wild",
@@ -1085,10 +1114,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-06",
-    threadId: "thread-casual-jake-06",
+    threadId: "thread-casual-dalton-06",
     subject: "Re: meetup",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 20 * day).toISOString(),
     body: "cool cool see you there",
     snippet: "cool cool see you there",
@@ -1096,10 +1125,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-07",
-    threadId: "thread-casual-jake-07",
+    threadId: "thread-casual-dalton-07",
     subject: "Re: article",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 25 * day).toISOString(),
     body: "hey can you send me that link again",
     snippet: "hey can you send me that link again",
@@ -1107,10 +1136,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-08",
-    threadId: "thread-casual-jake-08",
+    threadId: "thread-casual-dalton-08",
     subject: "Re: yo",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 30 * day).toISOString(),
     body: "yeah just got home whats up",
     snippet: "yeah just got home whats up",
@@ -1118,10 +1147,10 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-09",
-    threadId: "thread-casual-jake-09",
+    threadId: "thread-casual-dalton-09",
     subject: "Re: bbq",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 38 * day).toISOString(),
     body: "nice one ill bring the stuff tomorrow",
     snippet: "nice one ill bring the stuff tomorrow",
@@ -1129,25 +1158,25 @@ export const DEMO_STYLE_SEED_EMAILS: Email[] = [
   },
   {
     id: "demo-sent-casual-10",
-    threadId: "thread-casual-jake-10",
+    threadId: "thread-casual-dalton-10",
     subject: "Re: road trip idea",
     from: "me@example.com",
-    to: "Jake Torres <jake.torres@gmail.com>",
+    to: "Dalton Caldwell <dalton.caldwell@gmail.com>",
     date: new Date(now - 45 * day).toISOString(),
     body: "haha for real tho we should do that",
     snippet: "haha for real tho we should do that",
     labelIds: ["SENT"],
   },
 
-  // 10 formal sent emails to Dr. Margaret Chen — proper capitalization, structured, "Dear/Regards"
+  // 10 formal sent emails to Dr. Geoff Ralston — proper capitalization, structured, "Dear/Regards"
   {
     id: "demo-sent-formal-01",
-    threadId: "thread-formal-margaret-01",
+    threadId: "thread-formal-geoff-01",
     subject: "Re: Q4 Strategic Review - Preliminary Analysis",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 4 * day).toISOString(),
-    body: `Dear Dr. Chen,
+    body: `Dear Dr. Ralston,
 
 Thank you for sharing the preliminary analysis. I have reviewed the documentation thoroughly and would like to offer the following observations:
 
@@ -1163,12 +1192,12 @@ Best regards`,
   },
   {
     id: "demo-sent-formal-02",
-    threadId: "thread-formal-margaret-02",
+    threadId: "thread-formal-geoff-02",
     subject: "Re: Board Meeting Preparation - Agenda Review",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 9 * day).toISOString(),
-    body: `Dear Margaret,
+    body: `Dear Geoff,
 
 Thank you for circulating the proposed agenda for the upcoming board meeting. I have reviewed each item carefully and have the following recommendations:
 
@@ -1184,12 +1213,12 @@ Regards`,
   },
   {
     id: "demo-sent-formal-03",
-    threadId: "thread-formal-margaret-03",
+    threadId: "thread-formal-geoff-03",
     subject: "Re: Due Diligence Report - Confidential",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 14 * day).toISOString(),
-    body: `Dear Dr. Chen,
+    body: `Dear Dr. Ralston,
 
 I appreciate you sharing the due diligence findings. After a thorough review of the materials, I would like to highlight several areas that warrant further examination:
 
@@ -1205,12 +1234,12 @@ Best regards`,
   },
   {
     id: "demo-sent-formal-04",
-    threadId: "thread-formal-margaret-04",
+    threadId: "thread-formal-geoff-04",
     subject: "Re: Partnership Framework Discussion",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 18 * day).toISOString(),
-    body: `Dear Margaret,
+    body: `Dear Geoff,
 
 Thank you for the productive discussion regarding the partnership framework. I wanted to follow up with a summary of the key points we agreed upon:
 
@@ -1226,12 +1255,12 @@ Best regards`,
   },
   {
     id: "demo-sent-formal-05",
-    threadId: "thread-formal-margaret-05",
+    threadId: "thread-formal-geoff-05",
     subject: "Re: Annual Compliance Review",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 22 * day).toISOString(),
-    body: `Dear Dr. Chen,
+    body: `Dear Dr. Ralston,
 
 Thank you for initiating the annual compliance review process. I have completed my assessment of the areas under my purview and would like to report the following:
 
@@ -1247,12 +1276,12 @@ Regards`,
   },
   {
     id: "demo-sent-formal-06",
-    threadId: "thread-formal-margaret-06",
+    threadId: "thread-formal-geoff-06",
     subject: "Re: Investment Committee Briefing Materials",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 28 * day).toISOString(),
-    body: `Dear Margaret,
+    body: `Dear Geoff,
 
 I have reviewed the investment committee briefing materials and prepared my analysis of the three proposed opportunities:
 
@@ -1268,12 +1297,12 @@ Best regards`,
   },
   {
     id: "demo-sent-formal-07",
-    threadId: "thread-formal-margaret-07",
+    threadId: "thread-formal-geoff-07",
     subject: "Re: Governance Policy Updates",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 33 * day).toISOString(),
-    body: `Dear Dr. Chen,
+    body: `Dear Dr. Ralston,
 
 Thank you for sharing the proposed governance policy updates. I have reviewed the revisions carefully and offer the following feedback:
 
@@ -1289,12 +1318,12 @@ Regards`,
   },
   {
     id: "demo-sent-formal-08",
-    threadId: "thread-formal-margaret-08",
+    threadId: "thread-formal-geoff-08",
     subject: "Re: Risk Assessment Findings",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 40 * day).toISOString(),
-    body: `Dear Margaret,
+    body: `Dear Geoff,
 
 I have completed my review of the risk assessment findings and concur with the overall conclusions. I would like to add the following observations:
 
@@ -1310,12 +1339,12 @@ Best regards`,
   },
   {
     id: "demo-sent-formal-09",
-    threadId: "thread-formal-margaret-09",
+    threadId: "thread-formal-geoff-09",
     subject: "Re: Quarterly Stakeholder Report",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 48 * day).toISOString(),
-    body: `Dear Dr. Chen,
+    body: `Dear Dr. Ralston,
 
 Thank you for the opportunity to contribute to the quarterly stakeholder report. Please find below my section on technology and innovation developments:
 
@@ -1331,12 +1360,12 @@ Regards`,
   },
   {
     id: "demo-sent-formal-10",
-    threadId: "thread-formal-margaret-10",
+    threadId: "thread-formal-geoff-10",
     subject: "Re: Strategic Advisory Engagement Proposal",
     from: "me@example.com",
-    to: "Dr. Margaret Chen <m.chen@whitfield-partners.com>",
+    to: "Dr. Geoff Ralston <g.ralston@whitfield-partners.com>",
     date: new Date(now - 55 * day).toISOString(),
-    body: `Dear Margaret,
+    body: `Dear Geoff,
 
 I have reviewed the strategic advisory engagement proposal with great interest. The scope of work is well-defined and the proposed methodology is sound. I would like to offer several suggestions:
 

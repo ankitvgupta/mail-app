@@ -99,8 +99,8 @@ Email Body: "Great news! Your order #123-4567890-1234567 is on its way. Track yo
 Output: {"needs_reply": false, "reason": "Automated shipping notification from e-commerce"}
 
 Example 8 - Personal introduction (reply needed):
-Email Subject: "Introduction from Sarah Chen"
-Email Body: "Hi! I hope this email finds you well. Sarah Chen mentioned that you're working on some interesting AI-powered productivity tools, and I'd love to learn more about your work. I'm currently leading product at a startup in the same space, and it seems like there could be some interesting synergies. Would you be open to a brief call sometime next week? No rush on this - just wanted to reach out and introduce myself."
+Email Subject: "Introduction from Jared Friedman"
+Email Body: "Hi! I hope this email finds you well. Jared Friedman mentioned that you're working on some interesting AI-powered productivity tools, and I'd love to learn more about your work. I'm currently leading product at a startup in the same space, and it seems like there could be some interesting synergies. Would you be open to a brief call sometime next week? No rush on this - just wanted to reach out and introduce myself."
 Output: {"needs_reply": true, "reason": "Personal introduction from mutual connection requesting networking call", "priority": "low"}
 
 Example 9 - LinkedIn notification (no reply needed):

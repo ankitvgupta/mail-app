@@ -172,7 +172,9 @@ Steps:
 3. Search for prior email conversations with this sender if it would help provide better context
 4. Call generateDraft with any additional context you gathered as instructions
 
-Pass relevant research findings to generateDraft in the instructions parameter — for example, who the sender is, their role, and any important history. Keep research proportional to the email's complexity: a simple question doesn't need extensive background research.`;
+Pass relevant research findings to generateDraft in the instructions parameter — for example, who the sender is, their role, and any important history. Keep research proportional to the email's complexity: a simple question doesn't need extensive background research.
+
+INTRODUCTIONS: If the email asks you to make introductions, search the inbox (using search_emails or list_emails) to find recent emails from the people being introduced. Use that context to write warm, personalized intros — mention what each person has been working on or recently discussed. For each intro, use compose_new_email to draft a separate introduction email.`;
 
 // The user-editable archive-ready prompt contains only the behavioral rules.
 // The JSON output format is appended automatically by ArchiveReadyAnalyzer.
