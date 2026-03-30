@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAppStore, useThreadedEmails, type Account, type SyncStatus, type PrefetchProgress, type BackgroundSyncProgress } from "./store";
+import { useAppStore, useThreadedEmails, getAccountColor, type Account, type SyncStatus, type PrefetchProgress, type BackgroundSyncProgress } from "./store";
 import { EmailList } from "./components/EmailList";
 import { EmailDetail } from "./components/EmailDetail";
 import { EmailPreviewSidebar } from "./components/EmailPreviewSidebar";
@@ -603,11 +603,15 @@ export default function App() {
           }));
           setAccounts(fullAccounts);
 
-          // Set current account to primary or first available
+          // Default to "All accounts" when multiple accounts, single account otherwise
+          if (fullAccounts.length > 1) {
+            setCurrentAccountId(null);
+          } else if (fullAccounts.length === 1) {
+            setCurrentAccountId(fullAccounts[0].id);
+          }
+
           const primaryAccount = fullAccounts.find(a => a.isPrimary) || fullAccounts[0];
           if (primaryAccount) {
-            setCurrentAccountId(primaryAccount.id);
-            // Identify user in PostHog using primary email
             identifyUser(primaryAccount.email, {
               account_count: fullAccounts.length,
             });
@@ -1230,9 +1234,12 @@ export default function App() {
 
   // Get current account and its sync status
   const currentAccount = accounts.find((a) => a.id === currentAccountId);
+  const isAllAccountsMode = currentAccountId === null && accounts.length > 0;
   const currentSyncStatus = currentAccountId ? getSyncStatus(currentAccountId) : "idle";
-  const isSyncing = currentSyncStatus === "syncing";
+  const isAnySyncing = isAllAccountsMode && accounts.some((a) => getSyncStatus(a.id) === "syncing");
+  const isSyncing = currentSyncStatus === "syncing" || isAnySyncing;
   const isCurrentAccountExpired = currentAccountId != null && expiredAccountIds.has(currentAccountId);
+  const isAnyAccountExpired = isAllAccountsMode && accounts.some((a) => expiredAccountIds.has(a.id));
 
   // Build list of expired accounts with their email addresses for the banner
   const expiredAccounts = accounts.filter((a) => expiredAccountIds.has(a.id));
@@ -1267,6 +1274,32 @@ export default function App() {
 
     // Trigger background sync to pick up any new emails (non-blocking)
     window.api.sync.now(accountId).catch(console.error);
+  };
+
+  const handleAllAccountsClick = () => {
+    setCurrentAccountId(null);
+    setAccountMenuOpen(false);
+    trackEvent("account_switched", { account_count: accounts.length, mode: "all" });
+
+    // Ensure all accounts have their emails loaded
+    const storeState = useAppStore.getState();
+    for (const account of accounts) {
+      if (!storeState.emails.some((e) => e.accountId === account.id)) {
+        window.api.sync.getEmails(account.id).then((result: IpcResponse<DashboardEmail[]>) => {
+          if (result.success && result.data && result.data.length > 0) {
+            addEmails(result.data);
+            prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
+          }
+        }).catch(console.error);
+      }
+      if (!storeState.sentEmails.some((e) => e.accountId === account.id)) {
+        window.api.sync.getSentEmails(account.id).then((sentResult: IpcResponse<DashboardEmail[]>) => {
+          if (sentResult.success && sentResult.data) {
+            addSentEmails(sentResult.data);
+          }
+        }).catch(console.error);
+      }
+    }
   };
 
   const handleCancelScheduled = async (id: string) => {
@@ -1307,7 +1340,7 @@ export default function App() {
                 className="flex items-center space-x-2 px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
               >
                 <span className="text-gray-700 dark:text-gray-300 truncate max-w-[200px]">
-                  {currentAccount?.email || "Select account"}
+                  {isAllAccountsMode ? "All accounts" : currentAccount?.email || "Select account"}
                 </span>
                 {/* Sync status indicator */}
                 {isSyncing && (
@@ -1316,13 +1349,13 @@ export default function App() {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
                 )}
-                {!isSyncing && !isCurrentAccountExpired && currentSyncStatus === "idle" && (
+                {!isSyncing && !isCurrentAccountExpired && !isAnyAccountExpired && (isAllAccountsMode || currentSyncStatus === "idle") && (
                   <span className="w-2 h-2 rounded-full bg-green-500" title="Connected" />
                 )}
-                {isCurrentAccountExpired && (
+                {(isCurrentAccountExpired || isAnyAccountExpired) && (
                   <span className="w-2 h-2 rounded-full bg-amber-500" title="Session expired" />
                 )}
-                {!isCurrentAccountExpired && currentSyncStatus === "error" && (
+                {!isCurrentAccountExpired && !isAnyAccountExpired && !isAllAccountsMode && currentSyncStatus === "error" && (
                   <span className="w-2 h-2 rounded-full bg-red-500" title="Sync error" />
                 )}
                 <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1334,6 +1367,21 @@ export default function App() {
               {accountMenuOpen && (
                 <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg dark:shadow-black/40 z-50">
                   <div className="py-1">
+                    {accounts.length > 1 && (
+                      <button
+                        onClick={handleAllAccountsClick}
+                        className={`w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center space-x-2 ${
+                          isAllAccountsMode ? "bg-blue-50 dark:bg-blue-900/30" : ""
+                        }`}
+                      >
+                        <span className="flex -space-x-1">
+                          {accounts.slice(0, 3).map((a) => (
+                            <span key={a.id} className={`w-2 h-2 rounded-full ring-1 ring-white dark:ring-gray-800 ${getAccountColor(accounts, a.id).dot}`} />
+                          ))}
+                        </span>
+                        <span>All accounts</span>
+                      </button>
+                    )}
                     {accounts.map((account) => (
                       <button
                         key={account.id}
@@ -1343,11 +1391,11 @@ export default function App() {
                         }`}
                       >
                         <div className="flex items-center space-x-2">
-                          <span className={`w-2 h-2 rounded-full ${
-                            expiredAccountIds.has(account.id) ? "bg-amber-500" :
-                            account.isConnected ? "bg-green-500" : "bg-gray-400 dark:bg-gray-500"
-                          }`} />
+                          <span className={`w-2 h-2 rounded-full ${getAccountColor(accounts, account.id).dot}`} />
                           <span className="truncate">{account.email}</span>
+                          {expiredAccountIds.has(account.id) && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" title="Session expired" />
+                          )}
                         </div>
                         {account.isPrimary && (
                           <span className="text-xs text-gray-500 dark:text-gray-400">Primary</span>

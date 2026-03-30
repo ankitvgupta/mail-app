@@ -57,6 +57,31 @@ export type Account = {
   isConnected: boolean;
 };
 
+// Deterministic account color palette — assigned by index in the accounts array
+export type AccountColor = {
+  bg: string;
+  text: string;
+  dot: string;
+};
+
+const ACCOUNT_COLORS: AccountColor[] = [
+  { bg: "bg-blue-100 dark:bg-blue-900/30", text: "text-blue-700 dark:text-blue-300", dot: "bg-blue-500" },
+  { bg: "bg-purple-100 dark:bg-purple-900/30", text: "text-purple-700 dark:text-purple-300", dot: "bg-purple-500" },
+  { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-700 dark:text-green-300", dot: "bg-green-500" },
+  { bg: "bg-orange-100 dark:bg-orange-900/30", text: "text-orange-700 dark:text-orange-300", dot: "bg-orange-500" },
+  { bg: "bg-pink-100 dark:bg-pink-900/30", text: "text-pink-700 dark:text-pink-300", dot: "bg-pink-500" },
+  { bg: "bg-teal-100 dark:bg-teal-900/30", text: "text-teal-700 dark:text-teal-300", dot: "bg-teal-500" },
+];
+
+export function getAccountColor(accounts: Account[], accountId: string): AccountColor {
+  const idx = accounts.findIndex((a) => a.id === accountId);
+  return ACCOUNT_COLORS[(idx === -1 ? 0 : idx) % ACCOUNT_COLORS.length];
+}
+
+export function getAccountLabel(account: Account): string {
+  return account.email;
+}
+
 // Sync status per account
 export type SyncStatus = "idle" | "syncing" | "error";
 
@@ -736,14 +761,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   // Multi-account actions
   setAccounts: (accounts) =>
-    set({
-      accounts,
-      // Set current to primary or first account if not set
-      currentAccountId:
-        get().currentAccountId ||
-        accounts.find((a) => a.isPrimary)?.id ||
-        accounts[0]?.id ||
-        null,
+    set((state) => {
+      if (state.currentAccountId !== null) return { accounts };
+      // Default to "All accounts" (null) when multiple accounts exist,
+      // otherwise select the single account directly.
+      return {
+        accounts,
+        currentAccountId: accounts.length > 1 ? null : accounts[0]?.id ?? null,
+      };
     }),
   addAccount: (account) =>
     set((state) => {

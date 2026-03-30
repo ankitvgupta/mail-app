@@ -51,6 +51,7 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
   const {
     setSelectedEmailId,
     currentAccountId,
+    accounts,
     setActiveSearch,
     setViewMode,
     isOnline,
@@ -111,7 +112,8 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
 
   // Perform full Gmail search and show results (local + remote in parallel)
   const performFullSearch = useCallback(() => {
-    if (!query.trim() || !currentAccountId) return;
+    const accountIds = currentAccountId ? [currentAccountId] : accounts.map(a => a.id);
+    if (!query.trim() || accountIds.length === 0) return;
 
     // Special handling for "in:draft" / "in:drafts" — switch to drafts view instead of searching
     const trimmed = query.trim().toLowerCase();
@@ -123,42 +125,56 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
 
     trackEvent("search_performed");
 
-    // Close modal immediately and show SearchResultsView with loading state.
-    // setActiveSearch closes the modal, sets remoteSearchStatus: 'searching'.
     setActiveSearch(query, []);
 
-    // Fire local search — results stream into the store when ready
-    window.api.emails.search(query, currentAccountId, 500)
-      .then((localResponse: IpcResponse<DashboardEmail[]>) => {
-        if (useAppStore.getState().activeSearchQuery !== query) return;
-        if (localResponse.success && localResponse.data) {
-          useAppStore.getState().setActiveSearchResults(localResponse.data);
-        }
-      })
-      .catch((error: unknown) => {
-        console.error("Local search failed:", error);
-      });
-
-    // Fire remote search (slow) — results stream into the store when ready
-    if (isOnline) {
-      window.api.emails.searchRemote(query, currentAccountId, 500)
-        .then((response: { success: boolean; data?: { emails: DashboardEmail[]; nextPageToken?: string }; error?: string }) => {
+    // Fire local search for each account and merge results
+    for (const accountId of accountIds) {
+      window.api.emails.search(query, accountId, 500)
+        .then((localResponse: IpcResponse<DashboardEmail[]>) => {
           if (useAppStore.getState().activeSearchQuery !== query) return;
-          if (response.success && response.data) {
-            setRemoteSearchResults(response.data.emails);
-            useAppStore.getState().setRemoteSearchNextPageToken(response.data.nextPageToken ?? null);
-          } else {
-            setRemoteSearchError(response.error || "Gmail search failed");
+          if (localResponse.success && localResponse.data) {
+            const existing = useAppStore.getState().activeSearchResults ?? [];
+            const existingIds = new Set(existing.map(e => e.id));
+            const newEmails = localResponse.data.filter(e => !existingIds.has(e.id));
+            if (newEmails.length > 0) {
+              useAppStore.getState().setActiveSearchResults([...existing, ...newEmails]);
+            }
           }
         })
-        .catch((err: unknown) => {
-          if (useAppStore.getState().activeSearchQuery !== query) return;
-          setRemoteSearchError(err instanceof Error ? err.message : "Gmail search failed");
+        .catch((error: unknown) => {
+          console.error("Local search failed:", error);
         });
+    }
+
+    // Fire remote search for each account and merge results
+    if (isOnline) {
+      for (const accountId of accountIds) {
+        window.api.emails.searchRemote(query, accountId, 500)
+          .then((response: { success: boolean; data?: { emails: DashboardEmail[]; nextPageToken?: string }; error?: string }) => {
+            if (useAppStore.getState().activeSearchQuery !== query) return;
+            if (response.success && response.data) {
+              const existing = useAppStore.getState().remoteSearchResults ?? [];
+              const existingIds = new Set(existing.map(e => e.id));
+              const newEmails = response.data.emails.filter(e => !existingIds.has(e.id));
+              if (newEmails.length > 0) {
+                setRemoteSearchResults([...existing, ...newEmails]);
+              }
+              if (response.data.nextPageToken) {
+                useAppStore.getState().setRemoteSearchNextPageToken(response.data.nextPageToken);
+              }
+            } else {
+              setRemoteSearchError(response.error || "Gmail search failed");
+            }
+          })
+          .catch((err: unknown) => {
+            if (useAppStore.getState().activeSearchQuery !== query) return;
+            setRemoteSearchError(err instanceof Error ? err.message : "Gmail search failed");
+          });
+      }
     } else {
       setRemoteSearchResults([]);
     }
-  }, [query, currentAccountId, isOnline, setActiveSearch, setRemoteSearchResults, setRemoteSearchError, setCurrentSplitId, onClose]);
+  }, [query, currentAccountId, accounts, isOnline, setActiveSearch, setRemoteSearchResults, setRemoteSearchError, setCurrentSplitId, onClose]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

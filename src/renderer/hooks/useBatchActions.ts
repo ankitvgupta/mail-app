@@ -9,7 +9,8 @@ import { trackEvent } from "../services/posthog";
 
 export function batchArchive() {
   const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const effectiveAccountId = currentAccountId ?? emails.find(e => selectedThreadIds.has(e.threadId))?.accountId ?? null;
+  if (!effectiveAccountId || selectedThreadIds.size === 0) return;
 
   const threadIds = Array.from(selectedThreadIds);
   const allEmailIds: string[] = [];
@@ -32,18 +33,18 @@ export function batchArchive() {
     id: `archive-batch-${Date.now()}`,
     type: "archive",
     threadCount: threadIds.length,
-    accountId: currentAccountId,
+    accountId: effectiveAccountId,
     emails: [...allEmails],
     scheduledAt: Date.now(),
     delayMs: 5000,
   });
-  // Tracks intent — user may still undo within 5 s
   trackEvent("email_archived", { thread_count: threadIds.length, source: "batch" });
 }
 
 export function batchTrash() {
   const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const effectiveAccountId = currentAccountId ?? emails.find(e => selectedThreadIds.has(e.threadId))?.accountId ?? null;
+  if (!effectiveAccountId || selectedThreadIds.size === 0) return;
 
   const threadIds = Array.from(selectedThreadIds);
   const allEmailIds: string[] = [];
@@ -65,18 +66,18 @@ export function batchTrash() {
     id: `trash-batch-${Date.now()}`,
     type: "trash",
     threadCount: threadIds.length,
-    accountId: currentAccountId,
+    accountId: effectiveAccountId,
     emails: [...allEmails],
     scheduledAt: Date.now(),
     delayMs: 5000,
   });
-  // Tracks intent — user may still undo within 5 s
   trackEvent("email_trashed", { thread_count: threadIds.length, source: "batch" });
 }
 
 export function batchToggleStar() {
   const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const effectiveAccountId = currentAccountId ?? emails.find(e => selectedThreadIds.has(e.threadId))?.accountId ?? null;
+  if (!effectiveAccountId || selectedThreadIds.size === 0) return;
 
   // Group emails by thread for the selected threads
   const selectedThreadEmails: Array<{ threadId: string; emails: typeof emails }> = [];
@@ -123,7 +124,7 @@ export function batchToggleStar() {
       id: `${actionType}-batch-${Date.now()}`,
       type: actionType,
       threadCount: selectedThreadIds.size,
-      accountId: currentAccountId,
+      accountId: effectiveAccountId,
       emails: changedEmails,
       scheduledAt: Date.now(),
       delayMs: 5000,
@@ -136,7 +137,8 @@ export function batchToggleStar() {
 
 export function batchMarkUnread() {
   const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const effectiveAccountId = currentAccountId ?? emails.find(e => selectedThreadIds.has(e.threadId))?.accountId ?? null;
+  if (!effectiveAccountId || selectedThreadIds.size === 0) return;
 
   const changedEmails: DashboardEmail[] = [];
   const previousLabels: Record<string, string[]> = {};
@@ -163,7 +165,7 @@ export function batchMarkUnread() {
       id: `mark-unread-batch-${Date.now()}`,
       type: "mark-unread",
       threadCount: changedEmails.length,
-      accountId: currentAccountId,
+      accountId: effectiveAccountId,
       emails: changedEmails,
       scheduledAt: Date.now(),
       delayMs: 5000,

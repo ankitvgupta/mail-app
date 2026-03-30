@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo } from "react";
 import type { InboxDensity, SnoozedEmail, DashboardEmail, LocalDraft } from "../../shared/types";
-import { useAppStore, useSplitFilteredThreads, type EmailThread } from "../store";
-import { EmailRow } from "./EmailRow";
+import { useAppStore, useSplitFilteredThreads, getAccountColor, getAccountLabel, type EmailThread, type Account } from "../store";
+import { EmailRow, type AccountBadge } from "./EmailRow";
 import { DraftRow } from "./DraftRow";
 import { BatchActionBar } from "./BatchActionBar";
 import { SplitTabs } from "./SplitTabs";
@@ -54,7 +54,26 @@ export function EmailList() {
   const allLocalDrafts = useAppStore((s) => s.localDrafts);
   const unsnoozedReturnTimes = useAppStore((s) => s.unsnoozedReturnTimes);
   const selectedThreadId = useAppStore((s) => s.selectedThreadId);
+  const accounts = useAppStore((s) => s.accounts);
   const { threads } = useSplitFilteredThreads();
+
+  const isAllAccountsMode = currentAccountId === null;
+
+  // Pre-compute account badges so EmailRow gets stable references (memo-friendly).
+  // Only computed in "All accounts" mode.
+  const accountBadgeMap = useMemo(() => {
+    if (!isAllAccountsMode || accounts.length === 0) return null;
+    const map = new Map<string, AccountBadge>();
+    for (const account of accounts) {
+      const color = getAccountColor(accounts, account.id);
+      map.set(account.id, {
+        label: getAccountLabel(account),
+        bgClass: color.bg,
+        textClass: color.text,
+      });
+    }
+    return map;
+  }, [isAllAccountsMode, accounts]);
 
   const isArchiveReadyView = currentSplitId === "__archive-ready__";
   const isDraftsView = currentSplitId === "__drafts__";
@@ -95,23 +114,25 @@ export function EmailList() {
   }, [openCompose, setSelectedEmailId, setSelectedThreadId, setSelectedDraftId, setViewMode]);
 
   // Load snoozed emails on mount / account switch.
-  // Also processes any snoozes that expired while the app was closed.
+  // In "All" mode, iterate over every account and merge results.
   useEffect(() => {
-    if (!currentAccountId) return;
-    (window as any).api.snooze.list(currentAccountId).then((response: any) => {
-      if (response.success && response.data) {
-        setSnoozedThreads(response.data);
-      }
-      // Process snoozes that expired while the app was closed —
-      // adds them to recentlyUnsnoozedThreadIds so they sort correctly
-      if (response.expired?.length > 0) {
-        const store = useAppStore.getState();
-        for (const email of response.expired) {
-          store.handleThreadUnsnoozed(email.threadId, email.snoozeUntil);
+    const accountIds = currentAccountId ? [currentAccountId] : accounts.map((a) => a.id);
+    if (accountIds.length === 0) return;
+
+    for (const accountId of accountIds) {
+      (window as any).api.snooze.list(accountId).then((response: any) => {
+        if (response.success && response.data) {
+          setSnoozedThreads(response.data);
         }
-      }
-    });
-  }, [currentAccountId, setSnoozedThreads]);
+        if (response.expired?.length > 0) {
+          const store = useAppStore.getState();
+          for (const email of response.expired) {
+            store.handleThreadUnsnoozed(email.threadId, email.snoozeUntil);
+          }
+        }
+      });
+    }
+  }, [currentAccountId, accounts, setSnoozedThreads]);
 
   // Listen for snooze events from main process, filtered by current account.
   // Uses useAppStore.getState() inside callbacks so we don't need action refs
@@ -120,20 +141,23 @@ export function EmailList() {
   currentAccountRef.current = currentAccountId;
 
   useEffect(() => {
+    const matchesAccount = (accountId: string) =>
+      currentAccountRef.current === null || accountId === currentAccountRef.current;
+
     (window as any).api.snooze.onUnsnoozed((data: { emails: SnoozedEmail[] }) => {
       for (const email of data.emails) {
-        if (email.accountId === currentAccountRef.current) {
+        if (matchesAccount(email.accountId)) {
           useAppStore.getState().handleThreadUnsnoozed(email.threadId, email.snoozeUntil);
         }
       }
     });
     (window as any).api.snooze.onSnoozed((data: { snoozedEmail: SnoozedEmail }) => {
-      if (data.snoozedEmail.accountId === currentAccountRef.current) {
+      if (matchesAccount(data.snoozedEmail.accountId)) {
         useAppStore.getState().addSnoozedThread(data.snoozedEmail);
       }
     });
     (window as any).api.snooze.onManuallyUnsnoozed((data: { threadId: string; accountId: string; snoozeUntil: number }) => {
-      if (data.accountId === currentAccountRef.current) {
+      if (matchesAccount(data.accountId)) {
         useAppStore.getState().handleThreadUnsnoozed(data.threadId, data.snoozeUntil);
       }
     });
@@ -143,19 +167,24 @@ export function EmailList() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load archive-ready threads on mount / account switch
+  // Load archive-ready threads on mount / account switch.
+  // In "All" mode, iterate over every account and merge results.
   useEffect(() => {
-    if (!currentAccountId) return;
-    (window as any).api.archiveReady.getThreads(currentAccountId).then((result: any) => {
-      if (result.success && result.data) {
-        const items = result.data.map((t: { threadId: string; reason: string }) => ({
-          threadId: t.threadId,
-          reason: t.reason,
-        }));
-        setArchiveReadyThreads(items);
-      }
-    });
-  }, [currentAccountId, setArchiveReadyThreads]);
+    const accountIds = currentAccountId ? [currentAccountId] : accounts.map((a) => a.id);
+    if (accountIds.length === 0) return;
+
+    for (const accountId of accountIds) {
+      (window as any).api.archiveReady.getThreads(accountId).then((result: any) => {
+        if (result.success && result.data) {
+          const items = result.data.map((t: { threadId: string; reason: string }) => ({
+            threadId: t.threadId,
+            reason: t.reason,
+          }));
+          setArchiveReadyThreads(items);
+        }
+      });
+    }
+  }, [currentAccountId, accounts, setArchiveReadyThreads]);
 
   // Listen for new archive-ready results from background prefetch
   const currentAccountRef2 = useRef(currentAccountId);
@@ -164,7 +193,7 @@ export function EmailList() {
   useEffect(() => {
     (window as any).api.archiveReady.onResult(
       (data: { threadId: string; accountId: string; isReady: boolean; reason: string }) => {
-        if (data.accountId !== currentAccountRef2.current) return;
+        if (currentAccountRef2.current !== null && data.accountId !== currentAccountRef2.current) return;
         if (data.isReady) {
           // Add single thread to the set
           useAppStore.setState((state) => {
@@ -599,6 +628,7 @@ export function EmailList() {
                     onCheckboxChange={() => handleCheckboxToggle(thread.threadId)}
                     snoozeInfo={isSnoozedView ? snoozedThreads.get(thread.threadId) : undefined}
                     returnTime={unsnoozedReturnTimes.get(thread.threadId)}
+                    accountBadge={accountBadgeMap?.get(thread.latestEmail.accountId ?? "") }
                   />
                 </div>
               );
