@@ -583,7 +583,7 @@ function buildSystemPrompt(context: AgentContext, tools: AgentToolSpec[], memory
     }
     parts.push("");
     parts.push("Any other commands will be rejected. Use the Bash tool with the allowed commands only.");
-    parts.push("IMPORTANT: The user cannot see Bash tool results directly — they only see your text response. After running a command, include the relevant parts of the output in your response so the user can see what happened.");
+    parts.push("After running a command, briefly summarize the outcome in your response. The user can see the full tool output in the tool panel, so focus on highlighting the key result rather than repeating the raw output.");
   }
 
   return parts.join("\n");
