@@ -3081,7 +3081,213 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 </li>
               </ul>
             </div>
+
+            {/* AI Usage & Costs */}
+            <UsageCostSection />
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Usage / Cost Tracking ----
+
+interface UsageStats {
+  today: { totalCostCents: number; totalCalls: number };
+  thisWeek: { totalCostCents: number; totalCalls: number };
+  thisMonth: { totalCostCents: number; totalCalls: number };
+  byModel: Array<{ model: string; costCents: number; calls: number }>;
+  byCaller: Array<{ caller: string; costCents: number; calls: number }>;
+}
+
+interface LlmCallRecord {
+  id: string;
+  created_at: string;
+  model: string;
+  caller: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_create_tokens: number;
+  cost_cents: number;
+  duration_ms: number;
+  success: number;
+  error_message: string | null;
+}
+
+const formatCost = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+function UsageCostSection() {
+  const { data: statsResult } = useQuery({
+    queryKey: ["usage-stats"],
+    queryFn: () => window.api.usage.getStats() as Promise<{ success: boolean; data: UsageStats }>,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+  });
+
+  const { data: historyResult } = useQuery({
+    queryKey: ["call-history"],
+    queryFn: () =>
+      window.api.usage.getCallHistory(50) as Promise<{ success: boolean; data: LlmCallRecord[] }>,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+  });
+
+  const stats = statsResult?.success ? statsResult.data : null;
+  const history = historyResult?.success ? historyResult.data : null;
+
+  return (
+    <div className="space-y-6 mt-8 border-t border-gray-200 dark:border-gray-700 pt-6">
+      <div>
+        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-1">
+          AI Usage & Costs
+        </h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Token usage and estimated costs for Claude API calls (last 30 days).
+        </p>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-4">
+        {(
+          [
+            ["Today", stats?.today],
+            ["This Week", stats?.thisWeek],
+            ["This Month", stats?.thisMonth],
+          ] as const
+        ).map(([label, bucket]) => (
+          <div
+            key={label}
+            className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4"
+          >
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+              {label}
+            </p>
+            <p className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1">
+              {formatCost(bucket?.totalCostCents ?? 0)}
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {bucket?.totalCalls ?? 0} calls
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Breakdown by Caller */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4">
+        <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">By Caller</h4>
+        {stats?.byCaller && stats.byCaller.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                <th className="pb-2 font-medium">Caller</th>
+                <th className="pb-2 font-medium text-right">Cost</th>
+                <th className="pb-2 font-medium text-right">Calls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.byCaller.map((row) => (
+                <tr key={row.caller} className="border-b border-gray-50 dark:border-gray-700/50">
+                  <td className="py-1.5 text-gray-900 dark:text-gray-100">{row.caller}</td>
+                  <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                    {formatCost(row.costCents)}
+                  </td>
+                  <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                    {row.calls}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-gray-400 dark:text-gray-500">No usage data yet.</p>
+        )}
+      </div>
+
+      {/* Breakdown by Model */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4">
+        <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">By Model</h4>
+        {stats?.byModel && stats.byModel.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                <th className="pb-2 font-medium">Model</th>
+                <th className="pb-2 font-medium text-right">Cost</th>
+                <th className="pb-2 font-medium text-right">Calls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.byModel.map((row) => (
+                <tr key={row.model} className="border-b border-gray-50 dark:border-gray-700/50">
+                  <td className="py-1.5 text-gray-900 dark:text-gray-100 font-mono text-xs">
+                    {row.model}
+                  </td>
+                  <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                    {formatCost(row.costCents)}
+                  </td>
+                  <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                    {row.calls}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-gray-400 dark:text-gray-500">No usage data yet.</p>
+        )}
+      </div>
+
+      {/* Recent Calls */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4">
+        <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">Recent Calls</h4>
+        {history && history.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  <th className="pb-2 font-medium">Time</th>
+                  <th className="pb-2 font-medium">Caller</th>
+                  <th className="pb-2 font-medium">Model</th>
+                  <th className="pb-2 font-medium text-right">Tokens (in/out)</th>
+                  <th className="pb-2 font-medium text-right">Cost</th>
+                  <th className="pb-2 font-medium text-right">Duration</th>
+                  <th className="pb-2 font-medium text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((row) => (
+                  <tr key={row.id} className="border-b border-gray-50 dark:border-gray-700/50">
+                    <td className="py-1.5 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {new Date(row.created_at + "Z").toLocaleString()}
+                    </td>
+                    <td className="py-1.5 text-gray-900 dark:text-gray-100">{row.caller}</td>
+                    <td className="py-1.5 text-gray-700 dark:text-gray-300 font-mono">
+                      {row.model}
+                    </td>
+                    <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                      {row.input_tokens.toLocaleString()} / {row.output_tokens.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                      {formatCost(row.cost_cents)}
+                    </td>
+                    <td className="py-1.5 text-right text-gray-700 dark:text-gray-300">
+                      {(row.duration_ms / 1000).toFixed(1)}s
+                    </td>
+                    <td className="py-1.5 text-center">
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full ${
+                          row.success ? "bg-green-500" : "bg-red-500"
+                        }`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400 dark:text-gray-500">No calls recorded yet.</p>
         )}
       </div>
     </div>

@@ -1061,6 +1061,13 @@ const api = {
       ipcRenderer.removeAllListeners("outbox:auth-required");
     },
   },
+
+  // Usage / cost tracking
+  usage: {
+    getStats: (): Promise<unknown> => ipcRenderer.invoke("settings:get-usage-stats"),
+    getCallHistory: (limit?: number): Promise<unknown> =>
+      ipcRenderer.invoke("settings:get-call-history", { limit }),
+  },
 };
 
 // Expose API to renderer

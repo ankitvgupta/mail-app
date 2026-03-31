@@ -18,7 +18,7 @@ import {
 } from "../../shared/types";
 import { resetAnalyzer } from "./analysis.ipc";
 import { resetArchiveReadyAnalyzer } from "./archive-ready.ipc";
-import { resetClient } from "../services/anthropic-service";
+import { resetClient, getUsageStats, getCallHistory } from "../services/anthropic-service";
 import { prefetchService } from "../services/prefetch-service";
 import { agentCoordinator } from "../agents/agent-coordinator";
 import {
@@ -758,6 +758,32 @@ export function registerSettingsIpc(): void {
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         };
+      }
+    },
+  );
+
+  // Usage / cost tracking
+  ipcMain.handle(
+    "settings:get-usage-stats",
+    async (): Promise<IpcResponse<ReturnType<typeof getUsageStats>>> => {
+      try {
+        return { success: true, data: getUsageStats() };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "settings:get-call-history",
+    async (
+      _,
+      args?: { limit?: number },
+    ): Promise<IpcResponse<ReturnType<typeof getCallHistory>>> => {
+      try {
+        return { success: true, data: getCallHistory(args?.limit ?? 50) };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
       }
     },
   );
