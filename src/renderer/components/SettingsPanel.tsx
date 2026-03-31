@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import DOMPurify from "dompurify";
-import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_DRAFT_PROMPT, DEFAULT_ARCHIVE_READY_PROMPT, DEFAULT_STYLE_PROMPT, DEFAULT_AGENT_DRAFTER_PROMPT, DEFAULT_MODEL_CONFIG, MODEL_TIERS, MODEL_TIER_LABELS, type EAConfig, type Config, type InboxDensity, type Signature, type McpServerConfig, type ModelConfig, type ModelTier } from "../../shared/types";
+import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_DRAFT_PROMPT, DEFAULT_ARCHIVE_READY_PROMPT, DEFAULT_STYLE_PROMPT, DEFAULT_AGENT_DRAFTER_PROMPT, DEFAULT_MODEL_CONFIG, MODEL_TIERS, MODEL_TIER_LABELS, type EAConfig, type Config, type InboxDensity, type Signature, type McpServerConfig, type ModelConfig, type ModelTier, type SendAsAlias, type IpcResponse } from "../../shared/types";
 import { useAppStore, type Account, type PrefetchProgress, type SettingsTab } from "../store";
 import { reconfigurePostHog, trackEvent } from "../services/posthog";
 import { SplitConfigEditor } from "./SplitConfigEditor";
@@ -1218,6 +1218,18 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   ))
                 )}
               </div>
+
+              {/* Default send-as alias per account */}
+              {accounts.length > 0 && (
+                <DefaultSendAsSettings
+                  accounts={accounts}
+                  defaultSendAs={generalConfig?.defaultSendAs}
+                  onSave={async (defaultSendAs) => {
+                    await window.api.settings.set({ defaultSendAs });
+                    queryClient.invalidateQueries({ queryKey: ["general-config"] });
+                  }}
+                />
+              )}
 
               {/* Add account button */}
               <button
@@ -2507,6 +2519,91 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Default Send-As Alias per account ----
+
+function DefaultSendAsSettings({
+  accounts,
+  defaultSendAs,
+  onSave,
+}: {
+  accounts: Account[];
+  defaultSendAs?: Record<string, string>;
+  onSave: (defaultSendAs: Record<string, string>) => Promise<void>;
+}) {
+  const queryClient = useQueryClient();
+  // Fetch aliases for all accounts, sharing cache with useSendAsAliases hook
+  const [aliasMap, setAliasMap] = useState<Record<string, SendAsAlias[]>>({});
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(
+      accounts.map(async (account) => {
+        const aliases = await queryClient.fetchQuery({
+          queryKey: ["send-as-aliases", account.id],
+          queryFn: async () => {
+            const result = (await window.api.accounts.getSendAsAliases(account.id)) as IpcResponse<SendAsAlias[]>;
+            return result.success && result.data ? result.data : [];
+          },
+          staleTime: 5 * 60 * 1000,
+        });
+        return { accountId: account.id, aliases };
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, SendAsAlias[]> = {};
+      for (const { accountId, aliases } of results) {
+        map[accountId] = aliases;
+      }
+      setAliasMap(map);
+      setLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [accounts, queryClient]);
+
+  // Only show if at least one account has multiple aliases
+  const hasMultipleAliases = loaded && accounts.some(a => (aliasMap[a.id]?.length ?? 0) > 1);
+  if (!hasMultipleAliases) return null;
+
+  return (
+    <div className="mb-6">
+      <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">Default Send-As Address</h3>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        Choose the default "From" address for new emails. Replies will auto-detect the correct alias from the thread.
+      </p>
+      <div className="space-y-2">
+        {accounts.map((account) => {
+          const aliases = aliasMap[account.id] || [];
+          if (aliases.length <= 1) return null;
+          const currentDefault = defaultSendAs?.[account.id] || aliases.find(a => a.isPrimary)?.email || aliases[0]?.email;
+
+          return (
+            <div key={account.id} className="flex items-center gap-3">
+              <span className="text-sm text-gray-600 dark:text-gray-400 min-w-[140px] truncate" title={account.email}>
+                {account.email}
+              </span>
+              <select
+                value={currentDefault}
+                onChange={async (e) => {
+                  await onSave({ ...defaultSendAs, [account.id]: e.target.value });
+                }}
+                className="flex-1 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-1 text-gray-900 dark:text-gray-100"
+              >
+                {aliases.map(alias => (
+                  <option key={alias.email} value={alias.email}>
+                    {alias.displayName ? `${alias.displayName} <${alias.email}>` : alias.email}
+                    {alias.isPrimary ? " (primary)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

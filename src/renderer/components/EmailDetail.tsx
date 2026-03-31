@@ -8,9 +8,11 @@ import { ComposeEditor } from "./ComposeEditor";
 import { formatSnoozeTime } from "./SnoozeMenu";
 import { AddressInput } from "./AddressInput";
 import { EmailAttachmentList, ComposeAttachmentList, AttachmentPreviewModal } from "./AttachmentList";
-import type { DashboardEmail, ReplyInfo, IpcResponse, SnoozedEmail, ComposeMode, AttachmentMeta, LocalDraft, Memory, MemoryScope } from "../../shared/types";
+import type { DashboardEmail, ReplyInfo, IpcResponse, ComposeMode, AttachmentMeta, LocalDraft, Memory, MemoryScope } from "../../shared/types";
 import type { RestoredDraft } from "../store";
 import { useComposeForm } from "../hooks/useComposeForm";
+import { useSendAsAliases, detectAliasFromThread } from "../hooks/useSendAsAliases";
+import { FromSelector } from "./FromSelector";
 import { THREAD_NAV_EVENT } from "../hooks/useKeyboardShortcuts";
 import type { ComposeFormState } from "../hooks/useComposeForm";
 import { ComposeToolbar } from "./ComposeToolbar";
@@ -891,6 +893,7 @@ function InlineReply({
   onSend,
   onCancel,
   onContentChange,
+  onFromChange,
   onToChange,
   onCcChange,
   onBccChange,
@@ -898,6 +901,7 @@ function InlineReply({
   draftEmailId,
   onDiscardDraft,
   nameMap: externalNameMap,
+  threadEmails: threadEmailsProp,
 }: {
   replyInfo: ReplyInfo;
   accountId: string;
@@ -907,6 +911,7 @@ function InlineReply({
   onSend: (sentInfo: SentMessageInfo) => void;
   onCancel: () => void;
   onContentChange?: (content: { bodyHtml: string; bodyText: string }) => void;
+  onFromChange?: (from: string | undefined) => void;
   onToChange?: (to: string[]) => void;
   onCcChange?: (cc: string[]) => void;
   onBccChange?: (bcc: string[]) => void;
@@ -917,11 +922,21 @@ function InlineReply({
   onDiscardDraft?: () => void;
   /** Map of lowercase email → display name for rendering name chips */
   nameMap?: Map<string, string>;
+  /** Thread emails for auto-detecting the correct send-as alias */
+  threadEmails?: DashboardEmail[];
 }) {
   const isForward = composeMode === "forward";
 
+  // Auto-detect "from" alias based on which alias the thread was addressed to
+  const { aliases, defaultAlias } = useSendAsAliases(accountId);
+  const autoDetectedFrom = useMemo(
+    () => threadEmailsProp ? detectAliasFromThread(aliases, threadEmailsProp) : undefined,
+    [aliases, threadEmailsProp]
+  );
+
   const form = useComposeForm({
     accountId,
+    initialFrom: restoredDraft?.from ?? autoDetectedFrom ?? defaultAlias,
     initialTo: restoredDraft?.to !== undefined ? restoredDraft.to : (isForward ? [] : replyInfo.to),
     initialCc: restoredDraft?.cc !== undefined ? restoredDraft.cc : (replyInfo.cc.length > 0 ? replyInfo.cc : []),
     initialBcc: restoredDraft?.bcc !== undefined ? restoredDraft.bcc : [],
@@ -969,6 +984,10 @@ function InlineReply({
     });
     onBccChange?.(formatted);
   }, [form.bcc, mergedNameMap, onBccChange]);
+
+  useEffect(() => {
+    onFromChange?.(form.from);
+  }, [form.from, onFromChange]);
 
   // Progressive disclosure: collapsed summary vs expanded address fields
   // Forward mode starts expanded since there are no initial recipients
@@ -1161,6 +1180,7 @@ function InlineReply({
           mode: composeMode,
           replyToEmailId,
           threadId: replyInfo.threadId,
+          from: form.from,
           bodyHtml: form.bodyHtml,
           bodyText: form.bodyText,
           to: form.to,
@@ -1309,7 +1329,7 @@ function InlineReply({
                     className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 px-1"
                     data-testid="inline-reply-cc-bcc-toggle"
                   >
-                    Cc / Bcc
+                    {aliases.length > 1 ? "From / Cc / Bcc" : "Cc / Bcc"}
                   </button>
                 )}
               </>
@@ -1364,6 +1384,7 @@ function InlineReply({
                   onChipDrop={(email, sourceField) => form.handleRecipientDrop("bcc", email, sourceField)}
                   onChipDragStart={handleRecipientDragStart}
                 />
+                <FromSelector aliases={aliases} selected={form.from} onChange={form.setFrom} />
               </div>
             )}
           </>
@@ -1580,8 +1601,11 @@ function NewEmailCompose({
   onDiscard?: () => void;
   initialDraft?: RestoredDraft | null;
 }) {
+  const { aliases, defaultAlias } = useSendAsAliases(accountId);
+
   const form = useComposeForm({
     accountId,
+    initialFrom: initialDraft?.from ?? defaultAlias,
     initialTo: initialDraft?.to ?? [],
     initialCc: initialDraft?.cc ?? [],
     initialBcc: initialDraft?.bcc ?? [],
@@ -1708,7 +1732,7 @@ function NewEmailCompose({
       {/* Compose form */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4">
-          {/* To field with Cc/Bcc toggle */}
+          {/* To field with Cc/Bcc/From toggle */}
           <div className="flex items-center">
             <div className="flex-1 min-w-0">
               <AddressInput
@@ -1734,12 +1758,12 @@ function NewEmailCompose({
                 className="ml-2 flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 data-testid="compose-cc-bcc-toggle"
               >
-                Cc/Bcc
+                {aliases.length > 1 ? "From/Cc/Bcc" : "Cc/Bcc"}
               </button>
             )}
           </div>
 
-          {/* Collapsible Cc/Bcc fields */}
+          {/* Collapsible Cc/Bcc/From fields */}
           {form.showCcBcc && (
             <>
               <AddressInput
@@ -1768,6 +1792,7 @@ function NewEmailCompose({
                 onChipDrop={(email, sourceField) => form.handleRecipientDrop("bcc", email, sourceField)}
                 onChipDragStart={form.handleRecipientDragStart}
               />
+              <FromSelector aliases={aliases} selected={form.from} onChange={form.setFrom} />
             </>
           )}
 
@@ -1880,7 +1905,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
   const [isLoadingReplyInfo, setIsLoadingReplyInfo] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<RestoredDraft | null>(null);
   // Track inline reply content so we can save as draft on close
-  const inlineReplyContentRef = useRef<{ bodyHtml: string; bodyText: string; to?: string[]; cc?: string[]; bcc?: string[] } | null>(null);
+  const inlineReplyContentRef = useRef<{ bodyHtml: string; bodyText: string; from?: string; to?: string[]; cc?: string[]; bcc?: string[] } | null>(null);
   // Ref to the latest email so cleanup effects can save drafts for the correct email
   const latestEmailRef = useRef<ReturnType<typeof threadEmails.at> | null>(null);
   // Ref to current compose mode so savePendingDraft can persist it without re-creating
@@ -2151,6 +2176,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
           status: "edited",
           createdAt: email.draft?.createdAt ?? Date.now(),
           composeMode: mode ?? undefined,
+          ...(content.from !== undefined ? { from: content.from } : {}),
           ...(content.to !== undefined ? { to: content.to.length ? content.to : undefined } : {}),
           ...(content.cc !== undefined ? { cc: content.cc.length ? content.cc : undefined } : {}),
           ...(content.bcc !== undefined ? { bcc: content.bcc.length ? content.bcc : undefined } : {}),
@@ -2258,6 +2284,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
     openCompose(mode, replyTargetEmailId, {
       bodyHtml,
       bodyText: draftEmail.draft.body,
+      from: draftEmail.draft.from,
       to: draftEmail.draft.to,
       cc: draftEmail.draft.cc,
       bcc: draftEmail.draft.bcc,
@@ -2338,6 +2365,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
           restored = {
             bodyHtml: draftBodyToHtml(threadDraftEmail.draft.body),
             bodyText: threadDraftEmail.draft.body,
+            from: threadDraftEmail.draft.from,
             to: threadDraftEmail.draft.to,
             cc: threadDraftEmail.draft.cc,
             bcc: threadDraftEmail.draft.bcc,
@@ -2537,7 +2565,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
     }
   };
 
-  const handleNewEmailCancel = async (formState: { to: string[]; cc: string[]; bcc: string[]; subject: string; bodyHtml: string; bodyText: string }) => {
+  const handleNewEmailCancel = async (formState: ComposeFormState) => {
     const hasContent = formState.to.length > 0 || formState.subject.trim() || formState.bodyText.trim() || formState.bodyHtml.replace(/<[^>]*>/g, "").trim();
     const existingDraftId = composeState?.restoredDraft?.localDraftId;
 
@@ -2545,6 +2573,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
       if (existingDraftId) {
         // Update existing draft with current form state
         await window.api.compose.updateLocalDraft(existingDraftId, {
+          from: formState.from,
           to: formState.to,
           cc: formState.cc.length > 0 ? formState.cc : undefined,
           bcc: formState.bcc.length > 0 ? formState.bcc : undefined,
@@ -2554,6 +2583,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
         } as Record<string, unknown>);
         // Update in store too
         useAppStore.getState().updateLocalDraft(existingDraftId, {
+          from: formState.from,
           to: formState.to,
           cc: formState.cc.length > 0 ? formState.cc : undefined,
           bcc: formState.bcc.length > 0 ? formState.bcc : undefined,
@@ -2566,6 +2596,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
         // Save new draft
         const result = await window.api.compose.saveLocalDraft({
           accountId: currentAccountId,
+          from: formState.from,
           to: formState.to,
           cc: formState.cc.length > 0 ? formState.cc : undefined,
           bcc: formState.bcc.length > 0 ? formState.bcc : undefined,
@@ -2988,6 +3019,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
                   onSend={handleInlineReplySent}
                   onCancel={handleInlineReplyCancel}
                   onContentChange={(content) => { inlineReplyContentRef.current = { ...inlineReplyContentRef.current, ...content }; }}
+                  onFromChange={(from) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.from = from; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", from }; } }}
                   onToChange={(to) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.to = to; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", to }; } }}
                   onCcChange={(cc) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.cc = cc; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", cc }; } }}
                   onBccChange={(bcc) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.bcc = bcc; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", bcc }; } }}
@@ -2995,6 +3027,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
                   draftEmailId={draftEmail?.draft && draftEmail.draft.status !== "edited" ? draftEmail.id : undefined}
                   onDiscardDraft={handleDiscardDraft}
                   nameMap={nameMap}
+                  threadEmails={threadEmails}
                 />
               )}
             </div>

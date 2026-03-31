@@ -12,6 +12,7 @@ export type SettingsTab = "general" | "accounts" | "calendar" | "splits" | "sign
 export type RestoredDraft = {
   bodyHtml: string;
   bodyText: string;
+  from?: string;
   to?: string[];
   cc?: string[];
   bcc?: string[];
@@ -116,6 +117,7 @@ export type UndoSendItem = {
     mode: ComposeMode;
     replyToEmailId?: string;
     threadId?: string;
+    from?: string;
     bodyHtml: string;
     bodyText: string;
     to: string[];

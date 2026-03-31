@@ -25,6 +25,7 @@ function buildNameMapFromAddresses(addresses: string[]): Map<string, string> {
 // Shared send options shape (subset of the IPC API)
 export interface ComposeSendOptions {
   accountId: string;
+  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -49,6 +50,7 @@ export interface ComposeSendOptions {
 
 export interface UseComposeFormOptions {
   accountId: string;
+  initialFrom?: string;
   initialTo?: string[];
   initialCc?: string[];
   initialBcc?: string[];
@@ -68,6 +70,7 @@ export interface UseComposeFormOptions {
 }
 
 export interface ComposeFormState {
+  from?: string;
   to: string[];
   cc: string[];
   bcc: string[];
@@ -78,6 +81,7 @@ export interface ComposeFormState {
 
 export function useComposeForm({
   accountId,
+  initialFrom,
   initialTo = [],
   initialCc = [],
   initialBcc = [],
@@ -91,6 +95,17 @@ export function useComposeForm({
   forwardAttachmentSource,
 }: UseComposeFormOptions) {
   const composeMode = explicitComposeMode ?? (isForward ? "forward" : (replyInfo ? "reply" : "new"));
+
+  // --- From (send-as alias) state ---
+  const [from, setFrom] = useState<string | undefined>(initialFrom);
+
+  // Sync from state when initialFrom resolves async (e.g. defaultAlias query)
+  useEffect(() => {
+    if (initialFrom && !from) {
+      setFrom(initialFrom);
+    }
+  }, [initialFrom]); // intentionally omit `from` — only sync when user hasn't chosen yet
+
   // --- Address state ---
   // initialTo may contain formatted addresses ("Name <email>") from draft
   // restoration. Extract bare emails for form state and display names for nameMap.
@@ -232,6 +247,7 @@ export function useComposeForm({
 
     return {
       accountId,
+      from,
       to,
       cc: cc.length > 0 ? cc : undefined,
       bcc: bcc.length > 0 ? bcc : undefined,
@@ -245,7 +261,7 @@ export function useComposeForm({
       recipientNames,
       isForward: isForward || undefined,
     };
-  }, [accountId, to, cc, bcc, subject, bodyHtml, bodyText, signatureHtml, replyInfo, isForward, composeAttachments, nameMap]);
+  }, [accountId, from, to, cc, bcc, subject, bodyHtml, bodyText, signatureHtml, replyInfo, isForward, composeAttachments, nameMap]);
 
   // --- Send ---
   const send = useCallback(async (): Promise<IpcResponse<{ id: string; threadId: string }> | "undo-queued" | null> => {
@@ -267,6 +283,7 @@ export function useComposeForm({
           mode: composeMode,
           replyToEmailId,
           threadId: replyInfo?.threadId,
+          from,
           bodyHtml,
           bodyText,
           to,
@@ -332,10 +349,13 @@ export function useComposeForm({
 
   // --- Form state snapshot ---
   const getFormState = useCallback((): ComposeFormState => ({
-    to, cc, bcc, subject, bodyHtml, bodyText,
-  }), [to, cc, bcc, subject, bodyHtml, bodyText]);
+    from, to, cc, bcc, subject, bodyHtml, bodyText,
+  }), [from, to, cc, bcc, subject, bodyHtml, bodyText]);
 
   return {
+    // From (send-as alias)
+    from, setFrom,
+
     // Address state
     to, setTo,
     cc, setCc,

@@ -8,7 +8,7 @@ import { join } from "path";
 import { app, shell, BrowserWindow } from "electron";
 import { createTransport } from "nodemailer";
 import type Mail from "nodemailer/lib/mailer";
-import type { Email, EmailSearchResult, SentEmail, GmailDraft, SendMessageOptions, ComposeMessageOptions, AttachmentMeta } from "../../shared/types";
+import type { Email, EmailSearchResult, SentEmail, GmailDraft, SendMessageOptions, ComposeMessageOptions, AttachmentMeta, SendAsAlias } from "../../shared/types";
 import { getAccounts } from "../db";
 import { getDataDir } from "../data-dir";
 import { extractEmail } from "../utils/address-formatting";
@@ -1494,6 +1494,32 @@ export class GmailClient {
       console.warn("[GmailClient] Failed to fetch send-as display name:", error);
       return null;
     }
+  }
+
+  // ---- Send-as alias cache ----
+  private cachedAliases?: { data: SendAsAlias[]; fetchedAt: number };
+  private static ALIAS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Return the list of verified send-as aliases for this account.
+   * Results are cached in memory for 5 minutes.
+   */
+  async getSendAsAliases(): Promise<SendAsAlias[]> {
+    if (this.cachedAliases && Date.now() - this.cachedAliases.fetchedAt < GmailClient.ALIAS_CACHE_TTL) {
+      return this.cachedAliases.data;
+    }
+    const gmail = this.gmail!;
+    const response = await gmail.users.settings.sendAs.list({ userId: "me" });
+    const aliases: SendAsAlias[] = (response.data.sendAs || [])
+      .filter(s => s.isPrimary || s.verificationStatus === "accepted")
+      .map(s => ({
+        email: s.sendAsEmail!,
+        displayName: s.displayName?.trim() || null,
+        isPrimary: !!s.isPrimary,
+        treatAsAlias: s.treatAsAlias !== false,
+      }));
+    this.cachedAliases = { data: aliases, fetchedAt: Date.now() };
+    return aliases;
   }
 
   /** Clear cached account info so the next getAccountInfo() reads fresh from DB */

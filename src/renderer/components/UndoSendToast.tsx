@@ -81,6 +81,7 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
       }
       store.setViewMode("full");
       store.openCompose(ctx.mode, ctx.replyToEmailId, {
+        from: ctx.from,
         bodyHtml: ctx.bodyHtml,
         bodyText: ctx.bodyText,
         to: ctx.to,

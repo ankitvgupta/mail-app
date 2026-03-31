@@ -25,6 +25,7 @@ function rowToScheduledMessage(row: ScheduledMessageRow): ScheduledMessage {
     id: row.id,
     accountId: row.accountId,
     type: row.type,
+    from: row.from,
     threadId: row.threadId,
     to: row.to,
     cc: row.cc,
@@ -90,6 +91,7 @@ export function registerScheduledSendIpc(): void {
           id,
           accountId: options.accountId,
           type: options.threadId ? "reply" : "send",
+          from: options.from,
           threadId: options.threadId,
           to: formatAddressesWithNames(options.to, recipientNames),
           cc: options.cc ? formatAddressesWithNames(options.cc, recipientNames) : undefined,
@@ -159,6 +161,7 @@ export function registerScheduledSendIpc(): void {
         if (client) {
           try {
             const draft = await client.createFullDraft({
+              from: row.from,
               to: row.to,
               cc: row.cc,
               bcc: row.bcc,

@@ -305,6 +305,25 @@ function runMigrations(db: DatabaseInstance): void {
     console.log("[DB] Running migration: Adding memory_type column to draft_memories table");
     db.exec("ALTER TABLE draft_memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'drafting'");
   }
+
+  // Add from_address column to local_drafts, outbox, and scheduled_messages for send-as alias support
+  const localDraftsInfo = db.prepare("PRAGMA table_info(local_drafts)").all() as Array<{ name: string }>;
+  if (localDraftsInfo.length > 0 && !localDraftsInfo.some(c => c.name === "from_address")) {
+    console.log("[DB] Running migration: Adding from_address column to local_drafts table");
+    db.exec("ALTER TABLE local_drafts ADD COLUMN from_address TEXT");
+  }
+
+  const outboxInfoForFrom = db.prepare("PRAGMA table_info(outbox)").all() as Array<{ name: string }>;
+  if (outboxInfoForFrom.length > 0 && !outboxInfoForFrom.some(c => c.name === "from_address")) {
+    console.log("[DB] Running migration: Adding from_address column to outbox table");
+    db.exec("ALTER TABLE outbox ADD COLUMN from_address TEXT");
+  }
+
+  const scheduledInfoForFrom = db.prepare("PRAGMA table_info(scheduled_messages)").all() as Array<{ name: string }>;
+  if (scheduledInfoForFrom.length > 0 && !scheduledInfoForFrom.some(c => c.name === "from_address")) {
+    console.log("[DB] Running migration: Adding from_address column to scheduled_messages table");
+    db.exec("ALTER TABLE scheduled_messages ADD COLUMN from_address TEXT");
+  }
 }
 
 export function getDatabase(): DatabaseInstance {
@@ -2342,12 +2361,12 @@ export function saveLocalDraft(draft: LocalDraft): void {
   const db = getDatabase();
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO local_drafts (
-      id, account_id, gmail_draft_id, thread_id, in_reply_to,
+      id, account_id, gmail_draft_id, thread_id, in_reply_to, from_address,
       to_addresses, cc_addresses, bcc_addresses, subject,
       body_html, body_text, is_reply, is_forward,
       created_at, updated_at, synced_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     draft.id,
@@ -2355,6 +2374,7 @@ export function saveLocalDraft(draft: LocalDraft): void {
     draft.gmailDraftId || null,
     draft.threadId || null,
     draft.inReplyTo || null,
+    draft.from || null,
     JSON.stringify(draft.to),
     draft.cc ? JSON.stringify(draft.cc) : null,
     draft.bcc ? JSON.stringify(draft.bcc) : null,
@@ -2373,7 +2393,7 @@ export function getLocalDraft(draftId: string): LocalDraft | null {
   const db = getDatabase();
   const stmt = db.prepare(`
     SELECT id, account_id as accountId, gmail_draft_id as gmailDraftId,
-           thread_id as threadId, in_reply_to as inReplyTo,
+           thread_id as threadId, in_reply_to as inReplyTo, from_address as fromAddress,
            to_addresses as toAddresses, cc_addresses as ccAddresses,
            bcc_addresses as bccAddresses, subject,
            body_html as bodyHtml, body_text as bodyText,
@@ -2392,7 +2412,7 @@ export function getLocalDrafts(accountId?: string): LocalDraft[] {
   const db = getDatabase();
   let query = `
     SELECT id, account_id as accountId, gmail_draft_id as gmailDraftId,
-           thread_id as threadId, in_reply_to as inReplyTo,
+           thread_id as threadId, in_reply_to as inReplyTo, from_address as fromAddress,
            to_addresses as toAddresses, cc_addresses as ccAddresses,
            bcc_addresses as bccAddresses, subject,
            body_html as bodyHtml, body_text as bodyText,
@@ -2431,6 +2451,7 @@ function rowToLocalDraft(row: Record<string, unknown>): LocalDraft {
     gmailDraftId: (row.gmailDraftId as string | null) ?? undefined,
     threadId: (row.threadId as string | null) ?? undefined,
     inReplyTo: (row.inReplyTo as string | null) ?? undefined,
+    from: (row.fromAddress as string | null) ?? undefined,
     to: JSON.parse(row.toAddresses as string) as string[],
     cc: row.ccAddresses ? JSON.parse(row.ccAddresses as string) as string[] : undefined,
     bcc: row.bccAddresses ? JSON.parse(row.bccAddresses as string) as string[] : undefined,
@@ -2799,6 +2820,7 @@ export type OutboxItem = {
   id: string;
   accountId: string;
   type: OutboxType;
+  from?: string;
   threadId?: string;
   to: string[];
   cc?: string[];
@@ -2828,17 +2850,18 @@ export function insertOutboxMessage(item: Omit<OutboxItem, "status" | "retryCoun
   const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO outbox (
-      id, account_id, type, thread_id, to_addresses, cc_addresses, bcc_addresses,
+      id, account_id, type, from_address, thread_id, to_addresses, cc_addresses, bcc_addresses,
       subject, body_html, body_text, in_reply_to, references_header,
       attachments, status, retry_count, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
   `);
   const now = Date.now();
   stmt.run(
     item.id,
     item.accountId,
     item.type,
+    item.from || null,
     item.threadId || null,
     JSON.stringify(item.to),
     item.cc ? JSON.stringify(item.cc) : null,
@@ -2881,7 +2904,7 @@ export function getOutboxStats(accountId?: string): OutboxStats {
 export function getPendingOutbox(accountId?: string, limit: number = 10): OutboxItem[] {
   const db = getDatabase();
   let query = `
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
@@ -2903,7 +2926,7 @@ export function getPendingOutbox(accountId?: string, limit: number = 10): Outbox
 export function getOutboxItems(accountId?: string): OutboxItem[] {
   const db = getDatabase();
   let query = `
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
@@ -2925,7 +2948,7 @@ export function getOutboxItems(accountId?: string): OutboxItem[] {
 export function getOutboxItem(id: string): OutboxItem | null {
   const db = getDatabase();
   const stmt = db.prepare(`
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
@@ -3212,6 +3235,7 @@ export type ScheduledMessageRow = {
   id: string;
   accountId: string;
   type: "send" | "reply";
+  from?: string;
   threadId?: string;
   to: string[];
   cc?: string[];
@@ -3233,17 +3257,18 @@ export function insertScheduledMessage(item: Omit<ScheduledMessageRow, "status" 
   const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO scheduled_messages (
-      id, account_id, type, thread_id, to_addresses, cc_addresses, bcc_addresses,
+      id, account_id, type, from_address, thread_id, to_addresses, cc_addresses, bcc_addresses,
       subject, body_html, body_text, in_reply_to, references_header,
       scheduled_at, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
   `);
   const now = Date.now();
   stmt.run(
     item.id,
     item.accountId,
     item.type,
+    item.from || null,
     item.threadId || null,
     JSON.stringify(item.to),
     item.cc ? JSON.stringify(item.cc) : null,
@@ -3263,7 +3288,7 @@ export function getDueScheduledMessages(limit: number = 10): ScheduledMessageRow
   const db = getDatabase();
   const now = Date.now();
   const stmt = db.prepare(`
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
@@ -3281,7 +3306,7 @@ export function getDueScheduledMessages(limit: number = 10): ScheduledMessageRow
 export function getScheduledMessages(accountId?: string): ScheduledMessageRow[] {
   const db = getDatabase();
   let query = `
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
@@ -3303,7 +3328,7 @@ export function getScheduledMessages(accountId?: string): ScheduledMessageRow[] 
 export function getScheduledMessage(id: string): ScheduledMessageRow | null {
   const db = getDatabase();
   const stmt = db.prepare(`
-    SELECT id, account_id as accountId, type, thread_id as threadId,
+    SELECT id, account_id as accountId, type, from_address as fromAddress, thread_id as threadId,
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
@@ -3380,6 +3405,7 @@ function rowToScheduledMessage(row: Record<string, unknown>): ScheduledMessageRo
     id: row.id as string,
     accountId: row.accountId as string,
     type: row.type as "send" | "reply",
+    from: (row.fromAddress as string | null) ?? undefined,
     threadId: (row.threadId as string | null) ?? undefined,
     to: JSON.parse(row.toAddresses as string) as string[],
     cc: row.ccAddresses ? JSON.parse(row.ccAddresses as string) as string[] : undefined,
@@ -3609,6 +3635,7 @@ function rowToOutboxItem(row: Record<string, unknown>): OutboxItem {
     id: row.id as string,
     accountId: row.accountId as string,
     type: row.type as OutboxType,
+    from: (row.fromAddress as string | null) ?? undefined,
     threadId: (row.threadId as string | null) ?? undefined,
     to: JSON.parse(row.toAddresses as string) as string[],
     cc: row.ccAddresses ? JSON.parse(row.ccAddresses as string) as string[] : undefined,

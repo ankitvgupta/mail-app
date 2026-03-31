@@ -282,6 +282,8 @@ const api = {
       ipcRenderer.invoke("accounts:set-primary", { accountId }),
     cancelAdd: (): Promise<void> =>
       ipcRenderer.invoke("accounts:cancel-add"),
+    getSendAsAliases: (accountId: string): Promise<unknown> =>
+      ipcRenderer.invoke("accounts:get-send-as-aliases", { accountId }),
     onAddProgress: (callback: (data: { phase: string }) => void): (() => void) => {
       const handler = (_: Electron.IpcRendererEvent, data: { phase: string }) => callback(data);
       ipcRenderer.on("accounts:add-progress", handler);

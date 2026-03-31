@@ -18,6 +18,7 @@ import type { GmailClient } from "./gmail-client";
 export type OutboxMessage = {
   accountId: string;
   type: "send" | "reply";
+  from?: string;
   threadId?: string;
   to: string[];
   cc?: string[];
@@ -71,6 +72,7 @@ class OutboxService extends EventEmitter {
       id,
       accountId: message.accountId,
       type: message.type,
+      from: message.from,
       threadId: message.threadId,
       to: message.to,
       cc: message.cc,
@@ -337,6 +339,7 @@ class OutboxService extends EventEmitter {
 
     try {
       const result = await client.sendMessage({
+        from: item.from,
         to: item.to,
         cc: item.cc,
         bcc: item.bcc,

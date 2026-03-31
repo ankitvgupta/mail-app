@@ -72,6 +72,7 @@ export function EmailList() {
     const restoredDraft = {
       bodyHtml: hasRichFormatting(draft.bodyHtml) ? draft.bodyHtml : draftBodyToHtml(draft.bodyText || draft.bodyHtml),
       bodyText: draft.bodyText ?? "",
+      from: draft.from,
       to: draft.to,
       cc: draft.cc,
       bcc: draft.bcc,

@@ -7,7 +7,7 @@ import { outboxService } from "../services/outbox-service";
 import { prefetchService } from "../services/prefetch-service";
 import { isNetworkError } from "../services/network-errors";
 import { learnFromDraftEdit } from "../services/draft-edit-learner";
-import type { IpcResponse, LocalDraft, GmailDraft, ComposeMode, ReplyInfo, SendMessageOptions, SendMessageResult } from "../../shared/types";
+import type { IpcResponse, LocalDraft, GmailDraft, ComposeMode, ReplyInfo, SendMessageOptions, SendMessageResult, SendAsAlias } from "../../shared/types";
 import { formatAddressesWithNames, extractThreadNames } from "../utils/address-formatting";
 
 const isTestMode = process.env.EXO_TEST_MODE === "true";
@@ -26,6 +26,7 @@ function queueToOutbox(options: SendMessageOptions & { accountId: string }): Sen
   const id = outboxService.queue({
     accountId: options.accountId,
     type: options.threadId ? "reply" : "send",
+    from: options.from,
     threadId: options.threadId,
     to: formattedTo,
     cc: formattedCc,
@@ -475,6 +476,7 @@ export function registerComposeIpc(): void {
         }
 
         const result = await client.createFullDraft({
+          from: draft.from,
           to: draft.to,
           cc: draft.cc,
           bcc: draft.bcc,
@@ -753,6 +755,40 @@ export function registerComposeIpc(): void {
         return {
           success: false,
           error: error instanceof Error ? error.message : "Failed to mark message as read",
+        };
+      }
+    }
+  );
+
+  // Get send-as aliases for an account
+  ipcMain.handle(
+    "accounts:get-send-as-aliases",
+    async (_, { accountId }: { accountId: string }): Promise<IpcResponse<SendAsAlias[]>> => {
+      if (useFakeData) {
+        const account = getAccounts().find(a => a.id === accountId);
+        return {
+          success: true,
+          data: [{
+            email: account?.email || "demo@example.com",
+            displayName: account?.displayName || "Demo User",
+            isPrimary: true,
+            treatAsAlias: false,
+          }],
+        };
+      }
+
+      try {
+        const syncService = getEmailSyncService();
+        const client = syncService.getClientForAccount(accountId);
+        if (!client) {
+          return { success: false, error: "Account not connected" };
+        }
+        const aliases = await client.getSendAsAliases();
+        return { success: true, data: aliases };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Failed to fetch aliases",
         };
       }
     }
