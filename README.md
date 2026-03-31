@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="full" alt="Exo" src="apps/marketing/public/images/readme-hero.png" />
+<img width="full" alt="Exo" src="docs/images/readme-hero.png" />
 
 ### Exo: Claude Code for your Inbox
 
