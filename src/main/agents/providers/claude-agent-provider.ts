@@ -435,7 +435,7 @@ function buildBashPreToolUseHook(
     // expansion, history expansion, escape sequences) that are hard to enumerate.
     // Allowed: alphanumeric, whitespace, hyphens, underscores, dots, slashes,
     // colons, equals, commas, @, and quotes (for paths and arguments).
-    if (!/^[a-zA-Z0-9\s\-_./\\:=,@"']+$/.test(command)) {
+    if (!/^[a-zA-Z0-9 \t\-_./\\:=,@"']+$/.test(command)) {
       return {
         hookSpecificOutput: {
           hookEventName: "PreToolUse" as const,
