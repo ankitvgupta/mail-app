@@ -169,7 +169,6 @@ function SearchResultsView() {
     isOnline,
     remoteSearchNextPageToken,
     remoteSearchLoadingMore,
-    incrementLabelMapVersion,
   } = useAppStore();
 
   const currentUserEmail = accounts.find(a => a.id === currentAccountId)?.email;
@@ -591,7 +590,7 @@ export default function App() {
         setLabelMap(currentAccountId, result.data);
         incrementLabelMapVersion();
       }
-    }).catch(() => {});
+    }).catch((err) => console.warn("[Labels] Failed to fetch labels:", err));
   }, [currentAccountId, incrementLabelMapVersion]);
 
   // Initialize sync and accounts
