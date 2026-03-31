@@ -2535,7 +2535,8 @@ function DefaultSendAsSettings({
   defaultSendAs?: Record<string, string>;
   onSave: (defaultSendAs: Record<string, string>) => Promise<void>;
 }) {
-  // Fetch aliases for all accounts
+  const queryClient = useQueryClient();
+  // Fetch aliases for all accounts, sharing cache with useSendAsAliases hook
   const [aliasMap, setAliasMap] = useState<Record<string, SendAsAlias[]>>({});
   const [loaded, setLoaded] = useState(false);
 
@@ -2543,8 +2544,15 @@ function DefaultSendAsSettings({
     let cancelled = false;
     Promise.all(
       accounts.map(async (account) => {
-        const result = (await window.api.accounts.getSendAsAliases(account.id)) as IpcResponse<SendAsAlias[]>;
-        return { accountId: account.id, aliases: result.success && result.data ? result.data : [] };
+        const aliases = await queryClient.fetchQuery({
+          queryKey: ["send-as-aliases", account.id],
+          queryFn: async () => {
+            const result = (await window.api.accounts.getSendAsAliases(account.id)) as IpcResponse<SendAsAlias[]>;
+            return result.success && result.data ? result.data : [];
+          },
+          staleTime: 5 * 60 * 1000,
+        });
+        return { accountId: account.id, aliases };
       })
     ).then((results) => {
       if (cancelled) return;
@@ -2556,7 +2564,7 @@ function DefaultSendAsSettings({
       setLoaded(true);
     });
     return () => { cancelled = true; };
-  }, [accounts]);
+  }, [accounts, queryClient]);
 
   // Only show if at least one account has multiple aliases
   const hasMultipleAliases = loaded && accounts.some(a => (aliasMap[a.id]?.length ?? 0) > 1);

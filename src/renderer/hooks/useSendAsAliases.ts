@@ -11,14 +11,14 @@ export function useSendAsAliases(accountId: string) {
     staleTime: 5 * 60 * 1000, // 5 minutes — matches server-side cache TTL
   });
 
-  // Read the per-account default alias from config
+  // Read the per-account default alias from the shared config cache
   const { data: defaultAlias } = useQuery({
-    queryKey: ["default-send-as", accountId],
+    queryKey: ["general-config"],
     queryFn: async () => {
       const result = (await window.api.settings.get()) as IpcResponse<Config>;
-      return result.success ? result.data?.defaultSendAs?.[accountId] : undefined;
+      return result.success ? result.data : null;
     },
-    staleTime: 30 * 1000,
+    select: (config) => config?.defaultSendAs?.[accountId],
   });
 
   return { aliases, isLoading, defaultAlias };
