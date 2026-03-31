@@ -1703,12 +1703,6 @@ export function deleteAgentTrace(taskId: string): void {
   db.prepare(`DELETE FROM agent_conversation_mirror WHERE local_task_id = ?`).run(taskId);
 }
 
-/** Clear all agent traces (used in demo mode to remove stale data from prior sessions). */
-export function clearAllAgentTraces(): void {
-  const db = getDatabase();
-  db.prepare(`DELETE FROM agent_conversation_mirror`).run();
-}
-
 // Bulk clearing for prompt changes — scoped to inbox emails only
 export function clearInboxAnalyses(): number {
   const db = getDatabase();

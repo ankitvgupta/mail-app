@@ -30,7 +30,6 @@ import {
   saveCorrespondentProfile,
   updateAccountDisplayName,
   deleteAgentTrace,
-  clearAllAgentTraces,
   saveDraft,
   type AccountRecord,
 } from "../db";
@@ -697,9 +696,8 @@ export function registerSyncIpc(): void {
       }
       log.info(`[Demo] Saved ${demoArchiveReady.length} demo archive-ready records`);
 
-      // Clear stale data from previous sessions sharing this DB
+      // Clear stale snooze data (e.g. from previous e2e test runs sharing this DB)
       clearSnoozedEmails("default");
-      clearAllAgentTraces();
 
       // Seed demo snoozed emails so the Snoozed tab has content
       const demoSnoozed = [
