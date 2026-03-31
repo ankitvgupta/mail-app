@@ -45,12 +45,6 @@ export function registerAgentIpc(): void {
       },
     ): Promise<IpcResponse<{ taskId: string }>> => {
       try {
-        if (process.env.EXO_DEMO_MODE === "true") {
-          return {
-            success: false,
-            error: "Agent tasks are not available in demo mode",
-          };
-        }
         // Interactive agent tasks use the agentChat model (defaults to opus)
         const modelOverride = getModelIdForFeature("agentChat");
         await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
