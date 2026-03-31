@@ -425,6 +425,7 @@ export type DashboardEmail = {
   };
   draft?: {
     body: string;
+    from?: string;
     to?: string[];
     cc?: string[];
     bcc?: string[];

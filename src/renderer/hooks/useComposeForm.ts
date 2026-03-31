@@ -70,6 +70,7 @@ export interface UseComposeFormOptions {
 }
 
 export interface ComposeFormState {
+  from?: string;
   to: string[];
   cc: string[];
   bcc: string[];
@@ -348,8 +349,8 @@ export function useComposeForm({
 
   // --- Form state snapshot ---
   const getFormState = useCallback((): ComposeFormState => ({
-    to, cc, bcc, subject, bodyHtml, bodyText,
-  }), [to, cc, bcc, subject, bodyHtml, bodyText]);
+    from, to, cc, bcc, subject, bodyHtml, bodyText,
+  }), [from, to, cc, bcc, subject, bodyHtml, bodyText]);
 
   return {
     // From (send-as alias)

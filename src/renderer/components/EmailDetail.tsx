@@ -893,6 +893,7 @@ function InlineReply({
   onSend,
   onCancel,
   onContentChange,
+  onFromChange,
   onToChange,
   onCcChange,
   onBccChange,
@@ -910,6 +911,7 @@ function InlineReply({
   onSend: (sentInfo: SentMessageInfo) => void;
   onCancel: () => void;
   onContentChange?: (content: { bodyHtml: string; bodyText: string }) => void;
+  onFromChange?: (from: string | undefined) => void;
   onToChange?: (to: string[]) => void;
   onCcChange?: (cc: string[]) => void;
   onBccChange?: (bcc: string[]) => void;
@@ -982,6 +984,10 @@ function InlineReply({
     });
     onBccChange?.(formatted);
   }, [form.bcc, mergedNameMap, onBccChange]);
+
+  useEffect(() => {
+    onFromChange?.(form.from);
+  }, [form.from, onFromChange]);
 
   // Progressive disclosure: collapsed summary vs expanded address fields
   // Forward mode starts expanded since there are no initial recipients
@@ -1899,7 +1905,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
   const [isLoadingReplyInfo, setIsLoadingReplyInfo] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<RestoredDraft | null>(null);
   // Track inline reply content so we can save as draft on close
-  const inlineReplyContentRef = useRef<{ bodyHtml: string; bodyText: string; to?: string[]; cc?: string[]; bcc?: string[] } | null>(null);
+  const inlineReplyContentRef = useRef<{ bodyHtml: string; bodyText: string; from?: string; to?: string[]; cc?: string[]; bcc?: string[] } | null>(null);
   // Ref to the latest email so cleanup effects can save drafts for the correct email
   const latestEmailRef = useRef<ReturnType<typeof threadEmails.at> | null>(null);
   // Ref to current compose mode so savePendingDraft can persist it without re-creating
@@ -2170,6 +2176,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
           status: "edited",
           createdAt: email.draft?.createdAt ?? Date.now(),
           composeMode: mode ?? undefined,
+          ...(content.from !== undefined ? { from: content.from } : {}),
           ...(content.to !== undefined ? { to: content.to.length ? content.to : undefined } : {}),
           ...(content.cc !== undefined ? { cc: content.cc.length ? content.cc : undefined } : {}),
           ...(content.bcc !== undefined ? { bcc: content.bcc.length ? content.bcc : undefined } : {}),
@@ -2357,6 +2364,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
           restored = {
             bodyHtml: draftBodyToHtml(threadDraftEmail.draft.body),
             bodyText: threadDraftEmail.draft.body,
+            from: threadDraftEmail.draft.from,
             to: threadDraftEmail.draft.to,
             cc: threadDraftEmail.draft.cc,
             bcc: threadDraftEmail.draft.bcc,
@@ -3007,6 +3015,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
                   onSend={handleInlineReplySent}
                   onCancel={handleInlineReplyCancel}
                   onContentChange={(content) => { inlineReplyContentRef.current = { ...inlineReplyContentRef.current, ...content }; }}
+                  onFromChange={(from) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.from = from; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", from }; } }}
                   onToChange={(to) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.to = to; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", to }; } }}
                   onCcChange={(cc) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.cc = cc; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", cc }; } }}
                   onBccChange={(bcc) => { if (inlineReplyContentRef.current) { inlineReplyContentRef.current.bcc = bcc; } else { inlineReplyContentRef.current = { bodyHtml: "", bodyText: "", bcc }; } }}
