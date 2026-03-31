@@ -38,6 +38,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.37",
     "@anthropic-ai/sdk": "^0.71.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@floating-ui/dom": "^1.7.6",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-virtual": "^3.13.21",
