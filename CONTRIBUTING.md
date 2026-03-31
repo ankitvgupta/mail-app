@@ -61,7 +61,7 @@ Once all of the above pass, open your pull request. Automated review bots will a
 
 ### 7. Satisfy the review bots
 
-You can use the /reviewloop skill to help you out here. 
+You can use the `/reviewloop` skill to help you out here.
 
 ## What We Look For
 
