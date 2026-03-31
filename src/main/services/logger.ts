@@ -19,6 +19,7 @@ function getLogDir(): string {
   try {
     // Resolve the data directory inline to avoid a circular dependency
     // with data-dir.ts (which imports createLogger at module scope).
+    // NOTE: Keep this path logic in sync with getDataDir() in data-dir.ts.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { app } = require("electron");
     const dev = isDev();
