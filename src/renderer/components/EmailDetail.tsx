@@ -2284,6 +2284,7 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
     openCompose(mode, replyTargetEmailId, {
       bodyHtml,
       bodyText: draftEmail.draft.body,
+      from: draftEmail.draft.from,
       to: draftEmail.draft.to,
       cc: draftEmail.draft.cc,
       bcc: draftEmail.draft.bcc,
