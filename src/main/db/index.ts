@@ -4,6 +4,9 @@ import { mkdirSync, existsSync } from "fs";
 import { getDataDir } from "../data-dir";
 import { SCHEMA, FTS5_SCHEMA, FTS5_TRIGGERS } from "./schema";
 import type { DashboardEmail, SentEmail, StyleSample, Email, CorrespondentProfile, Memory, MemoryScope, MemorySource, MemoryType, DraftMemory } from "../../shared/types";
+import { createLogger } from "../services/logger";
+
+const log = createLogger("db");
 
 // Use createRequire to load native module at runtime
 const require = createRequire(import.meta.url);
@@ -32,7 +35,7 @@ export function initDatabase(): DatabaseInstance {
   }
 
   const dbPath = join(dbDir, dbFilename);
-  console.log(`[DB] Using database: ${dbPath}${(isDemoMode || isTestMode) ? " (demo/test mode)" : ""}`);
+  log.info(`[DB] Using database: ${dbPath}${(isDemoMode || isTestMode) ? " (demo/test mode)" : ""}`);
   db = new Database(dbPath);
 
   // Enable WAL mode for better concurrent access
@@ -64,7 +67,7 @@ function initFTS5(db: DatabaseInstance): void {
         .get() as { sql: string } | undefined;
 
       if (ftsCreateSql?.sql && /porter/i.test(ftsCreateSql.sql)) {
-        console.log("[DB] Migrating FTS5 from porter tokenizer to unicode61");
+        log.info("[DB] Migrating FTS5 from porter tokenizer to unicode61");
 
         // Drop old triggers, FTS table, and recreate
         db.exec("DROP TRIGGER IF EXISTS emails_fts_insert");
@@ -79,12 +82,12 @@ function initFTS5(db: DatabaseInstance): void {
         backfillBodyText(db);
 
         // Populate FTS with body_text
-        console.log("[DB] Populating FTS5 index from existing emails (post-migration)");
+        log.info("[DB] Populating FTS5 index from existing emails (post-migration)");
         db.exec(`
           INSERT INTO emails_fts(rowid, subject, body_text, from_address, to_address)
           SELECT rowid, subject, COALESCE(body_text, body), from_address, to_address FROM emails
         `);
-        console.log("[DB] FTS5 migration complete");
+        log.info("[DB] FTS5 migration complete");
       } else {
         // Ensure triggers exist (may be missing if a previous migration was interrupted)
         db.exec(FTS5_TRIGGERS);
@@ -93,17 +96,17 @@ function initFTS5(db: DatabaseInstance): void {
         const ftsCount = (db.prepare("SELECT COUNT(*) as cnt FROM emails_fts").get() as { cnt: number }).cnt;
         const emailCount = (db.prepare("SELECT COUNT(*) as cnt FROM emails").get() as { cnt: number }).cnt;
         if (ftsCount === 0 && emailCount > 0) {
-          console.log(`[DB] FTS5 index is empty but ${emailCount} emails exist — repopulating`);
+          log.info(`[DB] FTS5 index is empty but ${emailCount} emails exist — repopulating`);
           backfillBodyText(db);
           db.exec(`
             INSERT INTO emails_fts(rowid, subject, body_text, from_address, to_address)
             SELECT rowid, subject, COALESCE(body_text, body), from_address, to_address FROM emails
           `);
-          console.log("[DB] FTS5 index repopulated");
+          log.info("[DB] FTS5 index repopulated");
         }
       }
     } else {
-      console.log("[DB] Creating FTS5 search index");
+      log.info("[DB] Creating FTS5 search index");
 
       // Create FTS5 virtual table
       db.exec(FTS5_SCHEMA);
@@ -115,15 +118,15 @@ function initFTS5(db: DatabaseInstance): void {
       backfillBodyText(db);
 
       // Populate FTS with existing emails
-      console.log("[DB] Populating FTS5 index from existing emails");
+      log.info("[DB] Populating FTS5 index from existing emails");
       db.exec(`
         INSERT INTO emails_fts(rowid, subject, body_text, from_address, to_address)
         SELECT rowid, subject, COALESCE(body_text, body), from_address, to_address FROM emails
       `);
-      console.log("[DB] FTS5 search index created and populated");
+      log.info("[DB] FTS5 search index created and populated");
     }
   } catch (error) {
-    console.error("[DB] Failed to initialize FTS5:", error);
+    log.error("[DB] Failed to initialize FTS5:", error);
   }
 }
 
@@ -135,7 +138,7 @@ function backfillBodyText(db: DatabaseInstance): void {
   const rows = db.prepare("SELECT rowid, body FROM emails WHERE body_text IS NULL").all() as Array<{ rowid: number; body: string }>;
   if (rows.length === 0) return;
 
-  console.log(`[DB] Backfilling body_text for ${rows.length} emails`);
+  log.info(`[DB] Backfilling body_text for ${rows.length} emails`);
   const updateStmt = db.prepare("UPDATE emails SET body_text = ? WHERE rowid = ?");
   const runAll = db.transaction(() => {
     for (const row of rows) {
@@ -143,7 +146,7 @@ function backfillBodyText(db: DatabaseInstance): void {
     }
   });
   runAll();
-  console.log("[DB] body_text backfill complete");
+  log.info("[DB] body_text backfill complete");
 }
 
 function runMigrations(db: DatabaseInstance): void {
@@ -153,7 +156,7 @@ function runMigrations(db: DatabaseInstance): void {
 
   if (tableInfo.length > 0 && !hasAccountId) {
     // Migration: Add account_id column to existing emails table
-    console.log("[DB] Running migration: Adding account_id column to emails table");
+    log.info("[DB] Running migration: Adding account_id column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN account_id TEXT DEFAULT 'default'");
   }
 
@@ -170,7 +173,7 @@ function runMigrations(db: DatabaseInstance): void {
 
   if (enrichmentsTableInfo.length > 0 && !hasSenderEmail) {
     // Migration: Add sender_email column to existing extension_enrichments table
-    console.log("[DB] Running migration: Adding sender_email column to extension_enrichments table");
+    log.info("[DB] Running migration: Adding sender_email column to extension_enrichments table");
     db.exec("ALTER TABLE extension_enrichments ADD COLUMN sender_email TEXT");
   }
 
@@ -185,20 +188,20 @@ function runMigrations(db: DatabaseInstance): void {
   const hasLabelIds = tableInfo.some((col) => col.name === "label_ids");
   if (tableInfo.length > 0 && !hasLabelIds) {
     // Migration: Add label_ids column to existing emails table
-    console.log("[DB] Running migration: Adding label_ids column to emails table");
+    log.info("[DB] Running migration: Adding label_ids column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN label_ids TEXT");
   }
 
   // Check if emails table has cc_address column
   const hasCcAddress = tableInfo.some((col) => col.name === "cc_address");
   if (tableInfo.length > 0 && !hasCcAddress) {
-    console.log("[DB] Running migration: Adding cc_address column to emails table");
+    log.info("[DB] Running migration: Adding cc_address column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN cc_address TEXT");
   }
 
   const hasBccAddress = tableInfo.some((col) => col.name === "bcc_address");
   if (tableInfo.length > 0 && !hasBccAddress) {
-    console.log("[DB] Running migration: Adding bcc_address column to emails table");
+    log.info("[DB] Running migration: Adding bcc_address column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN bcc_address TEXT");
   }
 
@@ -206,7 +209,7 @@ function runMigrations(db: DatabaseInstance): void {
   const calSyncTableInfo = db.prepare("PRAGMA table_info(calendar_sync_state)").all() as Array<{ name: string }>;
   const hasCalSyncVisible = calSyncTableInfo.some((col) => col.name === "visible");
   if (calSyncTableInfo.length > 0 && !hasCalSyncVisible) {
-    console.log("[DB] Running migration: Adding visible column to calendar_sync_state table");
+    log.info("[DB] Running migration: Adding visible column to calendar_sync_state table");
     db.exec("ALTER TABLE calendar_sync_state ADD COLUMN visible INTEGER DEFAULT 1");
   }
 
@@ -215,7 +218,7 @@ function runMigrations(db: DatabaseInstance): void {
   const tableInfoRefresh = db.prepare("PRAGMA table_info(emails)").all() as Array<{ name: string }>;
   const hasBodyText = tableInfoRefresh.some((col) => col.name === "body_text");
   if (tableInfoRefresh.length > 0 && !hasBodyText) {
-    console.log("[DB] Running migration: Adding body_text column to emails table");
+    log.info("[DB] Running migration: Adding body_text column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN body_text TEXT");
   }
 
@@ -223,7 +226,7 @@ function runMigrations(db: DatabaseInstance): void {
   const tableInfoForAttachments = db.prepare("PRAGMA table_info(emails)").all() as Array<{ name: string }>;
   const hasAttachments = tableInfoForAttachments.some((col) => col.name === "attachments");
   if (tableInfoForAttachments.length > 0 && !hasAttachments) {
-    console.log("[DB] Running migration: Adding attachments column to emails table");
+    log.info("[DB] Running migration: Adding attachments column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN attachments TEXT");
   }
 
@@ -231,7 +234,7 @@ function runMigrations(db: DatabaseInstance): void {
   const outboxTableInfo = db.prepare("PRAGMA table_info(outbox)").all() as Array<{ name: string }>;
   const outboxHasAttachments = outboxTableInfo.some((col) => col.name === "attachments");
   if (outboxTableInfo.length > 0 && !outboxHasAttachments) {
-    console.log("[DB] Running migration: Adding attachments column to outbox table");
+    log.info("[DB] Running migration: Adding attachments column to outbox table");
     db.exec("ALTER TABLE outbox ADD COLUMN attachments TEXT");
   }
 
@@ -239,7 +242,7 @@ function runMigrations(db: DatabaseInstance): void {
   const draftsTableInfo = db.prepare("PRAGMA table_info(drafts)").all() as Array<{ name: string }>;
   const hasAgentTaskId = draftsTableInfo.some((col) => col.name === "agent_task_id");
   if (draftsTableInfo.length > 0 && !hasAgentTaskId) {
-    console.log("[DB] Running migration: Adding agent_task_id column to drafts table");
+    log.info("[DB] Running migration: Adding agent_task_id column to drafts table");
     db.exec("ALTER TABLE drafts ADD COLUMN agent_task_id TEXT");
   }
 
@@ -247,12 +250,12 @@ function runMigrations(db: DatabaseInstance): void {
   const draftsTableInfoRefresh = db.prepare("PRAGMA table_info(drafts)").all() as Array<{ name: string }>;
   const hasDraftCc = draftsTableInfoRefresh.some((col) => col.name === "cc");
   if (draftsTableInfoRefresh.length > 0 && !hasDraftCc) {
-    console.log("[DB] Running migration: Adding cc column to drafts table");
+    log.info("[DB] Running migration: Adding cc column to drafts table");
     db.exec("ALTER TABLE drafts ADD COLUMN cc TEXT");
   }
   const hasDraftBcc = draftsTableInfoRefresh.some((col) => col.name === "bcc");
   if (draftsTableInfoRefresh.length > 0 && !hasDraftBcc) {
-    console.log("[DB] Running migration: Adding bcc column to drafts table");
+    log.info("[DB] Running migration: Adding bcc column to drafts table");
     db.exec("ALTER TABLE drafts ADD COLUMN bcc TEXT");
   }
 
@@ -260,7 +263,7 @@ function runMigrations(db: DatabaseInstance): void {
   const draftsTableInfoForMode = db.prepare("PRAGMA table_info(drafts)").all() as Array<{ name: string }>;
   const hasDraftComposeMode = draftsTableInfoForMode.some((col) => col.name === "compose_mode");
   if (draftsTableInfoForMode.length > 0 && !hasDraftComposeMode) {
-    console.log("[DB] Running migration: Adding compose_mode column to drafts table");
+    log.info("[DB] Running migration: Adding compose_mode column to drafts table");
     db.exec("ALTER TABLE drafts ADD COLUMN compose_mode TEXT");
   }
 
@@ -268,7 +271,7 @@ function runMigrations(db: DatabaseInstance): void {
   const draftsTableInfoForTo = db.prepare("PRAGMA table_info(drafts)").all() as Array<{ name: string }>;
   const hasDraftToRecipients = draftsTableInfoForTo.some((col) => col.name === "to_recipients");
   if (draftsTableInfoForTo.length > 0 && !hasDraftToRecipients) {
-    console.log("[DB] Running migration: Adding to_recipients column to drafts table");
+    log.info("[DB] Running migration: Adding to_recipients column to drafts table");
     db.exec("ALTER TABLE drafts ADD COLUMN to_recipients TEXT");
   }
 
@@ -276,7 +279,7 @@ function runMigrations(db: DatabaseInstance): void {
   const tableInfoForMessageId = db.prepare("PRAGMA table_info(emails)").all() as Array<{ name: string }>;
   const hasMessageId = tableInfoForMessageId.some((col) => col.name === "message_id");
   if (tableInfoForMessageId.length > 0 && !hasMessageId) {
-    console.log("[DB] Running migration: Adding message_id column to emails table");
+    log.info("[DB] Running migration: Adding message_id column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN message_id TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id)");
   }
@@ -285,7 +288,7 @@ function runMigrations(db: DatabaseInstance): void {
   const tableInfoForInReplyTo = db.prepare("PRAGMA table_info(emails)").all() as Array<{ name: string }>;
   const hasInReplyTo = tableInfoForInReplyTo.some((col) => col.name === "in_reply_to");
   if (tableInfoForInReplyTo.length > 0 && !hasInReplyTo) {
-    console.log("[DB] Running migration: Adding in_reply_to column to emails table");
+    log.info("[DB] Running migration: Adding in_reply_to column to emails table");
     db.exec("ALTER TABLE emails ADD COLUMN in_reply_to TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to)");
   }
@@ -294,7 +297,7 @@ function runMigrations(db: DatabaseInstance): void {
   const memoriesTableInfo = db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
   const hasMemoryType = memoriesTableInfo.some((col) => col.name === "memory_type");
   if (memoriesTableInfo.length > 0 && !hasMemoryType) {
-    console.log("[DB] Running migration: Adding memory_type column to memories table");
+    log.info("[DB] Running migration: Adding memory_type column to memories table");
     db.exec("ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'drafting'");
   }
 
@@ -302,8 +305,84 @@ function runMigrations(db: DatabaseInstance): void {
   const draftMemoriesTableInfo = db.prepare("PRAGMA table_info(draft_memories)").all() as Array<{ name: string }>;
   const hasDraftMemoryType = draftMemoriesTableInfo.some((col) => col.name === "memory_type");
   if (draftMemoriesTableInfo.length > 0 && !hasDraftMemoryType) {
-    console.log("[DB] Running migration: Adding memory_type column to draft_memories table");
+    log.info("[DB] Running migration: Adding memory_type column to draft_memories table");
     db.exec("ALTER TABLE draft_memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'drafting'");
+  }
+
+  // === Forward-only numbered migration system ===
+  // Existing ad-hoc migrations above are the "baseline" (version 0).
+  // All NEW migrations go through the numbered system below.
+  runNumberedMigrations(db);
+}
+
+// --- Numbered migration system (forward-only, bootstrap baseline) ---
+
+interface Migration {
+  version: number;
+  name: string;
+  up: (db: DatabaseInstance) => void;
+}
+
+// Add new migrations here. Version numbers must be sequential.
+// Existing databases get version 0 (baseline) on first run.
+const NUMBERED_MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    name: "add_llm_calls_table",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_calls (
+          id TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          model TEXT NOT NULL,
+          caller TEXT NOT NULL,
+          email_id TEXT,
+          account_id TEXT,
+          input_tokens INTEGER NOT NULL,
+          output_tokens INTEGER NOT NULL,
+          cache_read_tokens INTEGER DEFAULT 0,
+          cache_create_tokens INTEGER DEFAULT 0,
+          cost_cents REAL NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          success INTEGER NOT NULL DEFAULT 1,
+          error_message TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
+        CREATE INDEX IF NOT EXISTS idx_llm_calls_caller ON llm_calls(caller);
+      `);
+    },
+  },
+];
+
+function runNumberedMigrations(db: DatabaseInstance): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  const currentRow = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as
+    | { version: number | null }
+    | undefined;
+  let currentVersion = currentRow?.version ?? -1;
+
+  if (currentVersion === -1) {
+    db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(0);
+    currentVersion = 0;
+    log.info({ version: 0 }, "Migration system initialized at baseline");
+  }
+
+  for (const migration of NUMBERED_MIGRATIONS) {
+    if (migration.version > currentVersion) {
+      log.info({ version: migration.version, name: migration.name }, "Running numbered migration");
+      const runInTransaction = db.transaction(() => {
+        migration.up(db);
+        db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(migration.version);
+      });
+      runInTransaction();
+      currentVersion = migration.version;
+    }
   }
 }
 
@@ -323,7 +402,7 @@ export function checkpointWal(): void {
   try {
     db.pragma("wal_checkpoint(PASSIVE)");
   } catch (e) {
-    console.error("[DB] WAL checkpoint failed:", e);
+    log.error("[DB] WAL checkpoint failed:", e);
   }
 }
 
@@ -336,12 +415,12 @@ export function closeDatabase(): void {
   try {
     db.pragma("wal_checkpoint(TRUNCATE)");
   } catch (e) {
-    console.error("[DB] WAL checkpoint failed during close:", e);
+    log.error("[DB] WAL checkpoint failed during close:", e);
   }
   try {
     db.close();
   } catch (e) {
-    console.error("[DB] Error closing database:", e);
+    log.error("[DB] Error closing database:", e);
   }
   db = null;
 }
@@ -526,7 +605,7 @@ export function getAllEmails(accountId?: string): DashboardEmail[] {
   applyThreadMerge(emails);
 
   const totalTime = performance.now() - t0;
-  console.log(`[PERF] getAllEmails query=${queryTime.toFixed(1)}ms map=${mapTime.toFixed(1)}ms total=${totalTime.toFixed(1)}ms rows=${rows.length}`);
+  log.info(`[PERF] getAllEmails query=${queryTime.toFixed(1)}ms map=${mapTime.toFixed(1)}ms total=${totalTime.toFixed(1)}ms rows=${rows.length}`);
   return emails;
 }
 
@@ -646,7 +725,7 @@ export function getInboxEmails(accountId?: string): DashboardEmail[] {
   const mapTime = performance.now() - tMap;
 
   const totalTime = performance.now() - t0;
-  console.log(`[PERF] getInboxEmails query=${queryTime.toFixed(1)}ms map=${mapTime.toFixed(1)}ms total=${totalTime.toFixed(1)}ms rows=${result.length}`);
+  log.info(`[PERF] getInboxEmails query=${queryTime.toFixed(1)}ms map=${mapTime.toFixed(1)}ms total=${totalTime.toFixed(1)}ms rows=${result.length}`);
   return result;
 }
 
@@ -676,7 +755,7 @@ export function getSentEmails(accountId: string): DashboardEmail[] {
   const emails = rows.map(rowToDashboardEmail);
 
   const totalTime = performance.now() - t0;
-  console.log(`[PERF] getSentEmails total=${totalTime.toFixed(1)}ms rows=${rows.length}`);
+  log.info(`[PERF] getSentEmails total=${totalTime.toFixed(1)}ms rows=${rows.length}`);
   return emails;
 }
 
@@ -1059,7 +1138,7 @@ function buildMergeCache(accountId?: string): Map<string, string[]> {
 
   _mergeGroupsByAccount.set(accountKey, mergeGroups);
 
-  console.log(
+  log.info(
     `[ThreadMerge] Built merge cache for account=${accountKey || "(all)"}: ${rows.length} emails, ` +
     `${allThreadIds.size} threads, ${groups.size} groups in ${(performance.now() - t0).toFixed(1)}ms`
   );
@@ -2539,7 +2618,7 @@ export function searchEmails(query: string, options: SearchOptions = {}): Search
     const stmt = db.prepare(sql);
     rows = stmt.all(...params) as Array<Record<string, unknown>>;
   } catch (error) {
-    console.error("[DB] FTS5 search error, falling back to LIKE:", error);
+    log.error("[DB] FTS5 search error, falling back to LIKE:", error);
     // rows stays empty, will trigger LIKE fallback
   }
 
@@ -2576,7 +2655,7 @@ export function searchEmails(query: string, options: SearchOptions = {}): Search
       const stmt = db.prepare(sql);
       rows = stmt.all(...params) as Array<Record<string, unknown>>;
     } catch (likeError) {
-      console.error("[DB] LIKE fallback search error:", likeError);
+      log.error("[DB] LIKE fallback search error:", likeError);
       return [];
     }
   }
@@ -2613,7 +2692,7 @@ export function getSearchSuggestions(query: string, limit: number = 10): string[
     const rows = stmt.all(`%${query}%`, limit) as Array<{ address: string }>;
     return rows.map((row) => row.address);
   } catch (error) {
-    console.error("[DB] Search suggestions error:", error);
+    log.error("[DB] Search suggestions error:", error);
     return [];
   }
 }
@@ -2623,7 +2702,7 @@ export function getSearchSuggestions(query: string, limit: number = 10): string[
  */
 export function rebuildSearchIndex(): void {
   const db = getDatabase();
-  console.log("[DB] Rebuilding FTS5 search index");
+  log.info("[DB] Rebuilding FTS5 search index");
 
   try {
     // Delete all from FTS
@@ -2638,9 +2717,9 @@ export function rebuildSearchIndex(): void {
     // Optimize the index
     db.exec("INSERT INTO emails_fts(emails_fts) VALUES('optimize')");
 
-    console.log("[DB] FTS5 search index rebuilt");
+    log.info("[DB] FTS5 search index rebuilt");
   } catch (error) {
-    console.error("[DB] Failed to rebuild search index:", error);
+    log.error("[DB] Failed to rebuild search index:", error);
   }
 }
 
@@ -2779,7 +2858,7 @@ export function getContactSuggestions(query: string, limit: number = 10): Contac
       }
     }
   } catch (error) {
-    console.error("[DB] Contact suggestions error:", error);
+    log.error("[DB] Contact suggestions error:", error);
     return [];
   }
 
@@ -3049,7 +3128,7 @@ export function batchInsertOnboardingSkips(
   });
   runAll();
 
-  console.log(`[DB] Onboarding: marked ${emailIds.length} emails as skip, ${threadIds.length} threads as archive-ready`);
+  log.info(`[DB] Onboarding: marked ${emailIds.length} emails as skip, ${threadIds.length} threads as archive-ready`);
 }
 
 export function getArchiveReadyThreads(accountId: string): ArchiveReadyRow[] {

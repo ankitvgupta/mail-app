@@ -1,44 +1,18 @@
 import { app, BrowserWindow, ipcMain, session, nativeTheme } from "electron";
 import { join } from "path";
 import { execSync } from "child_process";
-import { readFileSync, existsSync, createWriteStream, mkdirSync } from "fs";
-import { electronApp, optimizer, is } from "@electron-toolkit/utils";
+import { readFileSync, existsSync } from "fs";
+import { electronApp, optimizer } from "@electron-toolkit/utils";
 
 import { getDataDir, initDevData } from "./data-dir";
+import { createLogger, flushLogs } from "./services/logger";
 
 initDevData();
 
-// File-based logging: tee console output to a log file for debugging
-const logDir = join(getDataDir(), "logs");
-try { mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
-const logStream = createWriteStream(join(logDir, "main.log"), { flags: "a" });
-logStream.on("error", () => { /* swallow write errors to prevent crashing the app */ });
-const origLog = console.log.bind(console);
-const origError = console.error.bind(console);
-const origWarn = console.warn.bind(console);
-const timestamp = () => new Date().toISOString();
-const safeStringify = (obj: unknown): string => {
-  try { return JSON.stringify(obj); }
-  catch { return String(obj); }
-};
-logStream.write(`\n--- Session started at ${timestamp()} ---\n`);
-console.log = (...args: unknown[]) => {
-  const msg = args.map(a => typeof a === "string" ? a : safeStringify(a)).join(" ");
-  logStream.write(`[${timestamp()}] ${msg}\n`);
-  origLog(...args);
-};
-console.error = (...args: unknown[]) => {
-  const msg = args.map(a => typeof a === "string" ? a : (a instanceof Error ? a.stack || a.message : safeStringify(a))).join(" ");
-  logStream.write(`[${timestamp()}] ERROR: ${msg}\n`);
-  origError(...args);
-};
-console.warn = (...args: unknown[]) => {
-  const msg = args.map(a => typeof a === "string" ? a : safeStringify(a)).join(" ");
-  logStream.write(`[${timestamp()}] WARN: ${msg}\n`);
-  origWarn(...args);
-};
+const log = createLogger("app");
+
 // Temporary debug IPC: renderer → main stdout/log
-ipcMain.on("debug:log", (_, msg: string) => { console.log(`[renderer] ${msg}`); });
+ipcMain.on("debug:log", (_, msg: string) => { log.info(`[renderer] ${msg}`); });
 
 import { ExtensionManifestSchema } from "../shared/extension-types";
 import webSearchPackageJson from "../extensions/mail-ext-web-search/package.json";
@@ -130,9 +104,9 @@ if (envFile) {
         }
       }
     }
-    console.log("[Config] Loaded .env file");
+    log.info("[Config] Loaded .env file");
   } catch (e) {
-    console.warn("[Config] Failed to load .env file:", e);
+    log.warn("[Config] Failed to load .env file:", e);
   }
 }
 
@@ -276,7 +250,11 @@ ipcMain.handle("default-mail-app:get-pending", () => {
 });
 
 // Initialize database on startup
-initDatabase();
+const _db = initDatabase();
+
+// Wire up AnthropicService cost tracking
+import { setAnthropicServiceDb } from "./services/anthropic-service";
+setAnthropicServiceDb(_db);
 
 // If no ANTHROPIC_API_KEY in env (e.g. packaged app with no .env), read from stored config
 // so that services using `new Anthropic()` pick it up automatically.
@@ -425,9 +403,9 @@ app.whenReady().then(async () => {
     extensionHost.registerBundledExtensionFull(webSearchManifest, webSearchExtension),
     extensionHost.registerBundledExtensionFull(calendarManifest, calendarExtension),
   ]).then(() => {
-    console.log("[Extensions] Bundled extensions activated");
+    log.info("[Extensions] Bundled extensions activated");
   }).catch((error) => {
-    console.error("[Extensions] Failed to activate bundled extensions:", error);
+    log.error({ err: error }, "[Extensions] Failed to activate bundled extensions");
   });
 
   // Load private extensions (optional, discovered at build time via import.meta.glob)
@@ -441,7 +419,7 @@ app.whenReady().then(async () => {
   const installedExtensionsDir = join(getDataDir(), "extensions");
   extensionHost.setInstalledExtensionsDir(installedExtensionsDir);
   extensionHost.loadInstalledExtensions().catch((error) => {
-    console.error("[Extensions] Failed to load installed extensions:", error);
+    log.error({ err: error }, "[Extensions] Failed to load installed extensions");
   });
 
   // Listen for OS theme changes — broadcast to renderer when preference is "system"
@@ -486,5 +464,6 @@ const walCheckpointInterval = setInterval(() => {
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
   clearInterval(walCheckpointInterval);
+  flushLogs();
   closeDatabase();
 });
