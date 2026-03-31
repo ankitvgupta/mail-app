@@ -56,6 +56,7 @@ import { registerSearchIpc } from "./ipc/search.ipc";
 import { registerOutboxIpc, registerNetworkIpc } from "./ipc/outbox.ipc";
 import { registerMemoryIpc } from "./ipc/memory.ipc";
 import { registerSplitsIpc } from "./ipc/splits.ipc";
+import { registerLabelsIpc } from "./ipc/labels.ipc";
 import { registerArchiveReadyIpc } from "./ipc/archive-ready.ipc";
 import { registerSnoozeIpc } from "./ipc/snooze.ipc";
 import { registerScheduledSendIpc } from "./ipc/scheduled-send.ipc";
@@ -391,6 +392,7 @@ app.whenReady().then(async () => {
   registerOutboxIpc();
   registerMemoryIpc();
   registerSplitsIpc();
+  registerLabelsIpc();
   registerArchiveReadyIpc();
   registerSnoozeIpc();
   registerScheduledSendIpc();

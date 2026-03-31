@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAppStore, useThreadedEmails, type Account, type SyncStatus, type PrefetchProgress, type BackgroundSyncProgress } from "./store";
+import { setLabelMap } from "./utils/split-conditions";
 import { EmailList } from "./components/EmailList";
 import { EmailDetail } from "./components/EmailDetail";
 import { EmailPreviewSidebar } from "./components/EmailPreviewSidebar";
@@ -579,6 +580,15 @@ export default function App() {
       console.error("Failed to load splits on mount:", err);
     });
   }, [setSplits]);
+
+  // Populate label name→ID map so split conditions can match labels by name
+  useEffect(() => {
+    window.api.labels.list("default").then((result: { success: boolean; data?: Array<{ id: string; name: string }> }) => {
+      if (result.success && result.data) {
+        setLabelMap(result.data);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Initialize sync and accounts
   const initializeSync = useCallback(async () => {

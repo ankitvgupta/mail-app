@@ -144,6 +144,12 @@ const api = {
       ipcRenderer.invoke("emails:search-remote", { query, accountId, maxResults, pageToken }),
   },
 
+  // Label operations
+  labels: {
+    list: (accountId: string): Promise<unknown> =>
+      ipcRenderer.invoke("labels:list", { accountId }),
+  },
+
   // Style operations
   style: {
     getContext: (toAddress: string): Promise<unknown> =>

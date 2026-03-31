@@ -4,6 +4,12 @@ import type { InboxSplit } from "../../shared/types";
 import { emailMatchesSplit } from "../utils/split-conditions";
 
 function threadMatchesSplit(thread: EmailThread, split: InboxSplit): boolean {
+  // For label conditions, check ALL emails in the thread (Gmail labels are thread-level).
+  // For other condition types (from, to, subject), keep checking only the latest email.
+  const hasLabelCondition = split.conditions.some((c) => c.type === "label");
+  if (hasLabelCondition) {
+    return thread.emails.some((email) => emailMatchesSplit(email, split));
+  }
   return emailMatchesSplit(thread.latestEmail, split);
 }
 

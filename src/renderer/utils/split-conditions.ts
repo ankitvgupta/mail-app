@@ -1,5 +1,16 @@
 import type { InboxSplit, DashboardEmail } from "../../shared/types";
 
+// Label name → ID lookup for split condition matching.
+// Populated asynchronously on app mount; falls back to direct ID comparison when empty.
+const labelNameToIds = new Map<string, string>();
+
+export function setLabelMap(labels: Array<{ id: string; name: string }>): void {
+  labelNameToIds.clear();
+  for (const label of labels) {
+    labelNameToIds.set(label.name.toLowerCase(), label.id);
+  }
+}
+
 // Convert a glob-like pattern to a regex
 // Supports: * (matches anything), ? (matches single char)
 function patternToRegex(pattern: string): RegExp {
@@ -45,7 +56,14 @@ export function evaluateCondition(email: DashboardEmail, condition: InboxSplit["
       break;
     }
     case "label": {
-      matches = email.labelIds?.includes(condition.value) ?? false;
+      // Match by label ID directly, or resolve label name → ID
+      const labelIds = email.labelIds ?? [];
+      if (labelIds.includes(condition.value)) {
+        matches = true;
+      } else {
+        const resolvedId = labelNameToIds.get(condition.value.toLowerCase());
+        matches = resolvedId ? labelIds.includes(resolvedId) : false;
+      }
       break;
     }
     case "has_attachment": {

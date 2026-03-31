@@ -505,6 +505,22 @@ export class GmailClient {
   }
 
   /**
+   * List all labels for the authenticated account.
+   * Returns id, name, type, and optional color for each label.
+   */
+  async listLabels(): Promise<Array<{ id: string; name: string; type: string; color?: { textColor: string; backgroundColor: string } }>> {
+    const gmail = this.gmail!;
+    const response = await gmail.users.labels.list({ userId: "me" });
+    const rawLabels = response.data.labels || [];
+    return rawLabels.map((l) => ({
+      id: l.id!,
+      name: l.name!,
+      type: l.type || "user",
+      ...(l.color ? { color: { textColor: l.color.textColor!, backgroundColor: l.color.backgroundColor! } } : {}),
+    }));
+  }
+
+  /**
    * Get the total number of messages with a given label.
    * Uses the labels.get endpoint which returns exact counts.
    */
