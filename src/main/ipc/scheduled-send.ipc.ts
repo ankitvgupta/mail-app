@@ -25,6 +25,7 @@ function rowToScheduledMessage(row: ScheduledMessageRow): ScheduledMessage {
     id: row.id,
     accountId: row.accountId,
     type: row.type,
+    from: row.from,
     threadId: row.threadId,
     to: row.to,
     cc: row.cc,
