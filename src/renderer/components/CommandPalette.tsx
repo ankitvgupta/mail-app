@@ -210,14 +210,16 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
-          if (state.selectedThreadId && state.currentAccountId) {
+          const selEmail = state.emails.find(e => e.id === state.selectedEmailId);
+          const accId = state.currentAccountId ?? selEmail?.accountId ?? null;
+          if (state.selectedThreadId && accId) {
             const threadEmails = state.emails.filter((e) => e.threadId === state.selectedThreadId);
             state.removeEmailsAndAdvance(threadEmails.map((e) => e.id), null, null);
             state.addUndoAction({
               id: `archive-${state.selectedThreadId}-${Date.now()}`,
               type: "archive",
               threadCount: 1,
-              accountId: state.currentAccountId,
+              accountId: accId,
               emails: [...threadEmails],
               scheduledAt: Date.now(),
               delayMs: 5000,
@@ -234,14 +236,16 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
-          if (state.selectedThreadId && state.currentAccountId) {
+          const selEmail = state.emails.find(e => e.id === state.selectedEmailId);
+          const accId = state.currentAccountId ?? selEmail?.accountId ?? null;
+          if (state.selectedThreadId && accId) {
             const threadEmails = state.emails.filter((e) => e.threadId === state.selectedThreadId);
             state.removeEmailsAndAdvance(threadEmails.map((e) => e.id), null, null);
             state.addUndoAction({
               id: `trash-${state.selectedThreadId}-${Date.now()}`,
               type: "trash",
               threadCount: 1,
-              accountId: state.currentAccountId,
+              accountId: accId,
               emails: [...threadEmails],
               scheduledAt: Date.now(),
               delayMs: 5000,
@@ -275,7 +279,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         available: () => hasSelectedThread,
         execute: () => {
           const state = useAppStore.getState();
-          if (state.selectedThreadId && state.currentAccountId) {
+          const selEmail = state.emails.find(e => e.id === state.selectedEmailId);
+          const accId = state.currentAccountId ?? selEmail?.accountId ?? null;
+          if (state.selectedThreadId && accId) {
             const threadEmails = state.emails.filter(
               (e) => e.threadId === state.selectedThreadId
             );
@@ -292,7 +298,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                   id: `mark-unread-${state.selectedThreadId}-${Date.now()}`,
                   type: "mark-unread",
                   threadCount: 1,
-                  accountId: state.currentAccountId,
+                  accountId: accId,
                   emails: [latest],
                   scheduledAt: Date.now(),
                   delayMs: 5000,
@@ -322,27 +328,26 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
-          if (state.selectedEmailId && state.currentAccountId) {
-            const email = state.emails.find((e) => e.id === state.selectedEmailId);
-            if (email) {
-              const currentLabels = email.labelIds || [];
-              const isStarred = currentLabels.includes("STARRED");
-              const previousLabels: Record<string, string[]> = { [email.id]: [...currentLabels] };
-              const newLabels = isStarred
-                ? currentLabels.filter((l) => l !== "STARRED")
-                : [...currentLabels, "STARRED"];
-              state.updateEmail(email.id, { labelIds: newLabels });
-              state.addUndoAction({
-                id: `${isStarred ? "unstar" : "star"}-${email.threadId}-${Date.now()}`,
-                type: isStarred ? "unstar" : "star",
-                threadCount: 1,
-                accountId: state.currentAccountId,
-                emails: [email],
-                scheduledAt: Date.now(),
-                delayMs: 5000,
-                previousLabels,
-              });
-            }
+          const selEmail = state.emails.find(e => e.id === state.selectedEmailId);
+          const accId = state.currentAccountId ?? selEmail?.accountId ?? null;
+          if (state.selectedEmailId && accId && selEmail) {
+            const currentLabels = selEmail.labelIds || [];
+            const isStarred = currentLabels.includes("STARRED");
+            const previousLabels: Record<string, string[]> = { [selEmail.id]: [...currentLabels] };
+            const newLabels = isStarred
+              ? currentLabels.filter((l) => l !== "STARRED")
+              : [...currentLabels, "STARRED"];
+            state.updateEmail(selEmail.id, { labelIds: newLabels });
+            state.addUndoAction({
+              id: `${isStarred ? "unstar" : "star"}-${selEmail.threadId}-${Date.now()}`,
+              type: isStarred ? "unstar" : "star",
+              threadCount: 1,
+              accountId: accId,
+              emails: [selEmail],
+              scheduledAt: Date.now(),
+              delayMs: 5000,
+              previousLabels,
+            });
           }
         },
       },
@@ -366,6 +371,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           const state = useAppStore.getState();
           if (state.currentAccountId) {
             window.api.sync.now(state.currentAccountId);
+          } else {
+            for (const a of state.accounts) window.api.sync.now(a.id);
           }
         },
       },
@@ -463,7 +470,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           const email = state.emails.find((e) => e.id === selectedEmailId);
           if (!email) return;
 
-          const currentAccount = state.accounts.find((a) => a.id === state.currentAccountId);
+          const effectiveAccId = state.currentAccountId ?? email.accountId ?? null;
+          const currentAccount = state.accounts.find((a) => a.id === effectiveAccId);
           const userEmail = currentAccount?.email?.toLowerCase() ?? "";
 
           // Escape HTML special characters to prevent injection from email headers

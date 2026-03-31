@@ -57,6 +57,31 @@ export type Account = {
   isConnected: boolean;
 };
 
+// Deterministic account color palette — assigned by index in the accounts array
+export type AccountColor = {
+  bg: string;
+  text: string;
+  dot: string;
+};
+
+const ACCOUNT_COLORS: AccountColor[] = [
+  { bg: "bg-blue-100 dark:bg-blue-900/30", text: "text-blue-700 dark:text-blue-300", dot: "bg-blue-500" },
+  { bg: "bg-purple-100 dark:bg-purple-900/30", text: "text-purple-700 dark:text-purple-300", dot: "bg-purple-500" },
+  { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-700 dark:text-green-300", dot: "bg-green-500" },
+  { bg: "bg-orange-100 dark:bg-orange-900/30", text: "text-orange-700 dark:text-orange-300", dot: "bg-orange-500" },
+  { bg: "bg-pink-100 dark:bg-pink-900/30", text: "text-pink-700 dark:text-pink-300", dot: "bg-pink-500" },
+  { bg: "bg-teal-100 dark:bg-teal-900/30", text: "text-teal-700 dark:text-teal-300", dot: "bg-teal-500" },
+];
+
+export function getAccountColor(accounts: Account[], accountId: string): AccountColor {
+  const idx = accounts.findIndex((a) => a.id === accountId);
+  return ACCOUNT_COLORS[(idx === -1 ? 0 : idx) % ACCOUNT_COLORS.length];
+}
+
+export function getAccountLabel(account: Account): string {
+  return account.email;
+}
+
 // Sync status per account
 export type SyncStatus = "idle" | "syncing" | "error";
 
@@ -736,14 +761,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   // Multi-account actions
   setAccounts: (accounts) =>
-    set({
-      accounts,
-      // Set current to primary or first account if not set
-      currentAccountId:
-        get().currentAccountId ||
-        accounts.find((a) => a.isPrimary)?.id ||
-        accounts[0]?.id ||
-        null,
+    set((state) => {
+      if (state.currentAccountId !== null) return { accounts };
+      // Default to "All accounts" (null) when multiple accounts exist,
+      // otherwise select the single account directly.
+      return {
+        accounts,
+        currentAccountId: accounts.length > 1 ? null : accounts[0]?.id ?? null,
+      };
     }),
   addAccount: (account) =>
     set((state) => {
@@ -1496,10 +1521,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   markThreadAsRead: (threadId) => {
     const state = get();
-    const accountId = state.currentAccountId;
-    if (!accountId) return;
-
     const threadEmails = state.emails.filter((e) => e.threadId === threadId);
+
+    // In All accounts mode, derive the accountId from the thread's emails
+    const accountId = state.currentAccountId ?? threadEmails[0]?.accountId ?? null;
+    if (!accountId) return;
     const unreadEmails = threadEmails.filter((e) => e.labelIds?.includes("UNREAD"));
     if (unreadEmails.length === 0) return;
 
@@ -1589,25 +1615,29 @@ export function getAppStateSnapshot(): Record<string, unknown> {
   return state;
 }
 
-// Check if an email is sent by the user (not received)
-function isSentEmail(email: DashboardEmail, currentUserEmail?: string): boolean {
+// Check if an email is sent by the user (not received).
+// Accepts a Set of user emails to support "All accounts" mode where multiple
+// accounts may be active.
+function isSentEmail(email: DashboardEmail, userEmails?: Set<string>): boolean {
   // Check labelIds first (most reliable)
   if (email.labelIds?.includes("SENT")) {
     return true;
   }
 
   // Fall back to checking the from field
-  if (!currentUserEmail) return false;
+  if (!userEmails || userEmails.size === 0) return false;
   const fromLower = email.from.toLowerCase();
-  const userEmailLower = currentUserEmail.toLowerCase();
   // Extract email from "Name <email>" format if present
   const emailMatch = fromLower.match(/<([^>]+)>/) || [null, fromLower];
-  const fromEmail = emailMatch[1] || fromLower;
-  return fromEmail.trim() === userEmailLower.trim();
+  const fromEmail = (emailMatch[1] || fromLower).trim();
+  for (const ue of userEmails) {
+    if (fromEmail === ue.toLowerCase().trim()) return true;
+  }
+  return false;
 }
 
 // Helper to group emails by thread
-export function groupByThread(emails: DashboardEmail[], currentUserEmail?: string): EmailThread[] {
+export function groupByThread(emails: DashboardEmail[], userEmails?: Set<string>): EmailThread[] {
   const threadMap = new Map<string, DashboardEmail[]>();
 
   // Pre-compute timestamps once to avoid creating Date objects in every sort
@@ -1634,23 +1664,23 @@ export function groupByThread(emails: DashboardEmail[], currentUserEmail?: strin
     const latestEmail = threadEmails[threadEmails.length - 1];
 
     // Find the latest RECEIVED email (not sent by user) for inbox sorting
-    const receivedEmails = threadEmails.filter(e => !isSentEmail(e, currentUserEmail));
+    const receivedEmails = threadEmails.filter(e => !isSentEmail(e, userEmails));
     const latestReceivedEmail = receivedEmails.length > 0
       ? receivedEmails[receivedEmails.length - 1]
       : latestEmail; // Fallback to latest if all are sent
 
     // Determine if the user was the last to reply
-    const userReplied = isSentEmail(latestEmail, currentUserEmail);
+    const userReplied = isSentEmail(latestEmail, userEmails);
 
     // Find the best sender to display - last person who isn't the current user.
     // Handles edge cases where latestReceivedEmail falls back to the user's own email
     // (e.g., thread with only sent emails, or emails missing SENT label).
     let displaySender: string;
-    if (!isSentEmail(latestReceivedEmail, currentUserEmail)) {
+    if (!isSentEmail(latestReceivedEmail, userEmails)) {
       displaySender = latestReceivedEmail.from;
     } else {
       // latestReceivedEmail is from user - find any non-self email
-      const nonSelfEmail = [...threadEmails].reverse().find(e => !isSentEmail(e, currentUserEmail));
+      const nonSelfEmail = [...threadEmails].reverse().find(e => !isSentEmail(e, userEmails));
       if (nonSelfEmail) {
         displaySender = nonSelfEmail.from;
       } else {
@@ -1706,9 +1736,15 @@ export function useThreadedEmails() {
   const snoozedThreadIds = useAppStore((state) => state.snoozedThreadIds);
   const recentlyRepliedThreadIds = useAppStore((state) => state.recentlyRepliedThreadIds);
 
-  // Get current user's email for sent detection
-  const currentAccount = accounts.find(a => a.id === currentAccountId);
-  const currentUserEmail = currentAccount?.email;
+  // Build set of user emails for sent detection — in All accounts mode this
+  // includes every account's email so isSentEmail works across accounts.
+  const userEmails = useMemo(() => {
+    if (currentAccountId) {
+      const email = accounts.find(a => a.id === currentAccountId)?.email;
+      return email ? new Set([email]) : new Set<string>();
+    }
+    return new Set(accounts.map(a => a.email));
+  }, [currentAccountId, accounts]);
 
   // Memoize the expensive thread computation. j/k navigation only changes
   // selectedEmailId — none of these deps change, so the memo short-circuits
@@ -1726,11 +1762,11 @@ export function useThreadedEmails() {
       ? emails.filter((e) => e.accountId === currentAccountId && (isInboxEmail(e) || e.labelIds?.includes("SENT")))
       : emails.filter((e) => isInboxEmail(e) || e.labelIds?.includes("SENT"));
 
-    // Group into threads first, passing current user email for sent detection
+    // Group into threads first, passing user emails for sent detection.
     // Then filter out sent-only threads — threads where no email has the INBOX label.
     // Sent emails within inbox threads are kept (for conversation context), but threads
     // consisting solely of sent emails belong in the Sent view, not the inbox.
-    const allThreads = groupByThread(accountEmails, currentUserEmail)
+    const allThreads = groupByThread(accountEmails, userEmails)
       .filter((t) => t.emails.some((e) => !e.labelIds || e.labelIds.includes("INBOX")));
 
     // Separate snoozed threads from active threads
@@ -1792,7 +1828,7 @@ export function useThreadedEmails() {
       snoozed,
       snoozedCount: snoozed.length,
     };
-  }, [emails, currentAccountId, currentUserEmail, snoozedThreadIds, recentlyRepliedThreadIds]);
+  }, [emails, currentAccountId, userEmails, snoozedThreadIds, recentlyRepliedThreadIds]);
 }
 
 function threadMatchesSplit(thread: EmailThread, split: InboxSplit): boolean {
@@ -1842,12 +1878,13 @@ export function useSplitFilteredThreads() {
 
     // Handle sent virtual split — show sent emails grouped by thread
     if (currentSplitId === "__sent__") {
-      const currentAccount = accounts.find(a => a.id === currentAccountId);
-      const currentUserEmail = currentAccount?.email;
+      const sentUserEmails = currentAccountId
+        ? new Set([accounts.find(a => a.id === currentAccountId)?.email].filter(Boolean) as string[])
+        : new Set(accounts.map(a => a.email));
       const sentAccountEmails = currentAccountId
         ? sentEmails.filter(e => e.accountId === currentAccountId)
         : sentEmails;
-      const sentThreads = groupByThread(sentAccountEmails, currentUserEmail)
+      const sentThreads = groupByThread(sentAccountEmails, sentUserEmails)
         .sort((a, b) => new Date(b.latestEmail.date).getTime() - new Date(a.latestEmail.date).getTime());
 
       return {

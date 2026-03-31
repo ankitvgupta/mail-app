@@ -39,10 +39,10 @@ export function mergeAndSortSearchResults(
 export function mergeAndThreadSearchResults(
   localResults: readonly DashboardEmail[],
   remoteResults: readonly DashboardEmail[],
-  currentUserEmail?: string,
+  userEmails?: Set<string>,
 ): EmailThread[] {
   const merged = mergeAndSortSearchResults(localResults, remoteResults);
-  const threads = groupByThread(merged, currentUserEmail);
+  const threads = groupByThread(merged, userEmails);
   // Re-sort by latest email date (including sent) for search results.
   // groupByThread sorts by latestReceivedDate (for inbox), but search results
   // should sort by overall recency to match the displayed time.

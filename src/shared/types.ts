@@ -392,6 +392,7 @@ export const ConfigSchema = z.object({
     sessionReplay: z.boolean().default(false),
   }).optional(),
   keyboardBindings: z.enum(["superhuman", "gmail"]).default("superhuman"),
+  defaultAccountView: z.enum(["all", "primary"]).default("all"),
   openclaw: z.object({
     enabled: z.boolean().default(false),
     gatewayUrl: z.string().default(""),

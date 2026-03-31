@@ -102,6 +102,10 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
       const isGmail = keyboardBindings === "gmail";
 
+      const effectiveAccountId = currentAccountId
+        ?? emails.find(em => em.id === selectedEmailId)?.accountId
+        ?? null;
+
       // Store actions are stable references — safe to read from getState()
       const {
         setSelectedEmailId,
@@ -387,9 +391,11 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
       };
 
       // --- Helper: merge+dedup+thread search results (same order as rendered list) ---
-      const currentUserEmail = accounts.find((a: { id: string }) => a.id === currentAccountId)?.email;
+      const kbUserEmails = effectiveAccountId
+        ? new Set([accounts.find((a: { id: string }) => a.id === effectiveAccountId)?.email].filter(Boolean) as string[])
+        : new Set(accounts.map((a: { email: string }) => a.email));
       const getSearchThreads = () =>
-        mergeAndThreadSearchResults(activeSearchResults, remoteSearchResults, currentUserEmail);
+        mergeAndThreadSearchResults(activeSearchResults, remoteSearchResults, kbUserEmails);
 
       // --- Helper: navigate search results up/down (by thread) ---
       const navigateSearchResults = (direction: "up" | "down") => {
@@ -422,7 +428,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
       // --- Helper: archive selected thread (all messages) ---
       const archiveSelected = () => {
-        if (!selectedEmailId || !selectedThreadId || !currentAccountId) return;
+        if (!selectedEmailId || !selectedThreadId || !effectiveAccountId) return;
 
         // Collect ALL emails in the thread for optimistic removal
         const threadEmails = getThreadEmails(selectedThreadId);
@@ -470,20 +476,18 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           id: `archive-${selectedThreadId}-${Date.now()}`,
           type: "archive",
           threadCount: 1,
-          accountId: currentAccountId,
+          accountId: effectiveAccountId,
           emails: [...threadEmails],
           scheduledAt: Date.now(),
           delayMs: 5000,
-          // If archive-ready view, include thread ID so it gets cleaned up on execute
           archiveReadyThreadIds: isArchiveReady ? [selectedThreadId] : undefined,
         });
-        // Tracks intent — user may still undo within 5 s
         trackEvent("email_archived", { thread_count: 1, source: "keyboard" });
       };
 
       // --- Helper: trash selected thread ---
       const trashSelected = () => {
-        if (!selectedEmailId || !selectedThreadId || !currentAccountId) return;
+        if (!selectedEmailId || !selectedThreadId || !effectiveAccountId) return;
 
         const threadEmails = getThreadEmails(selectedThreadId);
         const threadEmailIds = threadEmails.map((item) => item.id);
@@ -528,18 +532,17 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           id: `trash-${selectedThreadId}-${Date.now()}`,
           type: "trash",
           threadCount: 1,
-          accountId: currentAccountId,
+          accountId: effectiveAccountId,
           emails: [...threadEmails],
           scheduledAt: Date.now(),
           delayMs: 5000,
         });
-        // Tracks intent — user may still undo within 5 s
         trackEvent("email_trashed", { thread_count: 1, source: "keyboard" });
       };
 
       // --- Helper: mark selected thread as unread ---
       const markSelectedUnread = () => {
-        if (!selectedThreadId || !currentAccountId) return;
+        if (!selectedThreadId || !effectiveAccountId) return;
 
         const threadEmails = emails.filter((item) => item.threadId === selectedThreadId);
         if (threadEmails.length === 0) return;
@@ -558,7 +561,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
             id: `mark-unread-${selectedThreadId}-${Date.now()}`,
             type: "mark-unread",
             threadCount: 1,
-            accountId: currentAccountId,
+            accountId: effectiveAccountId,
             emails: [latestEmail],
             scheduledAt: Date.now(),
             delayMs: 5000,
@@ -869,7 +872,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
         // Shift+I: mark as read and return to list (Gmail only)
         case "I":
           if (isGmail && e.shiftKey) {
-            if (selectedThreadId && currentAccountId) {
+            if (selectedThreadId && effectiveAccountId) {
               e.preventDefault();
               markThreadAsRead(selectedThreadId);
               if (viewMode === "full") {
@@ -884,7 +887,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           if (isMultiSelect) {
             e.preventDefault();
             batchToggleStar();
-          } else if (isGmail && selectedThreadId && currentAccountId) {
+          } else if (isGmail && selectedThreadId && effectiveAccountId) {
             e.preventDefault();
             const threadEmails = emails.filter((item) => item.threadId === selectedThreadId);
             if (threadEmails.length === 0) break;
@@ -906,7 +909,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
                 id: `unstar-${selectedThreadId}-${Date.now()}`,
                 type: "unstar",
                 threadCount: 1,
-                accountId: currentAccountId,
+                accountId: effectiveAccountId,
                 emails: starredEmails,
                 scheduledAt: Date.now(),
                 delayMs: 5000,
@@ -920,7 +923,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
                 id: `star-${selectedThreadId}-${Date.now()}`,
                 type: "star",
                 threadCount: 1,
-                accountId: currentAccountId,
+                accountId: effectiveAccountId,
                 emails: [latestEmail],
                 scheduledAt: Date.now(),
                 delayMs: 5000,
@@ -979,9 +982,13 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
         // Shift+N: force refresh/sync current account (Gmail only)
         case "N":
-          if (isGmail && e.shiftKey && currentAccountId) {
+          if (isGmail && e.shiftKey) {
             e.preventDefault();
-            window.api.sync.now(currentAccountId).catch(console.error);
+            if (currentAccountId) {
+              window.api.sync.now(currentAccountId).catch(console.error);
+            } else {
+              for (const a of accounts) window.api.sync.now(a.id).catch(console.error);
+            }
           }
           break;
 

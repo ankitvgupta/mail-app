@@ -149,9 +149,10 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
   );
   const hasDraft = Boolean(selectedDraft);
 
+  const effectiveAccountId = currentAccountId ?? selectedEmail?.accountId ?? null;
   const currentAccount = useMemo(
-    () => accounts.find((a) => a.id === currentAccountId),
-    [accounts, currentAccountId]
+    () => accounts.find((a) => a.id === effectiveAccountId),
+    [accounts, effectiveAccountId]
   );
 
   // Suggested actions based on email context
@@ -222,7 +223,7 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
 
       // Build context — include email metadata only when an email is selected
       const context: AgentContext = {
-        accountId: currentAccountId ?? "",
+        accountId: effectiveAccountId ?? "",
         userEmail: currentAccount?.email ?? "",
         userName: currentAccount?.displayName,
       };
@@ -274,7 +275,7 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
     },
     [
       selectedAgentIds,
-      currentAccountId,
+      effectiveAccountId,
       selectedEmailId,
       selectedDraftId,
       selectedThreadId,

@@ -1227,6 +1227,65 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 )}
               </div>
 
+              {/* Default Inbox View — only relevant with multiple accounts */}
+              {accounts.length > 1 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">Default Inbox View</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+                    Choose which view to show when the app starts.
+                  </p>
+                  <div className="space-y-2">
+                    <label
+                      className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
+                        (generalConfig?.defaultAccountView ?? "all") === "all"
+                          ? "border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                          : "border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="defaultAccountView"
+                        value="all"
+                        checked={(generalConfig?.defaultAccountView ?? "all") === "all"}
+                        onChange={() => window.api.settings.set({ defaultAccountView: "all" }).then(() => queryClient.invalidateQueries({ queryKey: ["general-config"] }))}
+                        className="sr-only"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">All accounts</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Show combined inbox from all accounts on startup</div>
+                      </div>
+                    </label>
+                    <label
+                      className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
+                        (generalConfig?.defaultAccountView ?? "all") === "primary"
+                          ? "border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                          : "border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="defaultAccountView"
+                        value="primary"
+                        checked={(generalConfig?.defaultAccountView ?? "all") === "primary"}
+                        onChange={() => window.api.settings.set({ defaultAccountView: "primary" }).then(() => queryClient.invalidateQueries({ queryKey: ["general-config"] }))}
+                        className="sr-only"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Primary account</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Show only the primary account on startup
+                          {accounts.find(a => a.isPrimary) && (
+                            <span className="ml-1 text-blue-600 dark:text-blue-400">
+                              ({accounts.find(a => a.isPrimary)!.email})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* Add account button */}
               <button
                 onClick={handleAddAccount}

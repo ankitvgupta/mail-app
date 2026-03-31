@@ -3,6 +3,12 @@ import type { InboxDensity, SnoozedEmail } from "../../shared/types";
 import type { EmailThread } from "../store";
 import { formatSnoozeTime } from "./SnoozeMenu";
 
+export interface AccountBadge {
+  label: string;
+  bgClass: string;
+  textClass: string;
+}
+
 interface EmailRowProps {
   thread: EmailThread;
   isSelected: boolean;
@@ -13,6 +19,7 @@ interface EmailRowProps {
   onCheckboxChange: () => void;
   snoozeInfo?: SnoozedEmail;
   returnTime?: number; // Unsnooze return time — shown instead of last message time
+  accountBadge?: AccountBadge;
 }
 
 // Density-specific style maps
@@ -104,7 +111,7 @@ function getPriorityLabel(thread: EmailThread): { text: string; className: strin
 // Memoized so that j/k navigation only re-renders the two rows whose
 // isSelected changed, not every row in the list.  The custom comparator
 // skips onClick/onCheckboxChange (always new arrow functions from the parent).
-export const EmailRow = memo(function EmailRow({ thread, isSelected, isChecked, isMultiSelectActive, density, onClick, onCheckboxChange, snoozeInfo, returnTime }: EmailRowProps) {
+export const EmailRow = memo(function EmailRow({ thread, isSelected, isChecked, isMultiSelectActive, density, onClick, onCheckboxChange, snoozeInfo, returnTime, accountBadge }: EmailRowProps) {
   const senderName = extractSenderName(thread.displaySender);
   const time = returnTime
     ? formatRelativeDate(new Date(returnTime).toISOString())
@@ -187,6 +194,19 @@ export const EmailRow = memo(function EmailRow({ thread, isSelected, isChecked, 
         </span>
       )}
 
+      {/* Account badge (shown in "All accounts" mode) */}
+      {accountBadge && (
+        <span className={`
+          ${ds.priorityBadge} rounded flex-shrink-0 font-medium truncate max-w-[10rem]
+          ${isSelected && !isChecked
+            ? "bg-white/20 text-white"
+            : `${accountBadge.bgClass} ${accountBadge.textClass}`
+          }
+        `}>
+          {accountBadge.label}
+        </span>
+      )}
+
       {/* Subject + Snippet (combined to use available space) */}
       <div className={`flex-1 min-w-0 flex items-center ${density === "compact" ? "gap-1.5" : "gap-2"}`}>
         <span className={`font-medium truncate flex-shrink-0 max-w-[85%] ${
@@ -261,7 +281,8 @@ export const EmailRow = memo(function EmailRow({ thread, isSelected, isChecked, 
   prev.isMultiSelectActive === next.isMultiSelectActive &&
   prev.density === next.density &&
   prev.snoozeInfo === next.snoozeInfo &&
-  prev.returnTime === next.returnTime
+  prev.returnTime === next.returnTime &&
+  prev.accountBadge === next.accountBadge
   // onClick / onCheckboxChange intentionally omitted — they are stable in behavior
   // but are new arrow function references on each parent render.
 );

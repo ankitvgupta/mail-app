@@ -5,78 +5,102 @@ import { trackEvent } from "../services/posthog";
 /**
  * Shared batch action functions that read current state from the store.
  * Safe to call from event handlers, useCallback bodies, or keyboard shortcuts.
+ *
+ * In "All accounts" mode (currentAccountId === null) the selected threads may
+ * span multiple accounts. Each undo action carries a single accountId, so we
+ * group emails by account and create one undo action per account.
  */
 
+function groupEmailsByAccount(emails: DashboardEmail[]): Map<string, DashboardEmail[]> {
+  const byAccount = new Map<string, DashboardEmail[]>();
+  for (const email of emails) {
+    const acct = email.accountId;
+    const list = byAccount.get(acct);
+    if (list) {
+      list.push(email);
+    } else {
+      byAccount.set(acct, [email]);
+    }
+  }
+  return byAccount;
+}
+
 export function batchArchive() {
-  const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction } = useAppStore.getState();
+  if (selectedThreadIds.size === 0) return;
 
   const threadIds = Array.from(selectedThreadIds);
   const allEmailIds: string[] = [];
-  const emailsByThread = new Map<string, DashboardEmail[]>();
+  const allEmails: DashboardEmail[] = [];
   for (const threadId of threadIds) {
     const threadEmails = emails.filter((e) => e.threadId === threadId);
-    emailsByThread.set(threadId, threadEmails);
     for (const email of threadEmails) {
       allEmailIds.push(email.id);
+      allEmails.push(email);
     }
   }
 
-  // Optimistic UI: remove all emails from selected threads
-  const allEmails = threadIds.flatMap(tid => emailsByThread.get(tid) || []);
+  if (allEmails.length === 0) return;
+
   removeEmails(allEmailIds);
   clearSelectedThreads();
 
-  // Queue a single undo action for all threads
-  addUndoAction({
-    id: `archive-batch-${Date.now()}`,
-    type: "archive",
-    threadCount: threadIds.length,
-    accountId: currentAccountId,
-    emails: [...allEmails],
-    scheduledAt: Date.now(),
-    delayMs: 5000,
-  });
-  // Tracks intent — user may still undo within 5 s
+  // One undo action per account so the backend receives the correct accountId
+  const byAccount = groupEmailsByAccount(allEmails);
+  for (const [accountId, accountEmails] of byAccount) {
+    const accountThreadCount = new Set(accountEmails.map(e => e.threadId)).size;
+    addUndoAction({
+      id: `archive-batch-${accountId}-${Date.now()}`,
+      type: "archive",
+      threadCount: accountThreadCount,
+      accountId,
+      emails: accountEmails,
+      scheduledAt: Date.now(),
+      delayMs: 5000,
+    });
+  }
   trackEvent("email_archived", { thread_count: threadIds.length, source: "batch" });
 }
 
 export function batchTrash() {
-  const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const { selectedThreadIds, emails, removeEmails, clearSelectedThreads, addUndoAction } = useAppStore.getState();
+  if (selectedThreadIds.size === 0) return;
 
   const threadIds = Array.from(selectedThreadIds);
   const allEmailIds: string[] = [];
-  const emailsByThread = new Map<string, DashboardEmail[]>();
+  const allEmails: DashboardEmail[] = [];
   for (const threadId of threadIds) {
     const threadEmails = emails.filter((e) => e.threadId === threadId);
-    emailsByThread.set(threadId, threadEmails);
     for (const email of threadEmails) {
       allEmailIds.push(email.id);
+      allEmails.push(email);
     }
   }
 
-  const allEmails = threadIds.flatMap(tid => emailsByThread.get(tid) || []);
+  if (allEmails.length === 0) return;
+
   removeEmails(allEmailIds);
   clearSelectedThreads();
 
-  // Queue a single undo action for all threads
-  addUndoAction({
-    id: `trash-batch-${Date.now()}`,
-    type: "trash",
-    threadCount: threadIds.length,
-    accountId: currentAccountId,
-    emails: [...allEmails],
-    scheduledAt: Date.now(),
-    delayMs: 5000,
-  });
-  // Tracks intent — user may still undo within 5 s
+  const byAccount = groupEmailsByAccount(allEmails);
+  for (const [accountId, accountEmails] of byAccount) {
+    const accountThreadCount = new Set(accountEmails.map(e => e.threadId)).size;
+    addUndoAction({
+      id: `trash-batch-${accountId}-${Date.now()}`,
+      type: "trash",
+      threadCount: accountThreadCount,
+      accountId,
+      emails: accountEmails,
+      scheduledAt: Date.now(),
+      delayMs: 5000,
+    });
+  }
   trackEvent("email_trashed", { thread_count: threadIds.length, source: "batch" });
 }
 
 export function batchToggleStar() {
-  const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction } = useAppStore.getState();
+  if (selectedThreadIds.size === 0) return;
 
   // Group emails by thread for the selected threads
   const selectedThreadEmails: Array<{ threadId: string; emails: typeof emails }> = [];
@@ -119,24 +143,31 @@ export function batchToggleStar() {
 
   if (changedEmails.length > 0) {
     const actionType = anyUnstarred ? "star" : "unstar";
-    addUndoAction({
-      id: `${actionType}-batch-${Date.now()}`,
-      type: actionType,
-      threadCount: selectedThreadIds.size,
-      accountId: currentAccountId,
-      emails: changedEmails,
-      scheduledAt: Date.now(),
-      delayMs: 5000,
-      previousLabels,
-    });
+    const byAccount = groupEmailsByAccount(changedEmails);
+    for (const [accountId, accountEmails] of byAccount) {
+      const accountPrevLabels: Record<string, string[]> = {};
+      for (const e of accountEmails) {
+        if (previousLabels[e.id]) accountPrevLabels[e.id] = previousLabels[e.id];
+      }
+      addUndoAction({
+        id: `${actionType}-batch-${accountId}-${Date.now()}`,
+        type: actionType,
+        threadCount: new Set(accountEmails.map(e => e.threadId)).size,
+        accountId,
+        emails: accountEmails,
+        scheduledAt: Date.now(),
+        delayMs: 5000,
+        previousLabels: accountPrevLabels,
+      });
+    }
     const changedThreadCount = new Set(changedEmails.map(e => e.threadId)).size;
     trackEvent(anyUnstarred ? "email_starred" : "email_unstarred", { thread_count: changedThreadCount });
   }
 }
 
 export function batchMarkUnread() {
-  const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction, currentAccountId } = useAppStore.getState();
-  if (!currentAccountId || selectedThreadIds.size === 0) return;
+  const { selectedThreadIds, emails, clearSelectedThreads, updateEmail, addUndoAction } = useAppStore.getState();
+  if (selectedThreadIds.size === 0) return;
 
   const changedEmails: DashboardEmail[] = [];
   const previousLabels: Record<string, string[]> = {};
@@ -148,7 +179,6 @@ export function batchMarkUnread() {
       new Date(a.date).getTime() >= new Date(b.date).getTime() ? a : b
     );
     const currentLabels = latestEmail.labelIds || ["INBOX"];
-    // Only mark emails that aren't already unread
     if (!currentLabels.includes("UNREAD")) {
       previousLabels[latestEmail.id] = [...currentLabels];
       updateEmail(latestEmail.id, { labelIds: [...currentLabels, "UNREAD"] });
@@ -159,16 +189,23 @@ export function batchMarkUnread() {
   clearSelectedThreads();
 
   if (changedEmails.length > 0) {
-    addUndoAction({
-      id: `mark-unread-batch-${Date.now()}`,
-      type: "mark-unread",
-      threadCount: changedEmails.length,
-      accountId: currentAccountId,
-      emails: changedEmails,
-      scheduledAt: Date.now(),
-      delayMs: 5000,
-      previousLabels,
-    });
+    const byAccount = groupEmailsByAccount(changedEmails);
+    for (const [accountId, accountEmails] of byAccount) {
+      const accountPrevLabels: Record<string, string[]> = {};
+      for (const e of accountEmails) {
+        if (previousLabels[e.id]) accountPrevLabels[e.id] = previousLabels[e.id];
+      }
+      addUndoAction({
+        id: `mark-unread-batch-${accountId}-${Date.now()}`,
+        type: "mark-unread",
+        threadCount: new Set(accountEmails.map(e => e.threadId)).size,
+        accountId,
+        emails: accountEmails,
+        scheduledAt: Date.now(),
+        delayMs: 5000,
+        previousLabels: accountPrevLabels,
+      });
+    }
     trackEvent("email_marked_unread", { thread_count: new Set(changedEmails.map(e => e.threadId)).size });
   }
 }
