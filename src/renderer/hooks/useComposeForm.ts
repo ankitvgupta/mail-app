@@ -275,6 +275,7 @@ export function useComposeForm({
           mode: composeMode,
           replyToEmailId,
           threadId: replyInfo?.threadId,
+          from,
           bodyHtml,
           bodyText,
           to,

@@ -1174,6 +1174,7 @@ function InlineReply({
           mode: composeMode,
           replyToEmailId,
           threadId: replyInfo.threadId,
+          from: form.from,
           bodyHtml: form.bodyHtml,
           bodyText: form.bodyText,
           to: form.to,
