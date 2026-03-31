@@ -430,9 +430,9 @@ function buildBashPreToolUseHook(
       | undefined;
     const command = toolInput?.command ?? "";
 
-    // Reject commands containing shell operators that could chain additional commands
-    // e.g. "ls && rm -rf /" or "ls; cat /etc/passwd" or "ls | xargs rm"
-    if (/[;&|`$><]/.test(command)) {
+    // Reject commands containing shell operators or newlines that could chain additional commands
+    // e.g. "ls && rm -rf /" or "ls; cat /etc/passwd" or "ls\nrm -rf /"
+    if (/[;&|`$><\n\r]/.test(command)) {
       return {
         hookSpecificOutput: {
           hookEventName: "PreToolUse" as const,

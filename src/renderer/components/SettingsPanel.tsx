@@ -96,8 +96,10 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [isSavingMcp, setIsSavingMcp] = useState(false);
   const [mcpFormError, setMcpFormError] = useState<string | null>(null);
 
-  // CLI tools state
-  const [cliTools, setCliTools] = useState<CliToolConfig[]>([]);
+  // CLI tools state — each item gets a stable _key for React reconciliation
+  const cliToolKeyRef = useRef(0);
+  const nextCliToolKey = () => ++cliToolKeyRef.current;
+  const [cliTools, setCliTools] = useState<(CliToolConfig & { _key: number })[]>([]);
   const [isSavingCliTools, setIsSavingCliTools] = useState(false);
   const [cliToolsSaved, setCliToolsSaved] = useState(false);
 
@@ -181,7 +183,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         setChromeProfilePath(browser.chromeProfilePath ?? "");
       }
       setMcpServers(generalConfig.mcpServers ?? {});
-      setCliTools(generalConfig.cliTools ?? []);
+      setCliTools((generalConfig.cliTools ?? []).map(t => ({ ...t, _key: nextCliToolKey() })));
       // PostHog analytics config — only set once to avoid clobbering unsaved edits on refetch
       if (!analyticsInitialized.current) {
         analyticsInitialized.current = true;
@@ -2410,7 +2412,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
               <div className="space-y-3">
                 {cliTools.map((tool, idx) => (
-                  <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg space-y-2">
+                  <div key={tool._key} className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg space-y-2">
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -2450,7 +2452,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 ))}
 
                 <button
-                  onClick={() => setCliTools([...cliTools, { command: "", instructions: "" }])}
+                  onClick={() => setCliTools([...cliTools, { command: "", instructions: "", _key: nextCliToolKey() }])}
                   className="text-sm text-purple-600 dark:text-purple-400 hover:underline"
                 >
                   + Add CLI Tool
@@ -2463,9 +2465,10 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     setIsSavingCliTools(true);
                     setCliToolsSaved(false);
                     try {
-                      // Filter out empty commands before saving
+                      // Filter out empty commands and strip internal _key before saving
                       const validTools = cliTools.filter(t => t.command.trim());
-                      await window.api.settings.set({ cliTools: validTools.length > 0 ? validTools : undefined });
+                      const toSave = validTools.map(({ _key, ...rest }) => rest);
+                      await window.api.settings.set({ cliTools: toSave.length > 0 ? toSave : undefined });
                       queryClient.invalidateQueries({ queryKey: ["general-config"] });
                       setCliTools(validTools);
                       setCliToolsSaved(true);
