@@ -17,9 +17,13 @@ import { mkdirSync, readdirSync, unlinkSync, statSync } from "fs";
 // without Electron being available.
 function getLogDir(): string {
   try {
+    // Resolve the data directory inline to avoid a circular dependency
+    // with data-dir.ts (which imports createLogger at module scope).
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getDataDir } = require("../data-dir");
-    return join(getDataDir(), "logs");
+    const { app } = require("electron");
+    const dev = isDev();
+    const baseDir = dev ? join(app.getAppPath(), ".dev-data") : app.getPath("userData");
+    return join(baseDir, "logs");
   } catch {
     // Fallback for tests or non-Electron environments
     return join(process.cwd(), ".dev-data", "logs");
