@@ -1,4 +1,4 @@
-import { createMessage } from "../../../../main/services/anthropic-service";
+import { createMessage } from "../../../main/services/anthropic-service";
 import type {
   ExtensionContext,
   EnrichmentProvider,
