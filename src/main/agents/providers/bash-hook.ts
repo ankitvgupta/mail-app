@@ -55,8 +55,26 @@ export function buildBashPreToolUseHook(
       };
     }
 
-    // Extract the base command (first token, stripping any path prefix)
-    const firstToken = command.trim().split(/\s+/)[0] ?? "";
+    // Extract the base command (first token, stripping any path prefix).
+    // Deny leading VAR=value env assignments — they modify the execution
+    // environment (e.g. PATH=/evil/dir git status runs a different binary).
+    const tokens = command.trim().split(/\s+/);
+    const envVarPattern = /^[A-Za-z_][A-Za-z0-9_]*=/;
+    let firstCommandIndex = 0;
+    while (firstCommandIndex < tokens.length && envVarPattern.test(tokens[firstCommandIndex])) {
+      firstCommandIndex++;
+    }
+    if (firstCommandIndex > 0) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse" as const,
+          permissionDecision: "deny" as const,
+          permissionDecisionReason:
+            "Command contains environment variable assignments, which are not permitted.",
+        },
+      };
+    }
+    const firstToken = tokens[0] ?? "";
     const baseCommand = firstToken.split("/").pop() ?? firstToken;
 
     if (allowedCommands.has(baseCommand)) {

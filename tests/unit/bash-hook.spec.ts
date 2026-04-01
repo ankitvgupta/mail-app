@@ -151,6 +151,32 @@ test.describe("buildBashPreToolUseHook", () => {
     expect(await invoke(["git"], "git status & rm -rf /")).toBe("deny");
   });
 
+  // --- Environment variable injection (Devin review finding) ---
+
+  test("denies PATH env var injection", async () => {
+    expect(await invoke(["git"], "PATH=/tmp/evil/git git status")).toBe("deny");
+  });
+
+  test("denies LD_PRELOAD env var injection", async () => {
+    expect(await invoke(["npm"], "LD_PRELOAD=/tmp/evil.so/npm npm install")).toBe("deny");
+  });
+
+  test("denies GIT_EXEC_PATH env var injection", async () => {
+    expect(await invoke(["git"], "GIT_EXEC_PATH=/tmp/evil/git git fetch")).toBe("deny");
+  });
+
+  test("denies multiple env var assignments", async () => {
+    expect(await invoke(["git"], "FOO=bar BAZ=qux git status")).toBe("deny");
+  });
+
+  test("denies single-letter env var assignment", async () => {
+    expect(await invoke(["git"], "X=1 git status")).toBe("deny");
+  });
+
+  test("denies underscore-prefixed env var", async () => {
+    expect(await invoke(["git"], "_VAR=val git status")).toBe("deny");
+  });
+
   // --- Exhaustive shell metacharacter and bypass tests ---
 
   // Process substitution
