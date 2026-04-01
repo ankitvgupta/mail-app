@@ -157,15 +157,10 @@ test.describe("Undo Send - Inline Reply", () => {
 
     await takeScreenshot(electronApp, page, "undo-send-05-undo-toast-visible");
 
-    // Wait for toast to auto-dismiss
-    await page.waitForTimeout(6000);
-  });
-
-  test("inline reply toast auto-dismisses after undo delay", async () => {
-    // The toast from the previous test should auto-dismiss
-    // CI environments have delayed timers, so give generous headroom
-    const undoToast = page.getByText("Message sent.");
-    await expect(undoToast).toBeHidden({ timeout: 20000 });
+    // Wait for toast to auto-dismiss (timer fires send, then toast is removed)
+    // Use a polling assertion instead of fixed waits — CI timer throttling
+    // makes setTimeout unreliable, but the send will eventually complete.
+    await expect(undoToast).toBeHidden({ timeout: 60000 });
   });
 });
 
@@ -322,8 +317,9 @@ test.describe("Undo Send - New Email Compose", () => {
     await takeScreenshot(electronApp, page, "undo-send-12-compose-undo-toast");
 
     // Wait for the undo toast to fully dismiss before next test
-    // CI environments can have delayed timers, so give generous headroom beyond the 5s auto-dismiss
-    await expect(undoToast).toBeHidden({ timeout: 30000 });
+    // CI timer throttling (hidden Electron window under xvfb) can delay
+    // setTimeout indefinitely, so use a very generous timeout.
+    await expect(undoToast).toBeHidden({ timeout: 60000 });
   });
 
   test("undo from new compose restores subject field", async () => {

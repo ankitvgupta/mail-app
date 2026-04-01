@@ -78,7 +78,12 @@ test.describe("Draft persistence across navigation", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      // Race close against a timeout — on CI, pending timers in the renderer
+      // can prevent clean shutdown, causing afterAll to exceed 60s.
+      await Promise.race([
+        electronApp.close(),
+        new Promise((resolve) => setTimeout(resolve, 10000)),
+      ]);
     }
   });
 

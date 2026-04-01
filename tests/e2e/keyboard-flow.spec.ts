@@ -21,10 +21,15 @@ async function getSelectedThreadId(page: Page): Promise<string | null> {
   return null;
 }
 
-/** Wait for email list to be fully rendered (not just the Inbox header) */
+/** Wait for email list to be fully rendered and React effects to settle.
+ * On CI (slow CPU + xvfb), there's a gap between thread rows appearing in the DOM
+ * and the keyboard handler's useEffect registering / store subscriptions updating.
+ * The settle delay lets React flush pending effects before keyboard events fire. */
 async function waitForEmailListReady(page: Page): Promise<void> {
   await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
   await expect(page.locator("div[data-thread-id]").first()).toBeVisible({ timeout: 10000 });
+  // Let React effects settle (keyboard handler registration, store subscriptions)
+  await page.waitForTimeout(500);
 }
 
 test.describe("Keyboard Navigation - j/k Movement", () => {
