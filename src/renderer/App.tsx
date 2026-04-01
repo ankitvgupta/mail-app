@@ -494,6 +494,7 @@ export default function App() {
     addSentEmails,
     setSplits,
     syncProgress,
+    incrementLabelMapVersion,
   } = useAppStore();
 
   // Initialize keyboard shortcuts
