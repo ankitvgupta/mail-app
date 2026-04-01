@@ -302,18 +302,13 @@ test.describe("Draft persistence across navigation", () => {
       timeout: 3000,
     });
 
-    // Clean up
+    // Clean up: discard the forward draft so it doesn't leak into the next test.
+    // The close button triggers handleDiscardDraft which clears the persisted draft.
     await inlineCompose.locator("[data-testid='inline-compose-close']").click();
-    await page.waitForTimeout(300);
-    await forwardButton.click();
     await page.waitForTimeout(500);
-    const clearEditor = inlineCompose.locator(".ProseMirror");
-    await clearEditor.click();
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(200);
-    await inlineCompose.locator("[data-testid='inline-compose-close']").click();
-    await page.waitForTimeout(300);
+
+    // Verify compose is fully closed before proceeding
+    await expect(inlineCompose).not.toBeVisible({ timeout: 5000 });
   });
 
   test("reply mode persists: reply stays reply after round-trip", async () => {
@@ -344,15 +339,6 @@ test.describe("Draft persistence across navigation", () => {
     // Should NOT have the forward-specific AddressInput for To
     // (Reply mode uses a collapsed address summary, not an editable AddressInput)
     // Clean up
-    await inlineCompose.locator("[data-testid='inline-compose-close']").click();
-    await page.waitForTimeout(300);
-    await replyButton.click();
-    await page.waitForTimeout(500);
-    const clearEditor = inlineCompose.locator(".ProseMirror");
-    await clearEditor.click();
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(200);
     await inlineCompose.locator("[data-testid='inline-compose-close']").click();
     await page.waitForTimeout(300);
   });
