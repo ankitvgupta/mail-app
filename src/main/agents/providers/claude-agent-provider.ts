@@ -9,7 +9,6 @@ import {
   type Query,
   type McpServerConfig,
   type SpawnOptions as SdkSpawnOptions,
-  type HookCallback,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentProvider,
@@ -24,6 +23,7 @@ import type {
 } from "../types";
 import type { CliToolConfig } from "../../../shared/types";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { buildBashPreToolUseHook } from "./bash-hook";
 import { createLogger } from "../../services/logger";
 
 const log = createLogger("claude-agent");
@@ -421,68 +421,6 @@ function buildMcpToolWithTracking(
       }
     },
   );
-}
-
-/**
- * Build a PreToolUse hook that gates Bash commands against the CLI tool allowlist.
- *
- * Returns null if no CLI tools are configured (Bash won't be in the tools list).
- * When active, each Bash invocation is checked: the base command (first token)
- * must match one of the configured CLI tool commands. Non-matching commands
- * are denied with an explanation.
- */
-function buildBashPreToolUseHook(
-  cliTools: CliToolConfig[],
-): { matcher: string; hooks: HookCallback[] } | null {
-  const activeCli = cliTools.filter((t) => t.command.trim());
-  if (activeCli.length === 0) return null;
-
-  const allowedCommands = new Set(activeCli.map((t) => t.command.trim()));
-
-  const hook: HookCallback = async (input) => {
-    const toolInput = (input as Record<string, unknown>).tool_input as
-      | { command?: string }
-      | undefined;
-    const command = toolInput?.command ?? "";
-
-    // Reject commands containing shell operators or newlines that could chain additional commands
-    // e.g. "ls && rm -rf /" or "ls; cat /etc/passwd" or "ls\nrm -rf /"
-    if (/[;&|`$><\n\r]/.test(command)) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse" as const,
-          permissionDecision: "deny" as const,
-          permissionDecisionReason:
-            "Shell operators (;, &, |, `, $, >, <) are not allowed in CLI tool commands.",
-        },
-      };
-    }
-
-    // Extract the base command (first token, stripping any path prefix)
-    const firstToken = command.trim().split(/\s+/)[0] ?? "";
-    const baseCommand = firstToken.split("/").pop() ?? firstToken;
-
-    if (allowedCommands.has(baseCommand)) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse" as const,
-          permissionDecision: "allow" as const,
-        },
-      };
-    }
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse" as const,
-        permissionDecision: "deny" as const,
-        permissionDecisionReason:
-          `Command "${baseCommand}" is not in the allowed CLI tools list. ` +
-          `Allowed commands: ${[...allowedCommands].join(", ")}`,
-      },
-    };
-  };
-
-  return { matcher: "Bash", hooks: [hook] };
 }
 
 /**
