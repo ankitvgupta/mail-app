@@ -23,13 +23,13 @@ function getLogDir(): string {
     // NOTE: Keep this path logic in sync with getDataDir() in data-dir.ts.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { app } = require("electron");
-    const dev = isDev();
-    const baseDir = dev ? join(app.getAppPath(), ".dev-data") : app.getPath("userData");
+    // Use app.isPackaged directly — the previous isDev() wrapper used
+    // require("@electron-toolkit/utils") which could fail and fall back
+    // to NODE_ENV checks that incorrectly returned true in packaged apps.
+    const baseDir = app.isPackaged ? app.getPath("userData") : join(app.getAppPath(), ".dev-data");
     return join(baseDir, "logs");
   } catch {
     // Fallback for tests or non-Electron environments.
-    // Use os.tmpdir() instead of process.cwd() — packaged macOS apps
-    // launched from Finder have cwd=/ which is read-only.
     return join(tmpdir(), "exo-logs");
   }
 }
@@ -37,8 +37,8 @@ function getLogDir(): string {
 function isDev(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { is } = require("@electron-toolkit/utils");
-    return is.dev;
+    const { app } = require("electron");
+    return !app.isPackaged;
   } catch {
     return process.env.NODE_ENV !== "production";
   }
