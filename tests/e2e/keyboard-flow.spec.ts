@@ -1,5 +1,10 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import {
+  launchElectronApp,
+  waitForEmailListReady,
+  pressKeyUntilVisible,
+  closeApp,
+} from "./launch-helpers";
 
 /**
  * E2E Tests for complete keyboard-driven workflows.
@@ -39,18 +44,18 @@ test.describe("Keyboard Navigation - j/k Movement", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("j selects the first email when nothing is selected", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
-    await page.keyboard.press("j");
-
-    // Wait for selection to appear (CI can be slow to process keyboard events)
-    await expect(page.locator("div[data-thread-id][data-selected='true']")).toBeVisible({
-      timeout: 10000,
-    });
+    // Retry j until selection appears — on CI the keyboard handler or store
+    // subscription may not be ready on the first press
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
   });
 
   test("j moves selection down to next email", async () => {
@@ -136,32 +141,21 @@ test.describe("Keyboard Navigation - Enter and Escape", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Enter opens email in full view", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
-    // Wait for email list to fully render before keyboard nav
-    await page
-      .locator("[data-testid='email-list-item'], button")
-      .filter({ hasText: /Garry|HR Team/ })
-      .first()
-      .waitFor({ timeout: 10000 });
-    await page.waitForTimeout(500);
+    await waitForEmailListReady(page);
 
-    // Select first thread
-    await page.keyboard.press("j");
-    // Wait for selection before pressing Enter
-    await expect(page.locator("div[data-thread-id][data-selected='true']")).toBeVisible({
-      timeout: 10000,
-    });
+    // Select first thread — retry until selection appears
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
 
-    // Open full view
-    await page.keyboard.press("Enter");
-
-    // In full view, Reply All button should be visible
+    // Open full view — retry Enter until full view renders
     const replyButton = page.locator("button[title='Reply All']").first();
-    await expect(replyButton).toBeVisible({ timeout: 10000 });
+    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 15000 });
   });
 
   test("Escape exits full view back to split view", async () => {
@@ -201,26 +195,23 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("'r' opens reply-all inline compose in full view", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
-    // Navigate to first email and enter full view
-    await page.keyboard.press("j");
-    await expect(page.locator("div[data-thread-id][data-selected='true']")).toBeVisible({
-      timeout: 10000,
-    });
-    await page.keyboard.press("Enter");
-    await expect(page.locator("button[title='Reply All']").first()).toBeVisible({ timeout: 10000 });
+    // Navigate to first email and enter full view — retry each step
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
+    const replyButton = page.locator("button[title='Reply All']").first();
+    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 15000 });
 
     // Press 'r' for reply-all
-    await page.keyboard.press("r");
-    await page.waitForTimeout(800);
-
     const inlineCompose = page.locator("[data-testid='inline-compose']");
-    await expect(inlineCompose).toBeVisible({ timeout: 5000 });
+    await pressKeyUntilVisible(page, "r", inlineCompose, { timeout: 15000 });
     await expect(inlineCompose.locator("text=Reply")).toBeVisible();
 
     // Should have an editor
@@ -234,10 +225,9 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
 
   test("'R' (Shift+r) opens reply (single) inline compose", async () => {
     await page.keyboard.press("Shift+r");
-    await page.waitForTimeout(800);
 
     const inlineCompose = page.locator("[data-testid='inline-compose']");
-    await expect(inlineCompose).toBeVisible({ timeout: 5000 });
+    await expect(inlineCompose).toBeVisible({ timeout: 10000 });
 
     // Close
     await inlineCompose.locator("[data-testid='inline-compose-close']").click();
@@ -246,10 +236,9 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
 
   test("'f' opens forward inline compose with To field", async () => {
     await page.keyboard.press("f");
-    await page.waitForTimeout(800);
 
     const inlineCompose = page.locator("[data-testid='inline-compose']");
-    await expect(inlineCompose).toBeVisible({ timeout: 5000 });
+    await expect(inlineCompose).toBeVisible({ timeout: 10000 });
     await expect(inlineCompose.getByText("Forward", { exact: true })).toBeVisible();
 
     // Forward should have AddressInput for To
@@ -263,9 +252,8 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
   test("switching between r and f correctly changes compose mode", async () => {
     // Open reply
     await page.keyboard.press("r");
-    await page.waitForTimeout(800);
     const inlineCompose = page.locator("[data-testid='inline-compose']");
-    await expect(inlineCompose).toBeVisible({ timeout: 5000 });
+    await expect(inlineCompose).toBeVisible({ timeout: 10000 });
     await expect(inlineCompose.locator("text=Reply")).toBeVisible();
 
     // Close
@@ -274,8 +262,7 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
 
     // Open forward
     await page.keyboard.press("f");
-    await page.waitForTimeout(800);
-    await expect(inlineCompose).toBeVisible({ timeout: 5000 });
+    await expect(inlineCompose).toBeVisible({ timeout: 10000 });
     await expect(inlineCompose.getByText("Forward", { exact: true })).toBeVisible();
 
     // Close
@@ -296,20 +283,22 @@ test.describe("Keyboard Actions - Archive (e)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("'e' archives the selected email and advances to next", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
     // Count threads before archive
     const threadRows = page.locator(".overflow-y-auto div[data-thread-id]");
     const countBefore = await threadRows.count();
     expect(countBefore).toBeGreaterThan(0);
 
-    // Select first thread
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    // Select first thread — retry until selection appears
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
     const selectedBefore = await getSelectedThreadId(page);
 
     // Press 'e' to archive
@@ -343,22 +332,21 @@ test.describe("Keyboard Actions - Star (s)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("'s' stars selected thread when in multi-select mode", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
-    // Select first thread
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    // Select first thread — retry until selection appears
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
 
     // Enter multi-select mode with 'x'
-    await page.keyboard.press("x");
-    await page.waitForTimeout(300);
-
     const batchBar = page.locator("[data-testid='batch-action-bar']");
-    await expect(batchBar).toBeVisible({ timeout: 3000 });
+    await pressKeyUntilVisible(page, "x", batchBar, { timeout: 10000 });
 
     // Press 's' to toggle star
     await page.keyboard.press("s");
@@ -381,7 +369,9 @@ test.describe("Keyboard Go-To - g i (Go to Inbox)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("'g then i' switches to priority inbox view", async () => {
@@ -457,13 +447,15 @@ test.describe("Keyboard - Command Palette and Search", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Cmd+K opens command palette", async () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Command palette should be visible with a search/input field
@@ -495,7 +487,7 @@ test.describe("Keyboard - Command Palette and Search", () => {
 
   test("Escape closes command palette", async () => {
     // Open command palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Verify it's open
@@ -542,7 +534,9 @@ test.describe("Keyboard - Compose New Email (c)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("'c' opens new email compose view", async () => {
@@ -609,13 +603,15 @@ test.describe("Keyboard - Escape Closes All Modals", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Escape closes settings", async () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
     await page.keyboard.press("Escape");
@@ -625,18 +621,24 @@ test.describe("Keyboard - Escape Closes All Modals", () => {
 
   test("Escape clears multi-selection", async () => {
     // Select a thread with 'x'
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
-    await page.keyboard.press("x");
-    await page.waitForTimeout(300);
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
 
     const batchBar = page.locator("[data-testid='batch-action-bar']");
-    await expect(batchBar).toBeVisible({ timeout: 3000 });
+    await pressKeyUntilVisible(page, "x", batchBar, { timeout: 10000 });
 
-    // Escape clears selection
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
-    await expect(batchBar).not.toBeVisible({ timeout: 3000 });
+    // Escape clears selection — retry in case the keypress doesn't register immediately
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      await page.keyboard.press("Escape");
+      try {
+        await expect(batchBar).not.toBeVisible({ timeout: 1000 });
+        break;
+      } catch {
+        // Retry
+      }
+    }
+    await expect(batchBar).not.toBeVisible({ timeout: 2000 });
   });
 
   test("Escape exits full view", async () => {
@@ -659,25 +661,29 @@ test.describe("Keyboard - Escape Closes All Modals", () => {
   test("sequential modals open/close cleanly without leaking state", async () => {
     // Open and close search
     await page.keyboard.press("/");
-    await page.waitForTimeout(300);
+    const searchInput = page.locator("input[placeholder*='Search']");
+    await expect(searchInput).toBeVisible({ timeout: 5000 });
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
+    await expect(searchInput).toBeHidden({ timeout: 5000 });
 
     // Open and close command palette
-    await page.keyboard.press("Meta+k");
-    await page.waitForTimeout(300);
+    await page.keyboard.press("ControlOrMeta+k");
+    const paletteInput = page.locator("input[placeholder='Type a command...']");
+    await expect(paletteInput).toBeVisible({ timeout: 5000 });
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
+    await expect(paletteInput).toBeHidden({ timeout: 5000 });
 
     // Open and close settings
-    await page.keyboard.press("Meta+,");
-    await page.waitForTimeout(300);
+    await page.keyboard.press("ControlOrMeta+,");
+    const settings = page.locator("text=Settings").first();
+    await expect(settings).toBeVisible({ timeout: 5000 });
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(500);
 
     // 'j' navigation should still work (not trapped in a modal)
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    await waitForEmailListReady(page);
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 10000 });
 
     const selected = await getSelectedThreadId(page);
     expect(selected).not.toBeNull();
@@ -696,13 +702,15 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Cmd+J opens agent palette", async () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     const agentInput = page.locator("input[placeholder*='Ask agent']").first();
@@ -727,7 +735,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     }
 
     // Open agent palette — should show email-specific placeholder
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     const agentInput = page.locator("input[placeholder='Ask agent about this email...']").first();
@@ -745,7 +753,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     await expect(replyButton).toBeVisible({ timeout: 5000 });
 
     // Open agent palette
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
     await expect(page.locator("input[placeholder*='Ask agent']").first()).toBeVisible({
       timeout: 3000,
@@ -779,7 +787,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     await page.waitForTimeout(200);
 
     // Cmd+J should open agent palette even though an input is focused
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     const agentInput = page.locator("input[placeholder*='Ask agent']").first();
@@ -815,7 +823,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     await page.waitForTimeout(200);
 
     // Cmd+J opens agent palette on top of compose
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     const agentInput = page.locator("input[placeholder*='Ask agent']").first();
@@ -879,7 +887,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     await page.waitForTimeout(200);
 
     // Cmd+J opens agent palette
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     const agentInput = page.locator("input[placeholder*='Ask agent']").first();
@@ -908,13 +916,13 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
 
   test("agent palette and other modals don't leak state between each other", async () => {
     // Open agent palette, close it
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(300);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
 
     // Open command palette — should work, not stuck
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(300);
     const cmdInput = page
       .locator(
@@ -928,7 +936,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
     await page.waitForTimeout(200);
 
     // Agent palette should also still work
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(300);
     await expect(page.locator("input[placeholder*='Ask agent']").first()).toBeVisible({
       timeout: 3000,

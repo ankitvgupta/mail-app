@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the Settings panel.
@@ -28,7 +28,9 @@ test.describe("Settings Panel - Open and Close", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("can open settings via gear icon button", async () => {
@@ -71,7 +73,7 @@ test.describe("Settings Panel - Open and Close", () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 5000 });
 
     // Press Cmd+, to open settings
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await page.waitForTimeout(500);
 
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
@@ -100,7 +102,9 @@ test.describe("Settings Panel - Tab Navigation", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("opens with General tab active by default", async () => {
@@ -220,7 +224,9 @@ test.describe("Settings Panel - Theme Switching", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("can switch to dark theme", async () => {
@@ -278,7 +284,9 @@ test.describe("Settings Panel - Undo Send Delay", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("shows all undo send delay options", async () => {
@@ -334,7 +342,9 @@ test.describe("Settings Panel - Persistence", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("undo send delay persists after closing and reopening settings", async () => {
@@ -378,7 +388,7 @@ test.describe("Settings Panel - Persistence", () => {
     await page.waitForTimeout(300);
 
     // Reopen settings
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
     // Dark button should still be active
@@ -406,7 +416,7 @@ test.describe("Settings Panel - Persistence", () => {
     // Close and reopen settings
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
     // Compact should still be active

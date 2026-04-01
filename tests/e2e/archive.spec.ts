@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for optimistic archive and trash behavior.
@@ -63,7 +63,7 @@ test.describe("Archive - Optimistic UI", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -153,7 +153,7 @@ test.describe("Archive - Persistence", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -211,7 +211,7 @@ test.describe("Archive - Rapid Succession", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -266,7 +266,7 @@ test.describe("Archive - Rapid Fire Race Condition", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -343,7 +343,7 @@ test.describe("Trash - Optimistic UI", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -410,7 +410,7 @@ test.describe("Archive/Trash - Navigation Edge Cases", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -502,7 +502,7 @@ test.describe("Archive Ready - Thread Archive via 'e' key", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -598,7 +598,7 @@ test.describe("Archive - Click to Select", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

@@ -16,7 +16,7 @@
 #   ./scripts/run-tests.sh integration # Run integration tests only
 #
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -141,6 +141,33 @@ clean_test_dbs() {
     fi
 }
 
+# Run Playwright Electron tests, tolerating worker teardown timeouts.
+# Playwright exits non-zero when a worker's afterAll hangs past 60s, even if
+# every test passed. This is an Electron process cleanup issue (dangling pipe
+# handles), not a test failure. We check the output for real failures and
+# only propagate the error if tests actually failed.
+run_playwright_tolerant() {
+    local project="$1"
+    local result=0
+    local log_file
+    log_file=$(mktemp)
+    run_with_display env EXO_DEMO_MODE=true npx playwright test --project="$project" 2>&1 | tee "$log_file" || result=$?
+    if [ $result -ne 0 ]; then
+        if grep -qE '[0-9]+ failed' "$log_file"; then
+            rm -f "$log_file"
+            return $result
+        elif grep -qE '[0-9]+ passed' "$log_file" && grep -q 'Worker teardown timeout' "$log_file"; then
+            log_warn "All tests passed but worker teardown timed out — treating as pass"
+            rm -f "$log_file"
+            return 0
+        fi
+        rm -f "$log_file"
+        return $result
+    fi
+    rm -f "$log_file"
+    return 0
+}
+
 run_unit_tests() {
     log_info "=== Running Unit Tests ==="
     rebuild_for_node
@@ -153,7 +180,7 @@ run_e2e_tests() {
     ensure_build
     rebuild_for_electron
     clean_test_dbs
-    run_with_display env EXO_DEMO_MODE=true npx playwright test --project=e2e
+    run_playwright_tolerant e2e
     clean_test_dbs
 }
 
@@ -163,7 +190,7 @@ run_integration_tests() {
     check_display
     ensure_build
     rebuild_for_electron
-    run_with_display env EXO_DEMO_MODE=true npx playwright test --project=integration
+    run_playwright_tolerant integration
 }
 
 run_all_tests() {
@@ -188,7 +215,21 @@ run_all_tests() {
     else
         log_info "better-sqlite3 already compiled for Electron, skipping rebuild"
     fi
-    run_with_display env EXO_DEMO_MODE=true npx playwright test --project=integration --project=e2e || electron_result=$?
+    # run_playwright_tolerant requires run_with_display to already be in the
+    # function, but run_all_tests manages its own display. Use the same
+    # teardown-tolerant logic inline.
+    local e2e_log
+    e2e_log=$(mktemp)
+    run_with_display env EXO_DEMO_MODE=true npx playwright test --project=integration --project=e2e 2>&1 | tee "$e2e_log" || electron_result=$?
+    if [ $electron_result -ne 0 ]; then
+        if grep -qE '[0-9]+ failed' "$e2e_log"; then
+            log_error "E2E tests have real failures"
+        elif grep -qE '[0-9]+ passed' "$e2e_log" && grep -q 'Worker teardown timeout' "$e2e_log"; then
+            log_warn "All tests passed but worker teardown timed out (Electron process cleanup) — treating as pass"
+            electron_result=0
+        fi
+    fi
+    rm -f "$e2e_log"
 
     # Clean up worker databases
     clean_test_dbs

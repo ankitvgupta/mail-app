@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /** Best-effort screenshot - won't fail the test if it times out (e.g. due to pending font loads) */
 async function screenshot(page: Page, name: string) {
@@ -56,7 +56,7 @@ test.describe("Email Action Buttons", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 test.describe("Agent Framework", () => {
   test.describe.configure({ mode: "serial" });
@@ -26,7 +26,7 @@ test.describe("Agent Framework", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -36,7 +36,7 @@ test.describe("Agent Framework", () => {
     await page.waitForTimeout(300);
 
     // Press Cmd+J
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     // The palette should be visible with contextual placeholder
@@ -55,7 +55,7 @@ test.describe("Agent Framework", () => {
 
   test("agent command palette shows quick actions", async () => {
     // Open palette
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     // Verify quick actions are listed
@@ -73,7 +73,7 @@ test.describe("Agent Framework", () => {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
 
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     // Since no email is selected, should show general-purpose actions and "No email context" indicator
@@ -92,7 +92,7 @@ test.describe("Agent Framework", () => {
 
   test("Settings panel has Agents tab", async () => {
     // Open settings via Cmd+,
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await page.waitForTimeout(500);
 
     // Look for the Agents tab button
@@ -126,7 +126,7 @@ test.describe("Agent Framework", () => {
     await page.keyboard.press("j");
     await page.waitForTimeout(300);
 
-    await page.keyboard.press("Meta+j");
+    await page.keyboard.press("ControlOrMeta+j");
     await page.waitForTimeout(500);
 
     // Type to filter

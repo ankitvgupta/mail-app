@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Search functionality
@@ -32,7 +32,7 @@ test.describe("Search - Opening and Closing", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -105,7 +105,7 @@ test.describe("Search - Query Input", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -113,12 +113,13 @@ test.describe("Search - Query Input", () => {
     // Open search
     const searchButton = page.locator("button[title*='Search']").first();
     await searchButton.click();
-    await page.waitForTimeout(300);
 
-    // The input should be focused - we can test this by typing
-    await page.keyboard.type("test query");
-
+    // Wait for search input to be visible and focused before typing
     const searchInput = page.locator("input[placeholder*='Search']");
+    await expect(searchInput).toBeVisible({ timeout: 5000 });
+    await expect(searchInput).toBeFocused({ timeout: 5000 });
+
+    await page.keyboard.type("test query");
     const value = await searchInput.inputValue();
     expect(value).toBe("test query");
 
@@ -213,7 +214,7 @@ test.describe("Search - Result Navigation", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -318,7 +319,7 @@ test.describe("Search - Search Operators", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -392,7 +393,7 @@ test.describe("Search - UI Elements", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -488,7 +489,7 @@ test.describe("Search - Quick Search Click Loads Email", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -559,7 +560,7 @@ test.describe("Search - Full Search Results View", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -626,7 +627,7 @@ test.describe("Search - Keyboard Navigation in Results", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -792,7 +793,7 @@ test.describe("Search - Search All Mail Affordance", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

@@ -229,6 +229,7 @@ const api = {
     getEA: (): Promise<unknown> => ipcRenderer.invoke("settings:get-ea"),
     setEA: (eaConfig: { enabled: boolean; email?: string; name?: string }): Promise<unknown> =>
       ipcRenderer.invoke("settings:set-ea", eaConfig),
+    exportLogs: (): Promise<unknown> => ipcRenderer.invoke("settings:export-logs"),
     validateGithubToken: (token: string): Promise<unknown> =>
       ipcRenderer.invoke("settings:validate-github-token", token),
     testOpenclawConnection: (): Promise<{ success: boolean; error?: string }> =>

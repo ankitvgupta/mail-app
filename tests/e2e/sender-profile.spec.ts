@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp, pressKeyUntilVisible , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the sender profile panel.
@@ -29,7 +29,9 @@ test.describe("Sender Profile - Display", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("selecting an email shows the detail view with sender info", async () => {
@@ -106,7 +108,9 @@ test.describe("Sender Profile - Switching Emails", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("switching emails updates the detail view sender", async () => {
@@ -177,7 +181,9 @@ test.describe("Sender Profile - Sidebar Tab Cycling", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("pressing 'b' cycles through sidebar tabs", async () => {
@@ -220,23 +226,21 @@ test.describe("Sender Profile - Full View", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("full view shows sender name for the selected email", async () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
     // Navigate to first email and enter full view
-    await page.keyboard.press("j");
-    // Wait for selection before pressing Enter
-    await expect(page.locator("div[data-thread-id][data-selected='true']")).toBeVisible({
-      timeout: 5000,
-    });
-    await page.keyboard.press("Enter");
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
 
     // Should be in full view
     const replyButton = page.locator("button[title='Reply All']").first();
-    await expect(replyButton).toBeVisible({ timeout: 10000 });
+    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 10000 });
 
     // The email header area should show sender name
     const bodyText = await page.textContent("body");

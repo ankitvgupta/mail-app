@@ -1,5 +1,10 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import {
+  launchElectronApp,
+  waitForEmailListReady,
+  pressKeyUntilVisible,
+  closeApp,
+} from "./launch-helpers";
 
 /**
  * E2E Tests for batch selection and actions.
@@ -35,7 +40,9 @@ test.describe("Multi-Select - Cmd+Click", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Cmd+click selects multiple emails and shows batch action bar", async () => {
@@ -103,7 +110,9 @@ test.describe("Multi-Select - Shift+Click Range", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Shift+click selects a range of emails", async () => {
@@ -144,22 +153,21 @@ test.describe("Multi-Select - Keyboard (x)", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("pressing 'x' toggles current thread into multi-select", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
     // Navigate to first thread
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 10000 });
 
     // Press 'x' to select
-    await page.keyboard.press("x");
-    await page.waitForTimeout(300);
-
     const batchBar = page.locator("[data-testid='batch-action-bar']");
-    await expect(batchBar).toBeVisible({ timeout: 3000 });
+    await pressKeyUntilVisible(page, "x", batchBar, { timeout: 10000 });
     await expect(batchBar).toContainText("1 selected");
   });
 
@@ -203,7 +211,9 @@ test.describe("Multi-Select - Shift+J/K Extend Selection", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Shift+J extends selection downward", async () => {
@@ -250,7 +260,9 @@ test.describe("Multi-Select - Batch Actions", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("batch action bar shows all action buttons", async () => {
@@ -335,16 +347,16 @@ test.describe("Multi-Select - Batch Actions", () => {
     }
 
     // Select two threads via keyboard
-    await page.keyboard.press("j");
-    await page.waitForTimeout(200);
-    await page.keyboard.press("x");
-    await page.waitForTimeout(200);
-    await page.keyboard.press("j");
-    await page.waitForTimeout(200);
-    await page.keyboard.press("x");
-    await page.waitForTimeout(200);
-
+    await waitForEmailListReady(page);
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 10000 });
     const batchBar = page.locator("[data-testid='batch-action-bar']");
+    await pressKeyUntilVisible(page, "x", batchBar, { timeout: 10000 });
+    await page.keyboard.press("j");
+    await page.waitForTimeout(500);
+    await page.keyboard.press("x");
+    await page.waitForTimeout(500);
+
     await expect(batchBar).toContainText("2 selected");
 
     // Press 'e' to batch archive
@@ -370,7 +382,9 @@ test.describe("Multi-Select - Select All and Clear", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("Cmd+A selects all threads", async () => {
@@ -381,7 +395,7 @@ test.describe("Multi-Select - Select All and Clear", () => {
     expect(totalThreads).toBeGreaterThan(0);
 
     // Cmd+A to select all
-    await page.keyboard.press("Meta+a");
+    await page.keyboard.press("ControlOrMeta+a");
     await page.waitForTimeout(300);
 
     const batchBar = page.locator("[data-testid='batch-action-bar']");
@@ -433,7 +447,9 @@ test.describe("Multi-Select - Checkbox Interaction", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("checkboxes appear after entering multi-select mode", async () => {

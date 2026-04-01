@@ -1,4 +1,4 @@
-import { ipcMain, nativeTheme, BrowserWindow } from "electron";
+import { ipcMain, nativeTheme, BrowserWindow, shell, dialog } from "electron";
 import Store from "electron-store";
 import {
   type Config,
@@ -788,4 +788,56 @@ export function registerSettingsIpc(): void {
       }
     },
   );
+
+  // Export logs: zip the log directory and prompt the user to save
+  ipcMain.handle("settings:export-logs", async (): Promise<IpcResponse<void>> => {
+    try {
+      if (process.platform !== "darwin") {
+        return { success: false, error: "Log export is currently only supported on macOS." };
+      }
+
+      const { join } = await import("path");
+      const { readdirSync, mkdirSync } = await import("fs");
+      const { execFile } = await import("child_process");
+
+      const logDir = join(getDataDir(), "logs");
+      mkdirSync(logDir, { recursive: true });
+
+      const logFiles = readdirSync(logDir).filter((f) => f.endsWith(".log"));
+      if (logFiles.length === 0) {
+        return { success: false, error: "No log files found." };
+      }
+
+      const defaultName = `exo-logs-${new Date().toISOString().split("T")[0]}.zip`;
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: "Export Logs",
+        defaultPath: defaultName,
+        filters: [{ name: "Zip Archive", extensions: ["zip"] }],
+      });
+
+      if (canceled || !filePath) {
+        return { success: true, data: undefined };
+      }
+
+      // Use macOS ditto to create a zip of the logs directory
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "ditto",
+          ["-c", "-k", "--sequesterRsrc", logDir, filePath],
+          { timeout: 30_000 },
+          (error) => {
+            if (error) reject(error);
+            else resolve();
+          },
+        );
+      });
+
+      // Reveal the exported file in Finder
+      shell.showItemInFolder(filePath);
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    }
+  });
 }

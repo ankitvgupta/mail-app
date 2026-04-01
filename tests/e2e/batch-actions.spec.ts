@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /** Best-effort screenshot */
 async function screenshot(page: Page, name: string) {
@@ -54,7 +54,7 @@ test.describe("Batch Actions - Multi-Select", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -149,7 +149,7 @@ test.describe("Batch Actions - Keyboard Select (x)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -215,7 +215,7 @@ test.describe("Batch Actions - Select All (Cmd+A)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -226,7 +226,7 @@ test.describe("Batch Actions - Select All (Cmd+A)", () => {
     expect(totalThreads).toBeGreaterThan(0);
 
     // Cmd+A to select all
-    await page.keyboard.press("Meta+a");
+    await page.keyboard.press("ControlOrMeta+a");
     await page.waitForTimeout(300);
 
     const batchBar = page.locator("[data-testid='batch-action-bar']");
@@ -263,7 +263,7 @@ test.describe("Batch Actions - Archive Multiple", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -350,7 +350,7 @@ test.describe("Batch Actions - Trash Multiple", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -426,7 +426,7 @@ test.describe("Batch Actions - Mark Unread", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -473,7 +473,7 @@ test.describe("Batch Actions - Shift+Click Range Select", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -521,7 +521,7 @@ test.describe("Batch Actions - Checkbox Click", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -569,7 +569,7 @@ test.describe("Batch Actions - Select All Button", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

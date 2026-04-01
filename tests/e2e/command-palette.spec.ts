@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /** Best-effort screenshot — don't fail the test if it can't capture */
 async function screenshot(pg: Page, name: string) {
@@ -35,13 +35,13 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
   test("screenshot 1: command palette opens with Cmd+K", async () => {
     // Open command palette with Cmd+K
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Verify it's visible
@@ -58,7 +58,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 2: filtering commands by typing", async () => {
     // Open palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Type to filter
@@ -76,7 +76,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 3: filtering for theme commands", async () => {
     // Open palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Type to filter for theme
@@ -94,7 +94,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 4: keyboard navigation highlight", async () => {
     // Open palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Arrow down a few times to show navigation
@@ -115,7 +115,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 5: filtering for settings/actions", async () => {
     // Open palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Type to filter for settings
@@ -133,7 +133,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 6: execute action - switch to dark mode then reopen palette", async () => {
     // Open palette and switch to dark mode
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     const input = page.locator('input[placeholder="Type a command..."]');
@@ -145,7 +145,7 @@ test.describe("Command Palette (Cmd+K)", () => {
     await page.waitForTimeout(800);
 
     // Now reopen palette to show it in dark mode
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Screenshot: palette in dark mode
@@ -158,7 +158,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test("screenshot 7: no results state", async () => {
     // Open palette
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.waitForTimeout(500);
 
     // Type nonsense to get no results

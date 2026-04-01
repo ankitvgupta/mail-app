@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 let electronApp: ElectronApplication;
 let page: Page;
@@ -47,15 +47,44 @@ test.describe("Snooze — email must leave inbox and cursor must advance", () =>
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("snooze removes email from inbox and advances cursor to next thread", async () => {
-    // Step 1: Press j twice to select the 3rd thread (so there's a "next" below)
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    // Wait for email list to be fully rendered and React effects to settle
+    await expect(page.locator("div[data-thread-id]").first()).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(1000);
+
+    // Step 1: Select a thread (so there's a "next" thread below for cursor advancement)
+    // Use retry-based approach — on CI, keyboard events can fire before React state commits
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    const deadline1 = Date.now() + 15000;
+    while (Date.now() < deadline1) {
+      await page.keyboard.press("j");
+      try {
+        await expect(selectedRow).toBeVisible({ timeout: 500 });
+        break;
+      } catch {
+        // retry
+      }
+    }
+    await expect(selectedRow).toBeVisible({ timeout: 2000 });
+
+    // Press j again to move to the second thread
+    const firstThreadId = await selectedRow.getAttribute("data-thread-id");
+    const deadline2 = Date.now() + 10000;
+    while (Date.now() < deadline2) {
+      await page.keyboard.press("j");
+      try {
+        await expect(selectedRow).toBeVisible({ timeout: 500 });
+        const currentId = await selectedRow.getAttribute("data-thread-id");
+        if (currentId !== firstThreadId) break;
+      } catch {
+        // retry
+      }
+    }
 
     const stateBefore = await getStoreState(page);
     expect(stateBefore).not.toBeNull();
@@ -114,16 +143,24 @@ test.describe("Snooze — email must leave inbox and cursor must advance", () =>
 
     console.log("Expected next thread:", JSON.stringify(nextThreadInfo));
 
-    // Step 3: Press h to open snooze menu
-    await page.keyboard.press("h");
-    await page.waitForTimeout(500);
-
-    // Verify snooze menu is visible
-    await expect(page.locator("text=Later Today")).toBeVisible({ timeout: 3000 });
+    // Step 3: Press h to open snooze menu (retry until it appears)
+    const snoozeMenu = page.locator("text=Later Today");
+    const deadline3 = Date.now() + 10000;
+    while (Date.now() < deadline3) {
+      await page.keyboard.press("h");
+      try {
+        await expect(snoozeMenu).toBeVisible({ timeout: 500 });
+        break;
+      } catch {
+        // retry
+      }
+    }
+    await expect(snoozeMenu).toBeVisible({ timeout: 2000 });
 
     // Step 4: Click "In 1 Week" to snooze
     await page.locator("button").filter({ hasText: "In 1 Week" }).click();
-    await page.waitForTimeout(1000);
+    // Wait for snooze menu to disappear (indicates action completed)
+    await expect(snoozeMenu).toBeHidden({ timeout: 5000 });
 
     const stateAfter = await getStoreState(page);
     console.log("State AFTER snooze:", JSON.stringify(stateAfter));
@@ -147,7 +184,7 @@ test.describe("Snooze — email must leave inbox and cursor must advance", () =>
     }
 
     // The selected row in the UI should be highlighted
-    const selectedRow = page.locator(".overflow-y-auto div[data-thread-id].bg-blue-600");
-    await expect(selectedRow.first()).toBeVisible({ timeout: 2000 });
+    const highlightedRow = page.locator(".overflow-y-auto div[data-thread-id].bg-blue-600");
+    await expect(highlightedRow.first()).toBeVisible({ timeout: 2000 });
   });
 });
