@@ -40,6 +40,7 @@ import { registerAttachmentsIpc } from "./ipc/attachments.ipc";
 import { registerAgentIpc } from "./ipc/agent.ipc";
 import { registerUpdatesIpc } from "./ipc/updates.ipc";
 import { registerOnboardingIpc } from "./ipc/onboarding.ipc";
+import { registerFindIpc } from "./ipc/find.ipc";
 import { autoUpdateService } from "./services/auto-updater";
 import { agentCoordinator } from "./agents/agent-coordinator";
 import { initDatabase, closeDatabase, checkpointWal } from "./db";
@@ -416,6 +417,7 @@ app.whenReady().then(async () => {
   registerAgentIpc();
   registerUpdatesIpc();
   registerOnboardingIpc();
+  registerFindIpc();
 
   // Start auto-updater with config. Always set allowPrerelease (even to false)
   // to override electron-updater's default which auto-enables for prerelease versions.

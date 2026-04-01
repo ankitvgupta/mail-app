@@ -1061,6 +1061,25 @@ const api = {
       ipcRenderer.removeAllListeners("outbox:auth-required");
     },
   },
+
+  // Find-in-page
+  find: {
+    find: (text: string, options?: { forward?: boolean; findNext?: boolean }): Promise<void> =>
+      ipcRenderer.invoke("find:find", { text, ...options }),
+    stop: (): Promise<void> => ipcRenderer.invoke("find:stop"),
+    onResult: (
+      callback: (result: { activeMatchOrdinal: number; matches: number }) => void,
+    ): void => {
+      ipcRenderer.on(
+        "find:result",
+        (_: Electron.IpcRendererEvent, result: { activeMatchOrdinal: number; matches: number }) =>
+          callback(result),
+      );
+    },
+    removeResultListener: (): void => {
+      ipcRenderer.removeAllListeners("find:result");
+    },
+  },
 };
 
 // Expose API to renderer

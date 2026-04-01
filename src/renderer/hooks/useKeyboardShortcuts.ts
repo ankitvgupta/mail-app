@@ -224,6 +224,13 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
         return;
       }
 
+      // Cmd+F for find-in-page
+      if (e.key === "f" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        state.openFindBar();
+        return;
+      }
+
       // Cmd+, for settings
       if (e.key === "," && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -1096,6 +1103,7 @@ export function getKeyboardShortcuts(bindings: "superhuman" | "gmail") {
     ],
     search: [
       { key: "/", description: "Open search" },
+      { key: "Cmd+F", description: "Find in page" },
       { key: "Cmd+K", description: "Command palette" },
       { key: "Cmd+J", description: "Agent action palette" },
     ],
