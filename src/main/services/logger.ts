@@ -80,12 +80,11 @@ function initLogger(): Logger {
   const dev = isDev();
 
   const streams: pino.StreamEntry[] = [
-    // Always write JSON to file.
-    // sync: true prevents SonicBoom "not ready yet" crashes on process exit —
-    // pino's exit hook calls flushSync() which throws if the async fd isn't open.
+    // Async writes — closeLogs() calls logger.end() in before-quit which
+    // deregisters pino's exit hook, preventing the SonicBoom "not ready yet" crash.
     {
       level: "debug" as const,
-      stream: pino.destination({ dest: logFile, sync: true, mkdir: true }),
+      stream: pino.destination({ dest: logFile, sync: false, mkdir: true }),
     },
   ];
 
