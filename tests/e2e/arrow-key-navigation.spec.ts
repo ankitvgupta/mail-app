@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /** Best-effort screenshot */
 async function screenshot(page: Page, name: string) {
@@ -38,7 +38,7 @@ test.describe("Arrow Key Navigation", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

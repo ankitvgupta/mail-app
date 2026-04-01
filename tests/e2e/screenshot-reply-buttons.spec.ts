@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, takeScreenshot } from "./launch-helpers";
+import { launchElectronApp, takeScreenshot , closeApp } from "./launch-helpers";
 
 test.describe("Thread Reply Buttons Screenshot", () => {
   let electronApp: ElectronApplication;
@@ -17,7 +17,7 @@ test.describe("Thread Reply Buttons Screenshot", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) await closeApp(electronApp);
   });
 
   test("capture reply buttons in multi-message thread", async () => {

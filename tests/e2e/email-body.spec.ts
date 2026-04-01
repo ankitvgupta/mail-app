@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Email Body Rendering
@@ -30,7 +30,7 @@ test.describe("Email Body Rendering", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

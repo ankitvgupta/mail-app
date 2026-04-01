@@ -82,6 +82,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [enableSenderLookup, setEnableSenderLookup] = useState(true);
   const [modelConfig, setModelConfig] = useState<ModelConfig>(DEFAULT_MODEL_CONFIG);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  const [isExportingLogs, setIsExportingLogs] = useState(false);
+  const [exportLogsError, setExportLogsError] = useState<string | null>(null);
   const [isDefaultMailApp, setIsDefaultMailApp] = useState(false);
   const [isDefaultMailAppLoading, setIsDefaultMailAppLoading] = useState(false);
   const [defaultMailAppError, setDefaultMailAppError] = useState("");
@@ -1338,6 +1340,40 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                       <li>Includes professional background and context in the draft prompt</li>
                     </ul>
                   </div>
+                )}
+              </div>
+
+              {/* Troubleshooting */}
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                  Troubleshooting
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                  Export log files to share with support. Email content is automatically redacted.
+                </p>
+                <button
+                  onClick={async () => {
+                    setIsExportingLogs(true);
+                    setExportLogsError(null);
+                    try {
+                      const result = (await window.api.settings.exportLogs()) as {
+                        success: boolean;
+                        error?: string;
+                      };
+                      if (!result?.success && result?.error) {
+                        setExportLogsError(result.error);
+                      }
+                    } finally {
+                      setIsExportingLogs(false);
+                    }
+                  }}
+                  disabled={isExportingLogs}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isExportingLogs ? "Exporting..." : "Export Logs"}
+                </button>
+                {exportLogsError && (
+                  <p className="text-sm text-red-600 dark:text-red-400 mt-2">{exportLogsError}</p>
                 )}
               </div>
 

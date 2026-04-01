@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * Test that verifies images actually load in email content.
@@ -30,7 +30,7 @@ test.describe("Image Loading in Emails", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

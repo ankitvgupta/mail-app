@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Reply and Forward workflows.
@@ -85,7 +85,7 @@ test.describe("Reply and Forward Workflows", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -347,7 +347,7 @@ test.describe("Reply After Forward - Bug Regression", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -497,7 +497,7 @@ test.describe("Keyboard Shortcuts for Reply/Forward", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -592,7 +592,7 @@ test.describe("Send via Cmd+Enter", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -614,7 +614,7 @@ test.describe("Send via Cmd+Enter", () => {
     await editor.pressSequentially("Sent via keyboard shortcut.", { delay: 10 });
 
     // Send via Cmd+Enter
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press("ControlOrMeta+Enter");
     await page.waitForTimeout(1000);
 
     // Compose should close after send
@@ -635,7 +635,7 @@ test.describe("Cmd+Enter does not insert newline before sending", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -660,7 +660,7 @@ test.describe("Cmd+Enter does not insert newline before sending", () => {
     }
 
     // Press Cmd+Enter — should NOT insert a newline
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press("ControlOrMeta+Enter");
     await page.waitForTimeout(300);
 
     // Editor should still show "Hello World" on a single line, no newline inserted

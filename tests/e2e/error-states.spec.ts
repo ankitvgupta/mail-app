@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for error handling and edge cases.
@@ -38,7 +38,9 @@ test.describe("Error States - App Load", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("app loads without critical console errors", async () => {
@@ -87,7 +89,9 @@ test.describe("Error States - Empty Inbox Handling", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("archiving all visible emails shows empty state gracefully", async () => {
@@ -103,7 +107,7 @@ test.describe("Error States - Empty Inbox Handling", () => {
     }
 
     // Select all and archive
-    await page.keyboard.press("Meta+a");
+    await page.keyboard.press("ControlOrMeta+a");
     await page.waitForTimeout(300);
 
     const batchBar = page.locator("[data-testid='batch-action-bar']");
@@ -136,7 +140,9 @@ test.describe("Error States - Long Email Body", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("email body renders without horizontal overflow", async () => {
@@ -183,7 +189,9 @@ test.describe("Error States - Rapid Interactions", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("rapid j/k navigation doesn't crash", async () => {
@@ -225,13 +233,13 @@ test.describe("Error States - Rapid Interactions", () => {
       await page.waitForTimeout(150);
 
       // Open command palette
-      await page.keyboard.press("Meta+k");
+      await page.keyboard.press("ControlOrMeta+k");
       await page.waitForTimeout(200);
       await page.keyboard.press("Escape");
       await page.waitForTimeout(150);
 
       // Open settings
-      await page.keyboard.press("Meta+,");
+      await page.keyboard.press("ControlOrMeta+,");
       await page.waitForTimeout(200);
       await page.keyboard.press("Escape");
       await page.waitForTimeout(150);
@@ -278,7 +286,9 @@ test.describe("Error States - UI Resilience", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("clicking empty space in detail area doesn't crash", async () => {
@@ -303,7 +313,7 @@ test.describe("Error States - UI Resilience", () => {
 
   test("navigating while settings are open doesn't crash", async () => {
     // Open settings
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
     // Try pressing j/k (should be ignored in settings)

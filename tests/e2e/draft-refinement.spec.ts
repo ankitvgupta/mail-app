@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for draft generation and refinement workflow.
@@ -30,7 +30,7 @@ test.describe("Draft Generation and Refinement", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) await closeApp(electronApp);
   });
 
   test("can select an email that needs reply", async () => {
@@ -170,7 +170,7 @@ test.describe("Draft Generation - Multiple Emails", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) await closeApp(electronApp);
   });
 
   test("switching emails clears previous draft state", async () => {
@@ -220,7 +220,7 @@ test.describe("Draft Generation - From Full View", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) await closeApp(electronApp);
   });
 
   test("can generate and view draft from full email view", async () => {

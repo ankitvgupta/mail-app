@@ -10,8 +10,10 @@
  * Only log IDs (email_id, account_id, thread_id, caller).
  */
 import pino, { type Logger, multistream } from "pino";
+import { type SonicBoom } from "sonic-boom";
 import { join } from "path";
 import { mkdirSync, readdirSync, unlinkSync, statSync } from "fs";
+import { tmpdir } from "os";
 
 // Lazy-require Electron modules so this file can be imported in tests
 // without Electron being available.
@@ -22,20 +24,22 @@ function getLogDir(): string {
     // NOTE: Keep this path logic in sync with getDataDir() in data-dir.ts.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { app } = require("electron");
-    const dev = isDev();
-    const baseDir = dev ? join(app.getAppPath(), ".dev-data") : app.getPath("userData");
+    // Use app.isPackaged directly — the previous isDev() wrapper used
+    // require("@electron-toolkit/utils") which could fail and fall back
+    // to NODE_ENV checks that incorrectly returned true in packaged apps.
+    const baseDir = app.isPackaged ? app.getPath("userData") : join(app.getAppPath(), ".dev-data");
     return join(baseDir, "logs");
   } catch {
-    // Fallback for tests or non-Electron environments
-    return join(process.cwd(), ".dev-data", "logs");
+    // Fallback for tests or non-Electron environments.
+    return join(tmpdir(), "exo-logs");
   }
 }
 
 function isDev(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { is } = require("@electron-toolkit/utils");
-    return is.dev;
+    const { app } = require("electron");
+    return !app.isPackaged;
   } catch {
     return process.env.NODE_ENV !== "production";
   }
@@ -61,6 +65,10 @@ function cleanOldLogs(logDir: string): void {
 }
 
 let _logger: Logger | null = null;
+// Keep references to SonicBoom destinations so we can end() them on shutdown.
+// pino's Logger and MultiStreamRes types don't expose end(), but
+// SonicBoom (returned by pino.destination()) does.
+let _destinations: SonicBoom[] = [];
 
 function initLogger(): Logger {
   const logDir = getLogDir();
@@ -76,11 +84,16 @@ function initLogger(): Logger {
   const logFile = join(logDir, `${today}.log`);
   const dev = isDev();
 
+  // pino.destination() returns SonicBoom at runtime but is typed as DestinationStream
+  const fileDest = pino.destination({ dest: logFile, sync: false, mkdir: true }) as SonicBoom;
+  _destinations = [fileDest];
+
   const streams: pino.StreamEntry[] = [
-    // Always write JSON to file
+    // Async writes — closeLogs() ends the SonicBoom destinations in before-quit,
+    // deregistering pino's exit hook to prevent "sonic boom is not ready yet" crash.
     {
       level: "debug" as const,
-      stream: pino.destination({ dest: logFile, sync: false, mkdir: true }),
+      stream: fileDest,
     },
   ];
 
@@ -95,9 +108,11 @@ function initLogger(): Logger {
       });
     } catch {
       // pino-pretty not available, fall back to raw JSON to stdout
+      const stdoutDest = pino.destination({ dest: 1, sync: true }) as SonicBoom;
+      _destinations.push(stdoutDest);
       streams.push({
         level: "debug" as const,
-        stream: pino.destination({ dest: 1, sync: true }), // fd 1 = stdout
+        stream: stdoutDest, // fd 1 = stdout
       });
     }
   }
@@ -151,5 +166,30 @@ export function getRawLogger(): Logger {
 export function flushLogs(): void {
   if (_logger) {
     _logger.flush();
+  }
+}
+
+/**
+ * Flush and close the logger, deregistering pino's process-exit hook.
+ * Call in before-quit to prevent SonicBoom errors during shutdown.
+ */
+export function closeLogs(): void {
+  if (_logger) {
+    try {
+      _logger.flush();
+    } catch {
+      /* best effort */
+    }
+    // End each SonicBoom destination — this deregisters pino's
+    // on-exit-leak-free handler, preventing the "sonic boom is not ready yet" crash.
+    for (const dest of _destinations) {
+      try {
+        dest.end();
+      } catch {
+        /* best effort */
+      }
+    }
+    _destinations = [];
+    _logger = null;
   }
 }

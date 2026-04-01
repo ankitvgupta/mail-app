@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Snooze Feature
@@ -71,7 +71,7 @@ test.describe("Snooze Feature — Menu & Presets", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -178,7 +178,7 @@ test.describe("Snooze Feature — Natural Language Input", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -275,7 +275,7 @@ test.describe("Snooze Feature — Snooze Banner & Unsnooze", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 
@@ -382,7 +382,7 @@ test.describe("Snooze Feature — Date Picker", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await electronApp.close();
+      await closeApp(electronApp);
     }
   });
 

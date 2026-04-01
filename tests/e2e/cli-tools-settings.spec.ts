@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp , closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for CLI Tools configuration in the Agents settings tab.
@@ -48,7 +48,9 @@ test.describe("Settings - CLI Tools", () => {
   });
 
   test.afterAll(async () => {
-    if (electronApp) await electronApp.close();
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
   });
 
   test("shows CLI Tools section with heading and description", async () => {
@@ -121,7 +123,7 @@ test.describe("Settings - CLI Tools", () => {
     await page.waitForTimeout(300);
 
     // Reopen settings
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
     // Navigate back to Agents tab

@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { electronApp, optimizer } from "@electron-toolkit/utils";
 
 import { getDataDir, initDevData } from "./data-dir";
-import { createLogger, flushLogs } from "./services/logger";
+import { createLogger, closeLogs } from "./services/logger";
 
 initDevData();
 
@@ -49,6 +49,8 @@ import { registerPrivateExtensions } from "./extensions/private-extensions";
 import { networkMonitor } from "./services/network-monitor";
 import { outboxService } from "./services/outbox-service";
 import { scheduledSendService } from "./services/scheduled-send-service";
+import { snoozeService } from "./services/snooze-service";
+import { calendarSyncService } from "./services/calendar-sync";
 import { emailSyncService } from "./services/email-sync";
 import * as webSearchExtension from "../extensions/mail-ext-web-search/src/index";
 import * as calendarExtension from "../extensions/mail-ext-calendar/src/index";
@@ -505,7 +507,14 @@ const walCheckpointInterval = setInterval(() => {
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
+  // Stop all interval-based services before closing the DB —
+  // otherwise their timers fire after the DB is gone and crash.
   clearInterval(walCheckpointInterval);
-  flushLogs();
+  snoozeService.stop();
+  scheduledSendService.stop();
+  emailSyncService.stopAllSync();
+  calendarSyncService.stopSync();
+
   closeDatabase();
+  closeLogs();
 });

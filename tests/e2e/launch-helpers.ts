@@ -1,4 +1,4 @@
-import { _electron as electron, Page, ElectronApplication } from "@playwright/test";
+import { _electron as electron, expect, Page, ElectronApplication } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -57,6 +57,77 @@ export async function launchElectronApp(
   }
 
   return { app, page: window };
+}
+
+/**
+ * Close an Electron app for test cleanup.
+ *
+ * electronApp.close() can hang when the renderer has pending timers,
+ * and Playwright's internal pipe handles keep the worker alive past the
+ * 60s teardown limit. We SIGTERM the process directly, wait for exit,
+ * and SIGKILL as a fallback.
+ */
+export async function closeApp(electronApp: ElectronApplication): Promise<void> {
+  const proc = electronApp.process();
+  const pid = proc.pid;
+  if (!pid) return;
+
+  const exited = new Promise<void>((resolve) => {
+    proc.once("exit", () => resolve());
+    proc.once("close", () => resolve());
+  });
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  const gracefulTimeout = setTimeout(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }, 5000);
+
+  await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 8000))]);
+  clearTimeout(gracefulTimeout);
+}
+
+/**
+ * Wait for email list to be fully rendered and React effects to settle.
+ * On CI (slow CPU + xvfb), there's a gap between thread rows appearing in the DOM
+ * and the keyboard handler's useEffect registering / store subscriptions updating.
+ * The settle delay lets React flush pending effects before keyboard events fire.
+ */
+export async function waitForEmailListReady(page: Page): Promise<void> {
+  await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("div[data-thread-id]").first()).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(1000);
+}
+
+/**
+ * Press a key and retry until the expected locator becomes visible.
+ * Works around CI timing where keyboard events fire before React state commits.
+ */
+export async function pressKeyUntilVisible(
+  page: Page,
+  key: string,
+  locator: ReturnType<Page["locator"]>,
+  { timeout = 10000, retryInterval = 500 } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    await page.keyboard.press(key);
+    try {
+      await expect(locator).toBeVisible({ timeout: retryInterval });
+      return;
+    } catch {
+      // Key didn't take effect yet — retry
+    }
+  }
+  await expect(locator).toBeVisible({ timeout: 2000 });
 }
 
 /**
