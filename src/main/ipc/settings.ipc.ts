@@ -792,6 +792,10 @@ export function registerSettingsIpc(): void {
   // Export logs: zip the log directory and prompt the user to save
   ipcMain.handle("settings:export-logs", async (): Promise<IpcResponse<void>> => {
     try {
+      if (process.platform !== "darwin") {
+        return { success: false, error: "Log export is currently only supported on macOS." };
+      }
+
       const { join } = await import("path");
       const { readdirSync, mkdirSync } = await import("fs");
       const { execFile } = await import("child_process");

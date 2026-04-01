@@ -82,6 +82,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [enableSenderLookup, setEnableSenderLookup] = useState(true);
   const [modelConfig, setModelConfig] = useState<ModelConfig>(DEFAULT_MODEL_CONFIG);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  const [isExportingLogs, setIsExportingLogs] = useState(false);
+  const [exportLogsError, setExportLogsError] = useState<string | null>(null);
   const [isDefaultMailApp, setIsDefaultMailApp] = useState(false);
   const [isDefaultMailAppLoading, setIsDefaultMailAppLoading] = useState(false);
   const [defaultMailAppError, setDefaultMailAppError] = useState("");
@@ -1350,11 +1352,29 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   Export log files to share with support. Email content is automatically redacted.
                 </p>
                 <button
-                  onClick={() => window.api.settings.exportLogs()}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                  onClick={async () => {
+                    setIsExportingLogs(true);
+                    setExportLogsError(null);
+                    try {
+                      const result = (await window.api.settings.exportLogs()) as {
+                        success: boolean;
+                        error?: string;
+                      };
+                      if (!result?.success && result?.error) {
+                        setExportLogsError(result.error);
+                      }
+                    } finally {
+                      setIsExportingLogs(false);
+                    }
+                  }}
+                  disabled={isExportingLogs}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  Export Logs
+                  {isExportingLogs ? "Exporting..." : "Export Logs"}
                 </button>
+                {exportLogsError && (
+                  <p className="text-sm text-red-600 dark:text-red-400 mt-2">{exportLogsError}</p>
+                )}
               </div>
 
               {/* Save button */}
