@@ -379,7 +379,7 @@ test.describe("buildBashPreToolUseHook", () => {
     expect(await invoke(["git"], "git commit -m 'simple message'")).toBe("allow");
   });
 
-  test("allows command with square brackets", async () => {
+  test("denies command with % inside square brackets", async () => {
     expect(await invoke(["git"], "git log --format=[%h]")).toBe("deny");
     // Note: %h is blocked because % is not in allowlist — this is correct
   });
