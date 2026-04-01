@@ -3259,7 +3259,7 @@ function UsageCostSection() {
                 {history.map((row) => (
                   <tr key={row.id} className="border-b border-gray-50 dark:border-gray-700/50">
                     <td className="py-1.5 text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                      {new Date(row.created_at + "Z").toLocaleString()}
+                      {new Date(row.created_at.replace(" ", "T") + "Z").toLocaleString()}
                     </td>
                     <td className="py-1.5 text-gray-900 dark:text-gray-100">{row.caller}</td>
                     <td className="py-1.5 text-gray-700 dark:text-gray-300 font-mono">
