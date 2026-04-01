@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, closeApp } from "./launch-helpers";
+import { launchElectronApp } from "./launch-helpers";
 
 test.describe("Agent Framework", () => {
   test.describe.configure({ mode: "serial" });
@@ -26,7 +26,7 @@ test.describe("Agent Framework", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

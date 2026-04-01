@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, closeApp } from "./launch-helpers";
+import { launchElectronApp } from "./launch-helpers";
 
 /**
  * E2E Tests for draft generation and refinement workflow.
@@ -31,7 +31,7 @@ test.describe("Draft Generation and Refinement", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -173,7 +173,7 @@ test.describe("Draft Generation - Multiple Emails", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -225,7 +225,7 @@ test.describe("Draft Generation - From Full View", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

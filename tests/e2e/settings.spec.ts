@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, closeApp } from "./launch-helpers";
+import { launchElectronApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the Settings panel.
@@ -29,7 +29,7 @@ test.describe("Settings Panel - Open and Close", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -103,7 +103,7 @@ test.describe("Settings Panel - Tab Navigation", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -225,7 +225,7 @@ test.describe("Settings Panel - Theme Switching", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -285,7 +285,7 @@ test.describe("Settings Panel - Undo Send Delay", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -343,7 +343,7 @@ test.describe("Settings Panel - Persistence", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

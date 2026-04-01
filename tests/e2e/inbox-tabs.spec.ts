@@ -2,7 +2,6 @@ import { test, expect, Page, ElectronApplication } from "@playwright/test";
 import { _electron as electron } from "@playwright/test";
 import path from "path";
 import { fileURLToPath } from "url";
-import { closeApp } from "./launch-helpers";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,7 +88,7 @@ test.describe("Inbox Tabs - Default and Ordering", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

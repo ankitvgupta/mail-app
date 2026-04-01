@@ -95,16 +95,6 @@ export async function pressKeyUntilVisible(
 }
 
 /**
- * Close an Electron app for test cleanup.
- *
- * electronApp.close() can hang when the renderer has pending timers, but
- * run-tests.sh tolerates worker teardown timeouts when all tests passed.
- */
-export async function closeApp(electronApp: ElectronApplication): Promise<void> {
-  await electronApp.close();
-}
-
-/**
  * Best-effort screenshot capture, disabled by default.
  * Set E2E_SCREENSHOTS=true to enable (useful for debugging test failures).
  *

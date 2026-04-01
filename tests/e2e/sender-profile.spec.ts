@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, pressKeyUntilVisible, closeApp } from "./launch-helpers";
+import { launchElectronApp, pressKeyUntilVisible } from "./launch-helpers";
 
 /**
  * E2E Tests for the sender profile panel.
@@ -30,7 +30,7 @@ test.describe("Sender Profile - Display", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -109,7 +109,7 @@ test.describe("Sender Profile - Switching Emails", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -182,7 +182,7 @@ test.describe("Sender Profile - Sidebar Tab Cycling", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -227,7 +227,7 @@ test.describe("Sender Profile - Full View", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

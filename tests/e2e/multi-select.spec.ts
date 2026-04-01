@@ -1,7 +1,6 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
 import {
   launchElectronApp,
-  closeApp,
   waitForEmailListReady,
   pressKeyUntilVisible,
 } from "./launch-helpers";
@@ -41,7 +40,7 @@ test.describe("Multi-Select - Cmd+Click", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -111,7 +110,7 @@ test.describe("Multi-Select - Shift+Click Range", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -154,7 +153,7 @@ test.describe("Multi-Select - Keyboard (x)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -212,7 +211,7 @@ test.describe("Multi-Select - Shift+J/K Extend Selection", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -261,7 +260,7 @@ test.describe("Multi-Select - Batch Actions", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -383,7 +382,7 @@ test.describe("Multi-Select - Select All and Clear", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -448,7 +447,7 @@ test.describe("Multi-Select - Checkbox Interaction", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

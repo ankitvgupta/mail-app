@@ -4,7 +4,6 @@ import { existsSync, unlinkSync, readdirSync } from "fs";
 import {
   launchElectronApp as _launchElectronApp,
   takeScreenshot,
-  closeApp,
 } from "./launch-helpers";
 
 /**
@@ -99,7 +98,7 @@ test.describe("Undo Send - Inline Reply", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -188,7 +187,7 @@ test.describe("Undo Send - Inline Reply Undo Action", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -265,7 +264,7 @@ test.describe("Undo Send - New Email Compose", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -401,7 +400,7 @@ test.describe("Undo Send - Forward", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -481,7 +480,7 @@ test.describe("Undo Send - Settings Configuration", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

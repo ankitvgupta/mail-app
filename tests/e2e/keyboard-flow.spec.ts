@@ -3,7 +3,6 @@ import {
   launchElectronApp,
   waitForEmailListReady,
   pressKeyUntilVisible,
-  closeApp,
 } from "./launch-helpers";
 
 /**
@@ -45,7 +44,7 @@ test.describe("Keyboard Navigation - j/k Movement", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -142,7 +141,7 @@ test.describe("Keyboard Navigation - Enter and Escape", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -196,7 +195,7 @@ test.describe("Keyboard Compose - Reply, Reply-All, Forward", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -284,7 +283,7 @@ test.describe("Keyboard Actions - Archive (e)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -333,7 +332,7 @@ test.describe("Keyboard Actions - Star (s)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -370,7 +369,7 @@ test.describe("Keyboard Go-To - g i (Go to Inbox)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -448,7 +447,7 @@ test.describe("Keyboard - Command Palette and Search", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -535,7 +534,7 @@ test.describe("Keyboard - Compose New Email (c)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -604,7 +603,7 @@ test.describe("Keyboard - Escape Closes All Modals", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -703,7 +702,7 @@ test.describe("Keyboard - Agent Palette (Cmd+J)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

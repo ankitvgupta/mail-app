@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, closeApp } from "./launch-helpers";
+import { launchElectronApp } from "./launch-helpers";
 
 /** Best-effort screenshot — don't fail the test if it can't capture */
 async function screenshot(pg: Page, name: string) {
@@ -35,7 +35,7 @@ test.describe("Command Palette (Cmd+K)", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 

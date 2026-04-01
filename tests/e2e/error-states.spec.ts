@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, closeApp } from "./launch-helpers";
+import { launchElectronApp } from "./launch-helpers";
 
 /**
  * E2E Tests for error handling and edge cases.
@@ -39,7 +39,7 @@ test.describe("Error States - App Load", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -90,7 +90,7 @@ test.describe("Error States - Empty Inbox Handling", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -141,7 +141,7 @@ test.describe("Error States - Long Email Body", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -190,7 +190,7 @@ test.describe("Error States - Rapid Interactions", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
@@ -287,7 +287,7 @@ test.describe("Error States - UI Resilience", () => {
 
   test.afterAll(async () => {
     if (electronApp) {
-      await closeApp(electronApp);
+      await electronApp.close();
     }
   });
 
