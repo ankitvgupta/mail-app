@@ -79,6 +79,8 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
   // Open find bar and ensure the input is focused — handles the case where
   // the bar is already open but input lost focus (standard Cmd+F UX).
+  // The 100ms delay ensures the FindBar component has mounted (React render +
+  // commit) before we query the DOM for the input element.
   function openAndFocusFindBar() {
     useAppStore.getState().openFindBar();
     setTimeout(() => {
@@ -87,7 +89,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
         input.focus();
         input.select();
       }
-    }, 0);
+    }, 100);
   }
 
   // Single event listener registered once. All state is read fresh from the
@@ -241,8 +243,10 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
         return;
       }
 
-      // Skip if user is typing in an input
-      if (isInputFocused()) {
+      // Skip if user is typing in an input or the find bar is open
+      // (findInPage steals focus to the match, so isInputFocused() may be false
+      // even while the user is actively using the find bar)
+      if (isInputFocused() || state.isFindBarOpen) {
         return;
       }
 

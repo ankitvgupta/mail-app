@@ -57,6 +57,17 @@ export function createWindow(): BrowserWindow {
     }
   });
 
+  // Relay found-in-page results to the renderer. This permanent listener
+  // fires when webContents.findInPage() finds matches. We relay via send()
+  // rather than resolving a handle() promise because Electron deadlocks
+  // when found-in-page fires while an IPC handle response is pending.
+  mainWindow.webContents.on("found-in-page", (_event, result) => {
+    mainWindow?.webContents.send("find:result", {
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+    });
+  });
+
   // Electron's default Edit menu captures Cmd+F for its built-in Find.
   // Intercept it here: prevent the menu from handling it, then tell the
   // renderer to open our custom find bar instead.

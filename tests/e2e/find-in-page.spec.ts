@@ -3,14 +3,7 @@ import { launchElectronApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Cmd+F find-in-page functionality.
- *
  * Tests run in DEMO_MODE with fake emails.
- *
- * Note: Electron's findInPage/found-in-page event doesn't fire reliably when
- * triggered via IPC inside Playwright tests. We work around this by calling
- * findInPage directly via app.evaluate (main process) for the match count test.
- * This still validates the full UI flow: find bar rendering, match count display,
- * and keyboard interaction.
  */
 test.describe("Find in Page - Cmd+F", () => {
   test.describe.configure({ mode: "serial" });
@@ -65,16 +58,13 @@ test.describe("Find in Page - Cmd+F", () => {
     // Type a sender name visible in the email list (from demo fake-inbox.ts)
     await findInput.pressSequentially("Garry", { delay: 50 });
 
-    // Trigger findInPage from main process — Electron's found-in-page event
-    // doesn't fire reliably when called via IPC in the Playwright test env,
-    // but the ensureFoundInPageListener relay sends the result to the renderer.
+    // Playwright's key simulation doesn't reliably trigger the full
+    // React onChange → debounce → IPC chain. Trigger findInPage from
+    // main process to validate the found-in-page → find:result → UI path.
     await electronApp.evaluate(async ({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0];
       if (!win) return;
-      return new Promise<void>((resolve) => {
-        win.webContents.once("found-in-page", () => resolve());
-        win.webContents.findInPage("Garry");
-      });
+      win.webContents.findInPage("Garry");
     });
 
     // Match count should be visible

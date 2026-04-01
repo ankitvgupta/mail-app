@@ -14,16 +14,23 @@ export function FindBar() {
     closeFindBar();
   }, [closeFindBar]);
 
-  // Auto-focus on mount — use requestAnimationFrame to ensure the DOM is ready
-  // (plain autoFocus or a synchronous effect can lose to Electron's focus handling)
+  // Auto-focus on mount — Electron's before-input-event preventDefault() can
+  // steal focus back from the input, so we need to retry until it sticks.
   useEffect(() => {
-    requestAnimationFrame(() => {
+    const focus = () => {
       inputRef.current?.focus();
-    });
+      inputRef.current?.select();
+    };
+    focus();
+    requestAnimationFrame(focus);
+    const timer = setTimeout(focus, 50);
+    return () => clearTimeout(timer);
   }, []);
 
-  // Listen for find results from main process
+  // Listen for find results from main process.
+  // Remove-then-add to avoid stacking listeners (React Strict Mode double-mounts).
   useEffect(() => {
+    window.api.find.removeResultListener();
     window.api.find.onResult((result: { activeMatchOrdinal: number; matches: number }) => {
       setActiveMatch(result.activeMatchOrdinal);
       setTotalMatches(result.matches);
@@ -77,6 +84,9 @@ export function FindBar() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
+      // Stop the native event from reaching useKeyboardShortcuts' window listener
+      e.nativeEvent.stopImmediatePropagation();
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (query) {
         findText(query, true, !e.shiftKey);
