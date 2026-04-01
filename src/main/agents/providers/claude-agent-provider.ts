@@ -423,7 +423,6 @@ function buildMcpToolWithTracking(
   );
 }
 
-
 /**
  * Strip the MCP server prefix from a tool name.
  * "mcp__mail-app-tools__read_email" → "read_email"
