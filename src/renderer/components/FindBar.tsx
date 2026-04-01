@@ -14,9 +14,12 @@ export function FindBar() {
     closeFindBar();
   }, [closeFindBar]);
 
-  // Auto-focus on mount
+  // Auto-focus on mount — use requestAnimationFrame to ensure the DOM is ready
+  // (plain autoFocus or a synchronous effect can lose to Electron's focus handling)
   useEffect(() => {
-    inputRef.current?.focus();
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
   }, []);
 
   // Listen for find results from main process
@@ -96,6 +99,7 @@ export function FindBar() {
     >
       <input
         ref={inputRef}
+        autoFocus
         type="text"
         value={query}
         onChange={(e) => handleInputChange(e.target.value)}
