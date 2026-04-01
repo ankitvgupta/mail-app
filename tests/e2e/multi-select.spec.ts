@@ -159,18 +159,15 @@ test.describe("Multi-Select - Keyboard (x)", () => {
   });
 
   test("pressing 'x' toggles current thread into multi-select", async () => {
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    await waitForEmailListReady(page);
 
     // Navigate to first thread
-    await page.keyboard.press("j");
-    await page.waitForTimeout(300);
+    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
+    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 10000 });
 
     // Press 'x' to select
-    await page.keyboard.press("x");
-    await page.waitForTimeout(300);
-
     const batchBar = page.locator("[data-testid='batch-action-bar']");
-    await expect(batchBar).toBeVisible({ timeout: 3000 });
+    await pressKeyUntilVisible(page, "x", batchBar, { timeout: 10000 });
     await expect(batchBar).toContainText("1 selected");
   });
 

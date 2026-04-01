@@ -668,12 +668,10 @@ test.describe("Keyboard - Escape Closes All Modals", () => {
 
     // Open and close command palette
     await page.keyboard.press("ControlOrMeta+k");
-    const palette = page
-      .locator("[data-testid='command-palette']")
-      .or(page.locator("[role='dialog']").first());
-    await expect(palette).toBeVisible({ timeout: 5000 });
+    const paletteInput = page.locator("input[placeholder='Type a command...']");
+    await expect(paletteInput).toBeVisible({ timeout: 5000 });
     await page.keyboard.press("Escape");
-    await expect(palette).toBeHidden({ timeout: 5000 });
+    await expect(paletteInput).toBeHidden({ timeout: 5000 });
 
     // Open and close settings
     await page.keyboard.press("ControlOrMeta+,");

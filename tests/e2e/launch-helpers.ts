@@ -134,6 +134,19 @@ export async function closeApp(electronApp: ElectronApplication): Promise<void> 
   // Wait for exit, but don't wait forever
   await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 8000))]);
   clearTimeout(gracefulTimeout);
+
+  // Unref the child process and its stdio so Node's event loop can exit
+  // even if Playwright's internal handles haven't been cleaned up
+  proc.unref();
+  if (proc.stdio) {
+    for (const stream of proc.stdio) {
+      if (stream && "unref" in stream) {
+        (stream as { unref: () => void }).unref();
+      }
+    }
+  }
+  if (proc.stdout) proc.stdout.removeAllListeners();
+  if (proc.stderr) proc.stderr.removeAllListeners();
 }
 
 /**

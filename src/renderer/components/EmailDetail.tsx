@@ -1459,7 +1459,7 @@ function InlineReply({
   // Handle Cmd+Enter to send (capture phase to beat ProseMirror's Enter handler)
   useEffect(() => {
     const handleCmdEnter = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && e.metaKey) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }
@@ -1982,7 +1982,7 @@ function NewEmailCompose({
   // Handle Cmd+Enter to send (capture phase to beat ProseMirror's Enter handler)
   useEffect(() => {
     const handleCmdEnter = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && e.metaKey) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }
