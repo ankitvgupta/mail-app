@@ -608,7 +608,7 @@ export function EmailList() {
       {/* Batch action bar - shown when threads are multi-selected */}
       <BatchActionBar
         selectedCount={selectedThreadIds.size}
-        totalCount={isDraftsView ? threadsWithDrafts.length + localDrafts.length : threads.length}
+        totalCount={isDraftsView ? threadsWithDrafts.length : threads.length}
         onArchive={batchArchive}
         onTrash={batchTrash}
         onMarkUnread={batchMarkUnread}
