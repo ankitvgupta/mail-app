@@ -75,7 +75,10 @@ export function registerSnippetsIpc(): void {
   // Create a new snippet
   ipcMain.handle(
     "snippets:create",
-    async (_, snippet: Omit<Snippet, "id">): Promise<IpcResponse<Snippet>> => {
+    async (
+      _,
+      snippet: Omit<Snippet, "id" | "createdAt" | "updatedAt">,
+    ): Promise<IpcResponse<Snippet>> => {
       try {
         const now = Date.now();
         const newSnippet: Snippet = {
@@ -105,7 +108,7 @@ export function registerSnippetsIpc(): void {
     "snippets:update",
     async (
       _,
-      { id, updates }: { id: string; updates: Partial<Omit<Snippet, "id">> },
+      { id, updates }: { id: string; updates: Partial<Omit<Snippet, "id" | "updatedAt">> },
     ): Promise<IpcResponse<Snippet>> => {
       try {
         const snippets = getSnippets();

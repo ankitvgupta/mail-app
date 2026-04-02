@@ -173,18 +173,20 @@ function resolveSnippetVariables(
 ): string {
   let resolved = body;
 
-  // Resolve {my_name}
+  // System variables that are auto-resolved (not prompted)
+  const SYSTEM_VARS = new Set(["my_name", "first_name"]);
+
+  // Resolve {my_name} — use replacer function to avoid $-pattern interpretation
   if (senderName) {
-    resolved = resolved.replace(/\{my_name\}/gi, senderName);
+    resolved = resolved.replace(/\{my_name\}/gi, () => senderName);
   }
 
   // Resolve {first_name} from recipient email (best effort: take part before @, capitalize)
   if (recipientEmail) {
     const localPart = recipientEmail.split("@")[0] || "";
-    // Try to get a name-like first name (e.g. "john.doe" → "John")
     const firstName = localPart.split(/[._-]/)[0];
     const capitalized = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
-    resolved = resolved.replace(/\{first_name\}/gi, capitalized);
+    resolved = resolved.replace(/\{first_name\}/gi, () => capitalized);
   }
 
   // Find remaining custom placeholders and prompt for them
@@ -193,6 +195,8 @@ function resolveSnippetVariables(
   const prompted = new Map<string, string>();
   while ((match = customVarRegex.exec(resolved)) !== null) {
     const varName = match[1];
+    // Skip system variables that weren't resolved (missing context)
+    if (SYSTEM_VARS.has(varName.toLowerCase())) continue;
     if (!prompted.has(varName)) {
       const value = window.prompt(`Fill in {${varName}}:`, "") ?? "";
       prompted.set(varName, value);
@@ -200,7 +204,7 @@ function resolveSnippetVariables(
   }
 
   for (const [varName, value] of prompted) {
-    resolved = resolved.replace(new RegExp(`\\{${varName}\\}`, "gi"), value);
+    resolved = resolved.replace(new RegExp(`\\{${varName}\\}`, "gi"), () => value);
   }
 
   return resolved;

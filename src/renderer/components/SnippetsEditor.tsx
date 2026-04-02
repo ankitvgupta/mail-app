@@ -11,6 +11,7 @@ export function SnippetsEditor() {
   const [isCreating, setIsCreating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [crudError, setCrudError] = useState<string | null>(null);
 
   // Superhuman import state
   const [shAccounts, setShAccounts] = useState<SuperhumanAccount[] | null>(null);
@@ -41,18 +42,19 @@ export function SnippetsEditor() {
   const handleCreate = async (name: string, body: string, shortcut?: string) => {
     if (!currentAccountId) return;
     setIsSaving(true);
+    setCrudError(null);
     try {
       const result = (await window.api.snippets.create({
         accountId: currentAccountId,
         name,
         body,
         shortcut: shortcut || undefined,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })) as { success: boolean; data?: Snippet };
+      })) as { success: boolean; data?: Snippet; error?: string };
       if (result.success && result.data) {
         setSnippets([...allSnippets, result.data]);
         setIsCreating(false);
+      } else {
+        setCrudError(result.error ?? "Failed to create snippet");
       }
     } finally {
       setIsSaving(false);
@@ -61,15 +63,19 @@ export function SnippetsEditor() {
 
   const handleUpdate = async (snippet: Snippet) => {
     setIsSaving(true);
+    setCrudError(null);
     try {
       const { id, ...updates } = snippet;
       const result = (await window.api.snippets.update(id, updates)) as {
         success: boolean;
         data?: Snippet;
+        error?: string;
       };
       if (result.success && result.data) {
         setSnippets(allSnippets.map((s) => (s.id === id ? result.data! : s)));
         setEditingSnippet(null);
+      } else {
+        setCrudError(result.error ?? "Failed to update snippet");
       }
     } finally {
       setIsSaving(false);
@@ -79,10 +85,16 @@ export function SnippetsEditor() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this snippet?")) return;
     setIsSaving(true);
+    setCrudError(null);
     try {
-      const result = (await window.api.snippets.delete(id)) as { success: boolean };
+      const result = (await window.api.snippets.delete(id)) as {
+        success: boolean;
+        error?: string;
+      };
       if (result.success) {
         setSnippets(allSnippets.filter((s) => s.id !== id));
+      } else {
+        setCrudError(result.error ?? "Failed to delete snippet");
       }
     } finally {
       setIsSaving(false);
@@ -235,6 +247,18 @@ export function SnippetsEditor() {
       )}
 
       {/* Import error */}
+      {crudError && (
+        <div className="border rounded-lg p-3 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
+          <p className="text-sm text-red-700 dark:text-red-400">{crudError}</p>
+          <button
+            onClick={() => setCrudError(null)}
+            className="text-xs text-red-600 dark:text-red-400 hover:underline mt-1"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {shError && (
         <div className="border rounded-lg p-3 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
           <p className="text-sm text-red-700 dark:text-red-400">{shError}</p>
@@ -378,7 +402,7 @@ function SnippetForm({
           />
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-          Type ;shortcut in the compose editor to quickly insert this snippet.
+          Used to quickly find this snippet when searching in the snippet picker.
         </p>
       </div>
       <div>
