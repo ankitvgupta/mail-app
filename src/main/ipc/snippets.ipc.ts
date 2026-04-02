@@ -176,8 +176,11 @@ export function registerSnippetsIpc(): void {
           discoveredPaths.set(email, filePath);
           try {
             const shSnippets = await readSuperhumanSnippets(filePath);
-            log.info(`[SuperhumanImport] ${email}: ${shSnippets.length} snippets found`);
-            accounts.push({ email, snippetCount: shSnippets.length });
+            const converted = convertSuperhumanSnippets(shSnippets, "");
+            log.info(
+              `[SuperhumanImport] ${email}: ${converted.length} importable of ${shSnippets.length} total snippets`,
+            );
+            accounts.push({ email, snippetCount: converted.length });
           } catch (e) {
             log.error({ err: e }, `[SuperhumanImport] Failed to read snippets for ${email}`);
             accounts.push({ email, snippetCount: 0 });
