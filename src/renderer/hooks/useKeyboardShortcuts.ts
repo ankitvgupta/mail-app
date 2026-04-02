@@ -232,10 +232,13 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
       }
 
       // Cmd+A: select all threads (only when not viewing search results)
-      // Use state.selectAllThreads directly — the const destructuring happens later in the function
+      // In drafts view, only select threads with AI drafts (matching the visible list)
       if ((e.metaKey || e.ctrlKey) && e.key === "a" && !activeSearchQuery) {
         e.preventDefault();
-        state.selectAllThreads(currentThreads.map((t) => t.threadId));
+        const selectableThreads = state.currentSplitId === "__drafts__"
+          ? currentThreads.filter((t) => t.draft)
+          : currentThreads;
+        state.selectAllThreads(selectableThreads.map((t) => t.threadId));
         return;
       }
 
