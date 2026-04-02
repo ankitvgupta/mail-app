@@ -2,6 +2,7 @@ import { BrowserWindow, shell, nativeTheme, app } from "electron";
 import { join } from "path";
 import { is } from "@electron-toolkit/utils";
 import { getConfig } from "./ipc/settings.ipc";
+import { findState } from "./ipc/find.ipc";
 
 export function getIconPath(): string {
   if (app.isPackaged) {
@@ -61,17 +62,29 @@ export function createWindow(): BrowserWindow {
     }
   });
 
-  // NOTE: found-in-page listener is managed by find.ipc.ts, not here.
-  // It needs to suppress re-establish events to prevent infinite loops.
-
-  // Electron's default Edit menu captures Cmd+F for its built-in Find.
-  // Intercept it here: prevent the menu from handling it, then tell the
-  // renderer to open our custom find bar instead.
+  // Intercept keyboard shortcuts before they reach the page.
   mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+
+    // Cmd/Ctrl+F → open find bar
     const isFindModifier = process.platform === "darwin" ? input.meta : input.control;
-    if (input.type === "keyDown" && input.key === "f" && isFindModifier) {
+    if (input.key === "f" && isFindModifier) {
       event.preventDefault();
       mainWindow?.webContents.send("find:open");
+      return;
+    }
+
+    // Enter/Shift+Enter → cycle find matches.
+    // Handled here (before-input-event) rather than in the renderer because
+    // findInPage steals focus to the matched element — if we relied on the
+    // input's onKeyDown, focus would need to be restored first, which resets
+    // Chromium's internal find cursor and breaks cycling.
+    if (input.key === "Enter" && !input.meta && !input.control && !input.alt && findState.isActive()) {
+      event.preventDefault();
+      mainWindow?.webContents.findInPage(findState.getText(), {
+        findNext: true,
+        forward: !input.shift,
+      });
     }
   });
 

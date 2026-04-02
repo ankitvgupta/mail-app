@@ -5,48 +5,25 @@ function getMainWindow(): BrowserWindow | null {
   return windows.length > 0 ? windows[0] : null;
 }
 
-export function registerFindIpc(): void {
-  let lastFindText = "";
-  let reestablishing = false;
-  let listenerAttached = false;
+// Shared find state — used by window.ts to intercept Enter in before-input-event.
+let lastFindText = "";
+let listenerAttached = false;
 
-  // Attach the found-in-page listener lazily (the window may not exist yet
-  // when registerFindIpc is called). Only attached once.
+export const findState = {
+  isActive: (): boolean => lastFindText !== "",
+  getText: (): string => lastFindText,
+};
+
+export function registerFindIpc(): void {
   function ensureListener(w: BrowserWindow): void {
     if (listenerAttached) return;
     listenerAttached = true;
 
-    // Track all events for debugging
-    (global as any).__findDebug = { events: [], reestablishResults: [], ipcCalls: [] };
-
     w.webContents.on("found-in-page", (_event, result) => {
-      const entry = {
-        ordinal: result.activeMatchOrdinal,
-        matches: result.matches,
-        reest: reestablishing,
-        ts: Date.now(),
-      };
-      (global as any).__findDebug.events.push(entry);
-
-      if (reestablishing) {
-        reestablishing = false;
-        (global as any).__findDebug.reestablishResults.push(entry);
-        return;
-      }
-
       w.webContents.send("find:result", {
         activeMatchOrdinal: result.activeMatchOrdinal,
         matches: result.matches,
       });
-
-      if (lastFindText) {
-        reestablishing = true;
-        setTimeout(() => {
-          if (!w.isDestroyed()) {
-            w.webContents.findInPage(lastFindText, { findNext: true, forward: true });
-          }
-        }, 50);
-      }
     });
 
     w.on("closed", () => {
@@ -58,6 +35,8 @@ export function registerFindIpc(): void {
   // Fire-and-forget: call findInPage, results come back via found-in-page.
   // Always use findNext: true — Electron doesn't fire found-in-page for
   // findNext: false when called from an IPC handler.
+  // Deferred via setImmediate — calling findInPage synchronously inside an
+  // IPC handler prevents the found-in-page event from firing.
   ipcMain.on(
     "find:find",
     (
@@ -68,9 +47,6 @@ export function registerFindIpc(): void {
       if (!w || !text) return;
       ensureListener(w);
       lastFindText = text;
-      if ((global as any).__findDebug) {
-        (global as any).__findDebug.ipcCalls.push({ text, forward, ts: Date.now() });
-      }
       setImmediate(() => {
         if (!w.isDestroyed()) {
           w.webContents.findInPage(text, { forward: forward ?? true, findNext: true });
@@ -83,7 +59,6 @@ export function registerFindIpc(): void {
     const w = getMainWindow();
     if (!w) return;
     lastFindText = "";
-    reestablishing = false;
     w.webContents.stopFindInPage("clearSelection");
   });
 }

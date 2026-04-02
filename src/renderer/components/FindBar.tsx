@@ -56,21 +56,30 @@ export function FindBar() {
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [close]);
 
-  // Handle Enter/Shift+Enter at the window level — findInPage steals focus
-  // to the matched element, so the input's onKeyDown may not fire.
+  const findText = useCallback((text: string, findNext?: boolean, forward?: boolean) => {
+    if (!text) {
+      window.api.find.stop();
+      if (matchCountRef.current) matchCountRef.current.textContent = "";
+      return;
+    }
+    window.api.find.find(text, { findNext: findNext ?? false, forward: forward ?? true });
+  }, []);
+
+  // Enter/Shift+Enter cycling. Primary handler is before-input-event in the
+  // main process (window.ts) which calls findInPage directly — this avoids
+  // focus issues since it fires before focus changes. This window-level
+  // listener is a fallback for environments where before-input-event doesn't
+  // fire (e.g. Playwright CDP key injection).
   useEffect(() => {
     const handleEnter = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        const text = inputRef.current?.value;
-        if (!text) return;
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        findText(text, true, !e.shiftKey);
-        // Re-focus the input so the user can edit the query
-        inputRef.current?.focus();
-      }
+      if (e.key !== "Enter") return;
+      const text = inputRef.current?.value;
+      if (!text) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      findText(text, true, !e.shiftKey);
     };
     window.addEventListener("keydown", handleEnter, { capture: true });
     return () => window.removeEventListener("keydown", handleEnter, { capture: true });
@@ -83,19 +92,9 @@ export function FindBar() {
     };
   }, []);
 
-  const findText = useCallback((text: string, findNext?: boolean, forward?: boolean) => {
-    if (!text) {
-      window.api.find.stop();
-      if (matchCountRef.current) matchCountRef.current.textContent = "";
-      return;
-    }
-    window.api.find.find(text, { findNext: findNext ?? false, forward: forward ?? true });
-  }, []);
-
   const handleInputChange = (value: string) => {
     setQuery(value);
     if (!value) {
-      pendingResultRef.current = "";
       if (matchCountRef.current) matchCountRef.current.textContent = "";
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);

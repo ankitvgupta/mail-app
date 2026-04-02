@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp } from "./launch-helpers";
+import { launchElectronApp, waitForEmailListReady, pressKeyUntilVisible } from "./launch-helpers";
 
 /**
  * E2E Tests for Cmd+F find-in-page functionality.
@@ -21,15 +21,12 @@ test.describe("Find in Page - Cmd+F", () => {
   });
 
   test("Cmd+F opens find bar", async () => {
-    // Wait for inbox to load
-    await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
+    // Wait for inbox + React effects to settle
+    await waitForEmailListReady(page);
 
-    // Open find bar
-    await page.keyboard.press("ControlOrMeta+f");
-
-    // Verify find bar appears with focused input
+    // Open find bar (retry on CI where effects may not be registered yet)
     const findBar = page.locator('[data-testid="find-bar"]');
-    await expect(findBar).toBeVisible({ timeout: 5000 });
+    await pressKeyUntilVisible(page, "ControlOrMeta+f", findBar);
 
     const findInput = page.locator('[data-testid="find-bar-input"]');
     await expect(findInput).toBeVisible();
@@ -47,10 +44,8 @@ test.describe("Find in Page - Cmd+F", () => {
 
   test("typing shows match count", async () => {
     // Re-open find bar
-    await page.keyboard.press("ControlOrMeta+f");
-
     const findBar = page.locator('[data-testid="find-bar"]');
-    await expect(findBar).toBeVisible({ timeout: 5000 });
+    await pressKeyUntilVisible(page, "ControlOrMeta+f", findBar);
 
     const findInput = page.locator('[data-testid="find-bar-input"]');
     await expect(findInput).toBeFocused();
