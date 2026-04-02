@@ -7,6 +7,7 @@ import type {
   ComposeMode,
   OutboxStats,
   InboxSplit,
+  Snippet,
   ThemePreference,
   InboxDensity,
   SnoozedEmail,
@@ -37,7 +38,8 @@ export type SettingsTab =
   | "queue"
   | "agents"
   | "analytics"
-  | "extensions";
+  | "extensions"
+  | "snippets";
 
 // Draft content for undo-send restoration or local draft editing
 export type RestoredDraft = {
@@ -244,6 +246,9 @@ interface AppState {
   splits: InboxSplit[];
   currentSplitId: string | null;
 
+  // Snippets state
+  snippets: Snippet[];
+
   // Theme state
   themePreference: ThemePreference;
   resolvedTheme: "light" | "dark";
@@ -411,6 +416,9 @@ interface AppState {
   // Inbox splits actions
   setSplits: (splits: InboxSplit[]) => void;
   setCurrentSplitId: (id: string | null) => void;
+
+  // Snippets actions
+  setSnippets: (snippets: Snippet[]) => void;
 
   // Theme actions
   setThemePreference: (preference: ThemePreference) => void;
@@ -586,6 +594,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Inbox splits state
   splits: [],
   currentSplitId: "__priority__",
+
+  // Snippets state
+  snippets: [],
 
   // Theme state
   themePreference: "system",
@@ -1024,6 +1035,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Inbox splits actions
   setSplits: (splits) => set({ splits }),
   setCurrentSplitId: (id) => set({ currentSplitId: id }),
+
+  // Snippets actions
+  setSnippets: (snippets) => set({ snippets }),
 
   // Theme actions
   setThemePreference: (preference) => set({ themePreference: preference }),
