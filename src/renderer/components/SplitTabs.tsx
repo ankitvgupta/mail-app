@@ -71,7 +71,7 @@ export function SplitTabs() {
 
   // Count both local drafts (compose sessions) and AI-generated drafts (on emails)
   const emailDraftsCount = useMemo(
-    () => threads.filter((t) => t.draft && t.draft.status !== "pending").length,
+    () => threads.filter((t) => t.draft).length,
     [threads],
   );
   const localDraftsCount = useMemo(

@@ -73,10 +73,9 @@ export function EmailList() {
     [allLocalDrafts, currentAccountId],
   );
 
-  // Threads with AI-generated drafts (for the Drafts tab).
-  // Exclude "pending" drafts — these are still being generated and have no content yet.
+  // Threads with AI-generated drafts (for the Drafts tab)
   const threadsWithDrafts = useMemo(
-    () => (isDraftsView ? threads.filter((t) => t.draft && t.draft.status !== "pending") : []),
+    () => (isDraftsView ? threads.filter((t) => t.draft) : []),
     [threads, isDraftsView],
   );
 
