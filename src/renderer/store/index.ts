@@ -1399,8 +1399,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!session) return newAgentTasksState;
 
       const sessionProviderId = event.providerId || session.providerIds[0] || "unknown";
-      const existingRun = session.runs[sessionProviderId] || { status: "running" as const, events: [] };
-      const updatedSessionRun: AgentProviderRun = { ...existingRun, events: [...existingRun.events, event] };
+      const existingRun = session.runs[sessionProviderId] || {
+        status: "running" as const,
+        events: [],
+      };
+      const updatedSessionRun: AgentProviderRun = {
+        ...existingRun,
+        events: [...existingRun.events, event],
+      };
 
       if (event.type === "state") {
         updatedSessionRun.status = (event as { state: AgentProviderRun["status"] }).state;
@@ -1414,7 +1420,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         };
       }
       if ((event as { providerConversationId?: string }).providerConversationId) {
-        updatedSessionRun.providerConversationId = (event as { providerConversationId: string }).providerConversationId;
+        updatedSessionRun.providerConversationId = (
+          event as { providerConversationId: string }
+        ).providerConversationId;
       }
 
       return {
@@ -1671,7 +1679,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       agentSessions: { ...state.agentSessions, [session.id]: session },
       activeSessionId: session.id,
       sessionList: [
-        { id: session.id, title: session.title, status: session.status, updatedAt: session.updatedAt, emailId: session.emailId },
+        {
+          id: session.id,
+          title: session.title,
+          status: session.status,
+          updatedAt: session.updatedAt,
+          emailId: session.emailId,
+        },
         ...state.sessionList,
       ],
     })),
@@ -1686,7 +1700,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         sessionList: state.sessionList.map((s) =>
           s.id === sessionId
             ? { ...s, title: updated.title, status: updated.status, updatedAt: updated.updatedAt }
-            : s
+            : s,
         ),
       };
     }),

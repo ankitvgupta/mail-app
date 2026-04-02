@@ -352,10 +352,7 @@ export class AgentCoordinator {
     const now = Date.now();
     const sessionRow: db.AgentSessionRow = {
       id: taskId,
-      title:
-        prompt.length > 40
-          ? prompt.slice(0, 40).replace(/\s+\S*$/, "") + "..."
-          : prompt,
+      title: prompt.length > 40 ? prompt.slice(0, 40).replace(/\s+\S*$/, "") + "..." : prompt,
       email_id: context.currentEmailId || null,
       thread_id: context.currentThreadId || null,
       account_id: context.accountId,
@@ -392,11 +389,7 @@ export class AgentCoordinator {
         const state = agentEvent.state;
         this.persistTaskEvents(taskId, state);
         const terminalStatus =
-          state === "completed"
-            ? "completed"
-            : state === "cancelled"
-              ? "cancelled"
-              : "failed";
+          state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "failed";
         db.updateAgentSessionStatus(taskId, terminalStatus);
         this.closePort(taskId);
         this.resolveTaskCompletion(taskId, state);

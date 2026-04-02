@@ -26,9 +26,7 @@ export const CollapsedToolCalls = memo(function CollapsedToolCalls({
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
       >
-        <span className={`transition-transform ${expanded ? "rotate-90" : ""}`}>
-          ▸
-        </span>
+        <span className={`transition-transform ${expanded ? "rotate-90" : ""}`}>▸</span>
         <span className="font-mono">
           Used {toolNames.length} tool{toolNames.length !== 1 ? "s" : ""}
           {summary ? ` (${summary})` : ""}

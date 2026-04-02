@@ -4360,17 +4360,15 @@ export function saveAgentSession(session: AgentSessionRow): void {
 
 export function getAgentSession(sessionId: string): AgentSessionRow | null {
   return (
-    (getDatabase()
-      .prepare("SELECT * FROM agent_sessions WHERE id = ?")
-      .get(sessionId) as AgentSessionRow | undefined) ?? null
+    (getDatabase().prepare("SELECT * FROM agent_sessions WHERE id = ?").get(sessionId) as
+      | AgentSessionRow
+      | undefined) ?? null
   );
 }
 
 export function listAgentSessions(accountId: string, limit = 50): AgentSessionRow[] {
   return getDatabase()
-    .prepare(
-      "SELECT * FROM agent_sessions WHERE account_id = ? ORDER BY updated_at DESC LIMIT ?",
-    )
+    .prepare("SELECT * FROM agent_sessions WHERE account_id = ? ORDER BY updated_at DESC LIMIT ?")
     .all(accountId, limit) as AgentSessionRow[];
 }
 

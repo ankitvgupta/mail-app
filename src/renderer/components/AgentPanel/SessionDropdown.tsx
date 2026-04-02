@@ -15,10 +15,14 @@ function formatRelativeTime(ts: number): string {
 
 function statusDot(status: AgentSessionSummary["status"]): string {
   switch (status) {
-    case "active": return "bg-green-500";
-    case "completed": return "bg-gray-400";
-    case "failed": return "bg-red-500";
-    case "cancelled": return "bg-yellow-500";
+    case "active":
+      return "bg-green-500";
+    case "completed":
+      return "bg-gray-400";
+    case "failed":
+      return "bg-red-500";
+    case "cancelled":
+      return "bg-yellow-500";
   }
 }
 
@@ -67,10 +71,13 @@ export function SessionDropdown({ onNewChat }: SessionDropdownProps) {
     setEditingTitle(false);
   }, [activeSessionId, titleDraft]);
 
-  const handleSelect = useCallback((sessionId: string) => {
-    setActiveSessionId(sessionId);
-    setOpen(false);
-  }, [setActiveSessionId]);
+  const handleSelect = useCallback(
+    (sessionId: string) => {
+      setActiveSessionId(sessionId);
+      setOpen(false);
+    },
+    [setActiveSessionId],
+  );
 
   const activeSessions = sessionList.filter((s) => s.status === "active");
   const recentSessions = sessionList.filter((s) => s.status !== "active");
@@ -115,7 +122,10 @@ export function SessionDropdown({ onNewChat }: SessionDropdownProps) {
       {open && (
         <div className="absolute top-full left-0 right-0 z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-b-lg shadow-lg max-h-[300px] overflow-y-auto">
           <button
-            onClick={() => { onNewChat(); setOpen(false); }}
+            onClick={() => {
+              onNewChat();
+              setOpen(false);
+            }}
             className="w-full px-3 py-2 text-sm text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-left font-medium"
           >
             + New Chat
@@ -134,9 +144,13 @@ export function SessionDropdown({ onNewChat }: SessionDropdownProps) {
                     s.id === activeSessionId ? "bg-gray-50 dark:bg-gray-800" : ""
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(s.status)}`} />
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(s.status)}`}
+                  />
                   <span className="truncate text-gray-900 dark:text-gray-100">{s.title}</span>
-                  <span className="ml-auto text-[10px] text-gray-400 flex-shrink-0">{formatRelativeTime(s.updatedAt)}</span>
+                  <span className="ml-auto text-[10px] text-gray-400 flex-shrink-0">
+                    {formatRelativeTime(s.updatedAt)}
+                  </span>
                 </button>
               ))}
             </>
@@ -155,9 +169,13 @@ export function SessionDropdown({ onNewChat }: SessionDropdownProps) {
                     s.id === activeSessionId ? "bg-gray-50 dark:bg-gray-800" : ""
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(s.status)}`} />
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(s.status)}`}
+                  />
                   <span className="truncate text-gray-700 dark:text-gray-300">{s.title}</span>
-                  <span className="ml-auto text-[10px] text-gray-400 flex-shrink-0">{formatRelativeTime(s.updatedAt)}</span>
+                  <span className="ml-auto text-[10px] text-gray-400 flex-shrink-0">
+                    {formatRelativeTime(s.updatedAt)}
+                  </span>
                 </button>
               ))}
             </>

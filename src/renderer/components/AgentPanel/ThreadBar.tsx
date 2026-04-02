@@ -4,9 +4,7 @@ export function ThreadBar() {
   const selectedEmailId = useAppStore((s) => s.selectedEmailId);
   const emails = useAppStore((s) => s.emails);
 
-  const selectedEmail = selectedEmailId
-    ? emails.find((e) => e.id === selectedEmailId)
-    : null;
+  const selectedEmail = selectedEmailId ? emails.find((e) => e.id === selectedEmailId) : null;
 
   if (!selectedEmail) {
     return (

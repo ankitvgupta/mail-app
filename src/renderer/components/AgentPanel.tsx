@@ -1,10 +1,6 @@
 import { memo, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useAppStore } from "../store";
-import type {
-  ScopedAgentEvent,
-  AgentTaskState,
-  AgentSession,
-} from "../../shared/agent-types";
+import type { ScopedAgentEvent, AgentTaskState, AgentSession } from "../../shared/agent-types";
 import { AgentConfirmationDialog } from "./AgentConfirmationDialog";
 import { ChatMessage } from "./AgentPanel/ChatMessage";
 import { CollapsedToolCalls } from "./AgentPanel/CollapsedToolCalls";
@@ -89,7 +85,10 @@ function groupEventsForChat(events: ScopedAgentEvent[]): ChatGroup[] {
       case "user_message":
         flushText();
         flushTools();
-        groups.push({ kind: "user", text: (event as ScopedAgentEvent & { type: "user_message" }).text });
+        groups.push({
+          kind: "user",
+          text: (event as ScopedAgentEvent & { type: "user_message" }).text,
+        });
         break;
       case "tool_call_start":
       case "tool_call_end":
@@ -105,7 +104,10 @@ function groupEventsForChat(events: ScopedAgentEvent[]): ChatGroup[] {
       case "error":
         flushText();
         flushTools();
-        groups.push({ kind: "error", message: (event as ScopedAgentEvent & { type: "error" }).message });
+        groups.push({
+          kind: "error",
+          message: (event as ScopedAgentEvent & { type: "error" }).message,
+        });
         break;
       case "done":
         flushText();
@@ -121,7 +123,9 @@ function groupEventsForChat(events: ScopedAgentEvent[]): ChatGroup[] {
 }
 
 /** Collect all events across all runs in a session or task, in order */
-function collectAllEvents(runs: Record<string, { events: ScopedAgentEvent[] }>): ScopedAgentEvent[] {
+function collectAllEvents(
+  runs: Record<string, { events: ScopedAgentEvent[] }>,
+): ScopedAgentEvent[] {
   const all: ScopedAgentEvent[] = [];
   for (const run of Object.values(runs)) {
     all.push(...run.events);
@@ -254,7 +258,10 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
       };
 
       // Decide: follow up on existing session, or create new
-      if (activeSession && (activeSession.status === "completed" || activeSession.status === "failed")) {
+      if (
+        activeSession &&
+        (activeSession.status === "completed" || activeSession.status === "failed")
+      ) {
         // Follow-up on existing session — use legacy follow-up path for now
         // The session's taskId is also its ID
         followUpAgentTask(emailId, message);
@@ -276,7 +283,11 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
             providerId: providerIds[0],
           });
         }
-      } else if (!activeSession && legacyTask && (legacyTask.status === "completed" || legacyTask.status === "failed")) {
+      } else if (
+        !activeSession &&
+        legacyTask &&
+        (legacyTask.status === "completed" || legacyTask.status === "failed")
+      ) {
         // Follow-up on legacy task
         followUpAgentTask(emailId, message);
         const newTaskId = crypto.randomUUID();
@@ -428,7 +439,8 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
                     (group.event as ScopedAgentEvent & { type: "confirmation_required" }).toolName
                   }
                   description={
-                    (group.event as ScopedAgentEvent & { type: "confirmation_required" }).description
+                    (group.event as ScopedAgentEvent & { type: "confirmation_required" })
+                      .description
                   }
                   input={
                     (group.event as ScopedAgentEvent & { type: "confirmation_required" }).input

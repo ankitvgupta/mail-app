@@ -278,9 +278,7 @@ export function registerAgentIpc(): void {
     "agent:list-sessions",
     async (_, { accountId, emailId }: { accountId: string; emailId?: string }) => {
       try {
-        const rows = emailId
-          ? listAgentSessionsForEmail(emailId)
-          : listAgentSessions(accountId);
+        const rows = emailId ? listAgentSessionsForEmail(emailId) : listAgentSessions(accountId);
         const summaries = rows.map((r) => ({
           id: r.id,
           title: r.title,
@@ -296,32 +294,29 @@ export function registerAgentIpc(): void {
     },
   );
 
-  ipcMain.handle(
-    "agent:get-session",
-    async (_, { sessionId }: { sessionId: string }) => {
-      try {
-        const row = getAgentSession(sessionId);
-        if (!row) return { success: false, error: "Session not found" };
-        return {
-          success: true,
-          data: {
-            id: row.id,
-            title: row.title,
-            emailId: row.email_id,
-            threadId: row.thread_id,
-            accountId: row.account_id,
-            providerIds: JSON.parse(row.provider_ids),
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            status: row.status,
-          },
-        };
-      } catch (err) {
-        log.error({ err }, "Failed to get agent session");
-        return { success: false, error: String(err) };
-      }
-    },
-  );
+  ipcMain.handle("agent:get-session", async (_, { sessionId }: { sessionId: string }) => {
+    try {
+      const row = getAgentSession(sessionId);
+      if (!row) return { success: false, error: "Session not found" };
+      return {
+        success: true,
+        data: {
+          id: row.id,
+          title: row.title,
+          emailId: row.email_id,
+          threadId: row.thread_id,
+          accountId: row.account_id,
+          providerIds: JSON.parse(row.provider_ids),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          status: row.status,
+        },
+      };
+    } catch (err) {
+      log.error({ err }, "Failed to get agent session");
+      return { success: false, error: String(err) };
+    }
+  });
 
   ipcMain.handle(
     "agent:rename-session",
@@ -336,16 +331,13 @@ export function registerAgentIpc(): void {
     },
   );
 
-  ipcMain.handle(
-    "agent:delete-session",
-    async (_, { sessionId }: { sessionId: string }) => {
-      try {
-        deleteAgentSession(sessionId);
-        return { success: true, data: null };
-      } catch (err) {
-        log.error({ err }, "Failed to delete agent session");
-        return { success: false, error: String(err) };
-      }
-    },
-  );
+  ipcMain.handle("agent:delete-session", async (_, { sessionId }: { sessionId: string }) => {
+    try {
+      deleteAgentSession(sessionId);
+      return { success: true, data: null };
+    } catch (err) {
+      log.error({ err }, "Failed to delete agent session");
+      return { success: false, error: String(err) };
+    }
+  });
 }

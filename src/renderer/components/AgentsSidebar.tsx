@@ -146,9 +146,7 @@ export function AgentsSidebar() {
   if (!isAgentsSidebarOpen) return null;
 
   // Show most recent sessions first, limit to 20
-  const recentSessions = [...sessionList]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 20);
+  const recentSessions = [...sessionList].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20);
 
   return (
     <div className="w-56 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col h-full">

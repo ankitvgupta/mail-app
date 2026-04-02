@@ -27,7 +27,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         handleSend();
       }
     },
-    [handleSend]
+    [handleSend],
   );
 
   const handleInput = useCallback(() => {
@@ -58,7 +58,12 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-500 text-white flex items-center justify-center hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M5 10l7-7m0 0l7 7m-7-7v18"
+          />
         </svg>
       </button>
     </div>
