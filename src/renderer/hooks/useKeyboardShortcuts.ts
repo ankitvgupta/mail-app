@@ -353,10 +353,12 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           }
         }
 
-        if (!isDraftsView) {
-          for (const t of currentThreads) {
-            items.push({ type: "thread", threadId: t.threadId, emailId: t.latestEmail.id });
-          }
+        // In drafts view, only include threads with AI-generated drafts (matching the visible list)
+        const threadsForNav = isDraftsView
+          ? currentThreads.filter((t) => t.draft)
+          : currentThreads;
+        for (const t of threadsForNav) {
+          items.push({ type: "thread", threadId: t.threadId, emailId: t.latestEmail.id });
         }
 
         if (items.length === 0) return;
