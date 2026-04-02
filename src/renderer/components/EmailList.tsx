@@ -73,9 +73,10 @@ export function EmailList() {
     [allLocalDrafts, currentAccountId],
   );
 
-  // Threads with AI-generated drafts (for the Drafts tab)
+  // Threads with AI-generated drafts (for the Drafts tab).
+  // Filter to drafts with body content — excludes placeholder shells still being generated.
   const threadsWithDrafts = useMemo(
-    () => (isDraftsView ? threads.filter((t) => t.draft) : []),
+    () => (isDraftsView ? threads.filter((t) => t.draft && t.draft.body) : []),
     [threads, isDraftsView],
   );
 

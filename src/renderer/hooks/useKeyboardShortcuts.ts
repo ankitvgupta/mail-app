@@ -236,7 +236,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
       if ((e.metaKey || e.ctrlKey) && e.key === "a" && !activeSearchQuery) {
         e.preventDefault();
         const selectableThreads = state.currentSplitId === "__drafts__"
-          ? currentThreads.filter((t) => t.draft)
+          ? currentThreads.filter((t) => t.draft && t.draft.body)
           : currentThreads;
         state.selectAllThreads(selectableThreads.map((t) => t.threadId));
         return;
@@ -358,7 +358,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
         // In drafts view, only include threads with AI-generated drafts (matching the visible list)
         const threadsForNav = isDraftsView
-          ? currentThreads.filter((t) => t.draft)
+          ? currentThreads.filter((t) => t.draft && t.draft.body)
           : currentThreads;
         for (const t of threadsForNav) {
           items.push({ type: "thread", threadId: t.threadId, emailId: t.latestEmail.id });
