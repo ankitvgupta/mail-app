@@ -661,10 +661,13 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           .sort((a, b) => a.order - b.order);
         for (const s of customSplits) ids.push(s.id);
         // Conditional virtual tabs (only when visible in SplitTabs)
-        const hasDrafts = state.localDrafts.some(
+        const hasLocalDrafts = state.localDrafts.some(
           (d) => !currentAccountId || d.accountId === currentAccountId,
         );
-        if (hasDrafts) ids.push("__drafts__");
+        const hasAiDrafts = state.emails.some(
+          (e) => e.draft && (!currentAccountId || e.accountId === currentAccountId),
+        );
+        if (hasLocalDrafts || hasAiDrafts) ids.push("__drafts__");
         // Only include snoozed when there are snoozed threads with loaded email data
         // for the current account (matches SplitTabs.tsx snoozedCount from useThreadedEmails)
         const hasSnoozed = state.emails.some(
