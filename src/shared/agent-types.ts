@@ -124,3 +124,33 @@ export interface RemoteConversationView {
   lastSyncedAt: number;
   messages: ScopedAgentEvent[];
 }
+
+/** A persistent agent chat session, decoupled from email lifecycle */
+export interface AgentSession {
+  id: string;
+  title: string;
+  emailId: string | null;
+  threadId: string | null;
+  accountId: string;
+  providerIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  status: "active" | "completed" | "failed" | "cancelled";
+  runs: Record<string, AgentProviderRun>;
+}
+
+export interface AgentSessionSummary {
+  id: string;
+  title: string;
+  status: AgentSession["status"];
+  updatedAt: number;
+  emailId: string | null;
+}
+
+/** Plain-text representation of one message in a thread, for agent context injection */
+export interface ThreadContextMessage {
+  from: string;
+  date: string;
+  body: string;
+  isFromUser: boolean;
+}
