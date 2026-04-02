@@ -414,7 +414,14 @@ const NUMBERED_MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at DESC);
       `);
 
-      // Migrate existing traces to sessions
+      // Migrate existing traces to sessions (table may not exist in fresh DBs)
+      const mirrorExists = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_conversation_mirror'",
+        )
+        .get();
+      if (!mirrorExists) return;
+
       const traces = db.prepare("SELECT * FROM agent_conversation_mirror").all() as Array<{
         local_task_id: string;
         provider_id: string;
