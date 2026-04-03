@@ -348,6 +348,26 @@ export class AgentCoordinator {
     // Initialize event accumulator for this task
     this.taskEvents.set(taskId, []);
 
+    // Create session in DB
+    const now = Date.now();
+    const sessionRow: db.AgentSessionRow = {
+      id: taskId,
+      title:
+        (prompt.length > 40 ? prompt.slice(0, 40).replace(/\s+\S*$/, "") : prompt) || "Untitled",
+      email_id: context.currentEmailId || null,
+      thread_id: context.currentThreadId || null,
+      account_id: context.accountId,
+      provider_ids: JSON.stringify(providerIds),
+      created_at: now,
+      updated_at: now,
+      status: "active",
+    };
+    try {
+      db.saveAgentSession(sessionRow);
+    } catch (err) {
+      log.error({ err, taskId }, "Failed to save agent session");
+    }
+
     // Forward events from port1 to the renderer via IPC
     port1.on("message", (event) => {
       const agentEvent = event.data as ScopedAgentEvent;
@@ -371,9 +391,17 @@ export class AgentCoordinator {
           agentEvent.state === "failed" ||
           agentEvent.state === "cancelled")
       ) {
-        this.persistTaskEvents(taskId, agentEvent.state);
+        const state = agentEvent.state;
+        this.persistTaskEvents(taskId, state);
+        const terminalStatus =
+          state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "failed";
+        try {
+          db.updateAgentSessionStatus(taskId, terminalStatus);
+        } catch (err) {
+          log.error({ err, taskId, terminalStatus }, "Failed to update agent session status");
+        }
         this.closePort(taskId);
-        this.resolveTaskCompletion(taskId, agentEvent.state);
+        this.resolveTaskCompletion(taskId, state);
       }
     });
     port1.start();
@@ -435,6 +463,11 @@ export class AgentCoordinator {
     // Persist partial trace before closing port — the worker's "cancelled" event
     // won't arrive after closePort() kills the message handler.
     this.persistTaskEvents(taskId, "cancelled");
+    try {
+      db.updateAgentSessionStatus(taskId, "cancelled");
+    } catch (err) {
+      log.error({ err, taskId }, "Failed to update agent session status on cancel");
+    }
     this.closePort(taskId);
     this.resolveTaskCompletion(taskId, "cancelled");
   }

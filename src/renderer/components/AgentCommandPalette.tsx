@@ -154,9 +154,6 @@ function fuzzyMatch(text: string, query: string): boolean {
   return words.every((w) => lowerText.includes(w));
 }
 
-/** Sentinel key used in the store for agent tasks that aren't tied to any specific email. */
-export const GLOBAL_AGENT_KEY = "__global__";
-
 interface AgentCommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
@@ -300,14 +297,39 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
         context.emailBody =
           selectedDraft.bodyText || stripHtml(selectedDraft.bodyHtml) || undefined;
       } else {
-        taskKey = GLOBAL_AGENT_KEY;
-        setGlobalAgentTaskKey(GLOBAL_AGENT_KEY);
+        // Use a unique key per non-email run so multiple can coexist in agentTasks
+        const globalTaskId = crypto.randomUUID();
+        taskKey = globalTaskId;
+        setGlobalAgentTaskKey(taskKey);
       }
 
       // Generate taskId on the frontend so the store mapping is populated
       // before any backend events arrive (avoids race condition).
-      const taskId = crypto.randomUUID();
+      // For non-email runs, taskId === taskKey (both are the UUID).
+      const taskId =
+        taskKey.startsWith("draft:") || selectedEmailId ? crypto.randomUUID() : taskKey;
       startAgentTask(taskId, taskKey, effectiveProviderIds, effectivePrompt, context);
+
+      // Create a session record so the command palette launch is tracked in session history
+      const now = Date.now();
+      useAppStore.getState().createSession({
+        id: taskId,
+        title:
+          effectivePrompt.length > 40
+            ? effectivePrompt.slice(0, 40).replace(/\s+\S*$/, "") + "..."
+            : effectivePrompt,
+        emailId: selectedEmailId || null,
+        threadId: selectedThreadId || null,
+        accountId: currentAccountId || "",
+        providerIds: effectiveProviderIds,
+        createdAt: now,
+        updatedAt: now,
+        status: "active",
+        runs: Object.fromEntries(
+          effectiveProviderIds.map((pid) => [pid, { status: "running" as const, events: [] }]),
+        ),
+      });
+
       trackEvent("agent_run_started", {
         source: "manual",
         provider_count: effectiveProviderIds.length,
@@ -331,6 +353,8 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
           message: result.error ?? "Failed to start agent task",
           providerId: effectiveProviderIds[0],
         });
+        // Clean up the optimistically-created session so it doesn't linger as 'active'
+        store.updateSessionInStore(taskId, { status: "failed" });
       }
     },
     [

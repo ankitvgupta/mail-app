@@ -2,7 +2,7 @@ import { memo, useMemo, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
 import { useExtensionPanels, ExtensionPanelSlot } from "../extensions";
 import { AgentTabContent } from "./AgentPanel";
-import type { ScopedAgentEvent } from "../../shared/agent-types";
+import type { ScopedAgentEvent, AgentSessionSummary } from "../../shared/agent-types";
 
 // SVG icon components for sidebar tabs
 function PersonIcon({ active }: { active: boolean }) {
@@ -82,6 +82,56 @@ const TAB_LABELS: Record<SidebarTab, string> = {
   agent: "Agent",
 };
 
+/** Horizontal pill bar for switching between non-email agent sessions */
+function GlobalSessionBar({
+  sessions,
+  activeKey,
+  onSelect,
+  onNew,
+}: {
+  sessions: AgentSessionSummary[];
+  activeKey: string | null;
+  onSelect: (sessionId: string) => void;
+  onNew: () => void;
+}) {
+  // Show most recent 6 sessions, with the active one always visible
+  const visible = sessions.slice(0, 6);
+
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200 dark:border-gray-700 overflow-x-auto flex-shrink-0">
+      {visible.map((s) => (
+        <button
+          key={s.id}
+          onClick={() => onSelect(s.id)}
+          className={`flex-shrink-0 px-2.5 py-1 text-xs rounded-full truncate max-w-[140px] transition-colors ${
+            s.id === activeKey
+              ? "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-medium"
+              : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
+          }`}
+          title={s.title}
+        >
+          {s.title}
+        </button>
+      ))}
+      <button
+        onClick={onNew}
+        className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+        title="New agent task (Cmd+J)"
+      >
+        <svg
+          className="w-3.5 h-3.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 // memo: prevents parent (App) re-renders from cascading into the sidebar.
 // The sidebar reads all state from Zustand hooks, so parent-triggered re-renders
 // are always wasted work — especially expensive when EventTimeline has hundreds of events.
@@ -95,9 +145,21 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
   const availableTabs = useAppStore((s) => s.availableSidebarTabs);
   const setAvailableTabs = useAppStore((s) => s.setAvailableSidebarTabs);
   const globalAgentTaskKey = useAppStore((s) => s.globalAgentTaskKey);
+  const setGlobalAgentTaskKey = useAppStore((s) => s.setGlobalAgentTaskKey);
+  const sessionList = useAppStore((s) => s.sessionList);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const loadSessionList = useAppStore((s) => s.loadSessionList);
+  const replayAgentTrace = useAppStore((s) => s.replayAgentTrace);
+  const setAgentPaletteOpen = useAppStore((s) => s.setAgentPaletteOpen);
   // Draft task key for agent tab — drafts use `draft:${id}` as their task key
   const draftTaskKey = selectedDraftId ? `draft:${selectedDraftId}` : null;
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
+
+  // Non-email sessions for the GlobalSessionBar
+  const globalSessions = useMemo(
+    () => sessionList.filter((s) => s.emailId === null),
+    [sessionList],
+  );
 
   // Whether the selected email has a persisted agent trace (even if not yet loaded into memory)
   const hasPersistedTrace = Boolean(selectedEmail?.draft?.agentTaskId);
@@ -225,7 +287,6 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
   // Debounced to avoid blocking j/k navigation — traces can be very large
   // (100MB+) and IPC deserialization blocks the main thread.
   const loadedTraceRef = useRef<string | null>(null);
-  const replayAgentTrace = useAppStore((s) => s.replayAgentTrace);
   // Derive primitive values so the effect doesn't re-run on every store mutation
   const selectedEmailIdForTrace = selectedEmail?.id;
   const selectedEmailAgentTaskId = selectedEmail?.draft?.agentTaskId;
@@ -286,17 +347,63 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
     return () => clearTimeout(timeoutId);
   }, [selectedEmailIdForTrace, selectedEmailAgentTaskId, hasAgentTask, replayAgentTrace]);
 
+  // Load session list when no email is selected (for the GlobalSessionBar)
+  useEffect(() => {
+    if (!selectedEmailId && currentAccountId) {
+      loadSessionList(currentAccountId);
+    }
+  }, [selectedEmailId, currentAccountId, loadSessionList]);
+
+  // Load trace from DB when switching to a historical global session that isn't in memory
+  useEffect(() => {
+    if (selectedEmailId || !globalAgentTaskKey) return;
+    const hasTask = useAppStore.getState().agentTasks[globalAgentTaskKey];
+    if (hasTask) return;
+
+    const api = window.api as unknown as {
+      agent: {
+        getTrace: (
+          taskId: string,
+        ) => Promise<{ success: boolean; data?: { events: ScopedAgentEvent[] } }>;
+        getSession: (
+          sessionId: string,
+        ) => Promise<{ success: boolean; data?: { providerIds: string[] } }>;
+      };
+    };
+
+    const sessionId = globalAgentTaskKey;
+    const timeoutId = setTimeout(() => {
+      // Load both session metadata (for providerIds) and trace data in parallel
+      Promise.all([api.agent.getSession(sessionId), api.agent.getTrace(sessionId)])
+        .then(([sessionResult, traceResult]) => {
+          // Guard: user may have switched away
+          if (useAppStore.getState().globalAgentTaskKey !== sessionId) return;
+          if (!traceResult.success || !traceResult.data?.events?.length) return;
+          const providerIds =
+            sessionResult.success && sessionResult.data?.providerIds?.length
+              ? sessionResult.data.providerIds
+              : ["claude"];
+          replayAgentTrace(
+            sessionId,
+            sessionId, // Use sessionId as the task key for non-email runs
+            providerIds,
+            "",
+            { accountId: currentAccountId || "", userEmail: "" },
+            traceResult.data.events,
+          );
+        })
+        .catch((err: unknown) => {
+          console.error("[EmailPreviewSidebar] Failed to load global session trace:", err);
+        });
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [globalAgentTaskKey, selectedEmailId, currentAccountId, replayAgentTrace]);
+
   // No email selected — show agent panel if a draft or global task is active, otherwise empty state
   if (!selectedEmail || !latestEmail) {
-    if (agentTaskKey && hasAgentTask) {
-      return (
-        <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
-          <AgentTabContent emailId={agentTaskKey} />
-        </div>
-      );
-    }
     // Draft is selected but no agent task yet — show prompt hint
-    if (selectedDraftId) {
+    if (selectedDraftId && !hasAgentTask) {
       return (
         <div className="w-80 bg-gray-50 dark:bg-gray-800/50 border-l border-gray-200 dark:border-gray-700 flex items-center justify-center">
           <div className="text-center px-6">
@@ -312,11 +419,50 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
         </div>
       );
     }
+
+    // Show global sessions bar + active task, or empty state
+    const showSessionBar = globalSessions.length > 0 || hasAgentTask;
+
+    if (showSessionBar) {
+      return (
+        <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
+          {globalSessions.length > 0 && (
+            <GlobalSessionBar
+              sessions={globalSessions}
+              activeKey={globalAgentTaskKey}
+              onSelect={(sessionId) => setGlobalAgentTaskKey(sessionId)}
+              onNew={() => setAgentPaletteOpen(true)}
+            />
+          )}
+          {agentTaskKey && hasAgentTask ? (
+            <AgentTabContent emailId={agentTaskKey} />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-sm text-gray-400 dark:text-gray-500 p-4 gap-2">
+              <span>Select a session above or start a new one</span>
+              <p className="text-xs">
+                Press{" "}
+                <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-gray-600 dark:text-gray-400 font-mono text-xs">
+                  Cmd+J
+                </kbd>{" "}
+                to start an agent task
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="w-80 bg-gray-50 dark:bg-gray-800/50 border-l border-gray-200 dark:border-gray-700 flex items-center justify-center">
         <div className="text-center px-6">
-          <p className="text-gray-400 dark:text-gray-500 text-sm">Select an email to see details</p>
-          <p className="text-gray-300 text-xs mt-1">Use j/k to navigate, Cmd+J for agent</p>
+          <p className="text-gray-400 dark:text-gray-500 text-sm">
+            Press{" "}
+            <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-gray-600 dark:text-gray-400 font-mono text-xs">
+              Cmd+J
+            </kbd>{" "}
+            to start an agent task
+          </p>
+          <p className="text-gray-300 text-xs mt-1">Or select an email with j/k</p>
         </div>
       </div>
     );

@@ -16,6 +16,7 @@ import type {
   DraftMemory,
 } from "../../shared/types";
 import { createLogger } from "../services/logger";
+import type { AgentSession } from "../../shared/agent-types";
 
 const log = createLogger("db");
 
@@ -391,6 +392,31 @@ const NUMBERED_MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_calls_caller ON llm_calls(caller);
       `);
+    },
+  },
+  {
+    version: 2,
+    name: "add_agent_sessions_table",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          email_id TEXT,
+          thread_id TEXT,
+          account_id TEXT NOT NULL,
+          provider_ids TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active'
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_account ON agent_sessions(account_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_email ON agent_sessions(email_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at DESC);
+      `);
+      // Note: existing traces in agent_conversation_mirror are NOT migrated to sessions.
+      // They remain accessible via the existing replayAgentTrace path. New sessions are
+      // created by the coordinator going forward.
     },
   },
 ];
@@ -4252,4 +4278,84 @@ export function listConversationMirrors(providerId?: string): ConversationMirror
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Agent Sessions
+// ---------------------------------------------------------------------------
+
+export interface AgentSessionRow {
+  id: string;
+  title: string;
+  email_id: string | null;
+  thread_id: string | null;
+  account_id: string;
+  provider_ids: string; // JSON array
+  created_at: number;
+  updated_at: number;
+  status: AgentSession["status"];
+}
+
+export function saveAgentSession(session: AgentSessionRow): void {
+  getDatabase()
+    .prepare(
+      `INSERT OR REPLACE INTO agent_sessions
+       (id, title, email_id, thread_id, account_id, provider_ids, created_at, updated_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      session.id,
+      session.title,
+      session.email_id,
+      session.thread_id,
+      session.account_id,
+      session.provider_ids,
+      session.created_at,
+      session.updated_at,
+      session.status,
+    );
+}
+
+export function getAgentSession(sessionId: string): AgentSessionRow | null {
+  return (
+    (getDatabase().prepare("SELECT * FROM agent_sessions WHERE id = ?").get(sessionId) as
+      | AgentSessionRow
+      | undefined) ?? null
+  );
+}
+
+export function listAgentSessions(accountId: string, limit = 50): AgentSessionRow[] {
+  return getDatabase()
+    .prepare("SELECT * FROM agent_sessions WHERE account_id = ? ORDER BY updated_at DESC LIMIT ?")
+    .all(accountId, limit) as AgentSessionRow[];
+}
+
+export function listAgentSessionsForEmail(emailId: string): AgentSessionRow[] {
+  return getDatabase()
+    .prepare("SELECT * FROM agent_sessions WHERE email_id = ? ORDER BY updated_at DESC")
+    .all(emailId) as AgentSessionRow[];
+}
+
+export function updateAgentSessionStatus(
+  sessionId: string,
+  status: AgentSession["status"],
+  updatedAt = Date.now(),
+): void {
+  getDatabase()
+    .prepare("UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ?")
+    .run(status, updatedAt, sessionId);
+}
+
+export function updateAgentSessionTitle(sessionId: string, title: string): void {
+  getDatabase()
+    .prepare("UPDATE agent_sessions SET title = ?, updated_at = ? WHERE id = ?")
+    .run(title, Date.now(), sessionId);
+}
+
+export function deleteAgentSession(sessionId: string): void {
+  const db = getDatabase();
+  db.transaction(() => {
+    db.prepare("DELETE FROM agent_sessions WHERE id = ?").run(sessionId);
+    db.prepare("DELETE FROM agent_conversation_mirror WHERE local_task_id = ?").run(sessionId);
+  })();
 }

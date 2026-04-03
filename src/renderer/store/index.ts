@@ -22,6 +22,8 @@ import type {
   AgentTaskHistoryEntry,
   ScopedAgentEvent,
   AgentContext,
+  AgentSession,
+  AgentSessionSummary,
 } from "../../shared/agent-types";
 
 export type SettingsTab =
@@ -311,6 +313,10 @@ interface AppState {
   agentTaskHistory: AgentTaskHistoryEntry[];
   globalAgentTaskKey: string | null; // non-null when a non-email agent task is active
 
+  // Session-based agent state (new)
+  agentSessions: Record<string, AgentSession>;
+  sessionList: AgentSessionSummary[];
+
   // Local drafts state (new emails composed by agent or user, not tied to threads)
   localDrafts: LocalDraft[];
   selectedDraftId: string | null;
@@ -516,6 +522,11 @@ interface AppState {
 
   // Mark-as-read action (imperative — call from Enter/click handlers directly)
   markThreadAsRead: (threadId: string) => void;
+
+  // Session actions
+  loadSessionList: (accountId: string) => Promise<void>;
+  createSession: (session: AgentSession) => void;
+  updateSessionInStore: (sessionId: string, updates: Partial<AgentSession>) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -645,6 +656,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentTaskIdMap: {},
   agentTaskHistory: [],
   globalAgentTaskKey: null,
+
+  // Session-based agent state (new)
+  agentSessions: {},
+  sessionList: [],
 
   // Local drafts
   localDrafts: [],
@@ -1365,11 +1380,87 @@ export const useAppStore = create<AppState>((set, get) => ({
         taskStatus = "pending_approval";
       }
 
-      return {
+      const newAgentTasksState = {
         agentTasks: {
           ...state.agentTasks,
           [emailId]: { ...task, runs: updatedRuns, status: taskStatus },
         },
+      };
+
+      // Also update session if one exists with the same taskId
+      const session = state.agentSessions[taskId];
+      if (!session) return newAgentTasksState;
+
+      const sessionProviderId = event.providerId || session.providerIds[0] || "unknown";
+      const existingRun = session.runs[sessionProviderId] || {
+        status: "running" as const,
+        events: [],
+      };
+      const updatedSessionRun: AgentProviderRun = {
+        ...existingRun,
+        events: [...existingRun.events, event],
+      };
+
+      // Mirror the same event-type handling as the legacy task path
+      if (!event.nestedRunId) {
+        if (event.type === "confirmation_required") {
+          updatedSessionRun.pendingConfirmation = {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            description: event.description,
+            input: event.input,
+          };
+          updatedSessionRun.status = "pending_approval";
+        } else if (event.type === "state") {
+          updatedSessionRun.status = event.state;
+          if (event.state !== "pending_approval") {
+            updatedSessionRun.pendingConfirmation = undefined;
+          }
+        } else if (event.type === "error") {
+          updatedSessionRun.status = "failed";
+        } else if (event.type === "done") {
+          updatedSessionRun.status = "completed";
+        }
+      }
+
+      if (event.providerConversationId) {
+        updatedSessionRun.providerConversationId = event.providerConversationId;
+      }
+
+      const updatedSessionRuns = { ...session.runs, [sessionProviderId]: updatedSessionRun };
+
+      // Derive overall session status from all runs
+      const allSessionRuns = Object.values(updatedSessionRuns);
+      let sessionStatus = session.status;
+      if (allSessionRuns.every((r) => r.status === "completed")) {
+        sessionStatus = "completed";
+      } else if (allSessionRuns.some((r) => r.status === "failed")) {
+        sessionStatus = "failed";
+      } else if (allSessionRuns.some((r) => r.status === "pending_approval")) {
+        // Keep as active — pending_approval is a sub-state of active for sessions
+        sessionStatus = "active";
+      }
+
+      const sessionStatusChanged = sessionStatus !== session.status;
+      return {
+        ...newAgentTasksState,
+        agentSessions: {
+          ...state.agentSessions,
+          [taskId]: {
+            ...session,
+            status: sessionStatus,
+            runs: updatedSessionRuns,
+            updatedAt: Date.now(),
+          },
+        },
+        // Only rebuild sessionList when session status actually changes
+        ...(sessionStatusChanged
+          ? {
+              sessionList: state.sessionList.map((s) =>
+                s.id === taskId ? { ...s, status: sessionStatus, updatedAt: Date.now() } : s,
+              ),
+            }
+          : {}),
       };
     }),
 
@@ -1509,12 +1600,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         timestamp: Date.now(),
         status: "cancelled",
       };
+      // Also update session if one exists
+      const session = state.agentSessions[taskId];
+      const sessionUpdates = session
+        ? {
+            agentSessions: {
+              ...state.agentSessions,
+              [taskId]: { ...session, status: "cancelled" as const, updatedAt: Date.now() },
+            },
+            sessionList: state.sessionList.map((s) =>
+              s.id === taskId ? { ...s, status: "cancelled" as const, updatedAt: Date.now() } : s,
+            ),
+          }
+        : {};
+
       return {
         agentTasks: {
           ...state.agentTasks,
           [emailId]: { ...task, status: "cancelled" },
         },
         agentTaskHistory: [...state.agentTaskHistory, entry],
+        ...sessionUpdates,
         // Keep globalAgentTaskKey so the user can return to the cancelled task
       };
     }),
@@ -1598,6 +1704,46 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     }
   },
+
+  // Session actions
+  loadSessionList: async (accountId) => {
+    const result = await window.api.agent.listSessions(accountId);
+    if (result && result.success && result.data) {
+      set({ sessionList: result.data });
+    } else if (result && !result.success) {
+      console.warn("[store] Failed to load session list:", result.error);
+    }
+  },
+
+  createSession: (session) =>
+    set((state) => ({
+      agentSessions: { ...state.agentSessions, [session.id]: session },
+      sessionList: [
+        {
+          id: session.id,
+          title: session.title,
+          status: session.status,
+          updatedAt: session.updatedAt,
+          emailId: session.emailId,
+        },
+        ...state.sessionList,
+      ],
+    })),
+
+  updateSessionInStore: (sessionId, updates) =>
+    set((state) => {
+      const existing = state.agentSessions[sessionId];
+      if (!existing) return state;
+      const updated = { ...existing, ...updates, updatedAt: Date.now() };
+      return {
+        agentSessions: { ...state.agentSessions, [sessionId]: updated },
+        sessionList: state.sessionList.map((s) =>
+          s.id === sessionId
+            ? { ...s, title: updated.title, status: updated.status, updatedAt: updated.updatedAt }
+            : s,
+        ),
+      };
+    }),
 }));
 
 // Expose store for E2E tests

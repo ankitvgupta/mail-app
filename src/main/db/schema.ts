@@ -355,6 +355,22 @@ CREATE INDEX IF NOT EXISTS idx_memories_account ON memories(account_id);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, scope_value);
 CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id);
 CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to);
+
+-- Agent chat sessions — persistent multi-session support
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  email_id TEXT,
+  thread_id TEXT,
+  account_id TEXT NOT NULL,
+  provider_ids TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_account ON agent_sessions(account_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_email ON agent_sessions(email_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at DESC);
 `;
 
 // FTS5 full-text search schema (separate because SQLite can't IF NOT EXISTS for virtual tables)
