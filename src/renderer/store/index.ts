@@ -1456,6 +1456,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             updatedAt: Date.now(),
           },
         },
+        sessionList: state.sessionList.map((s) =>
+          s.id === taskId ? { ...s, status: sessionStatus, updatedAt: Date.now() } : s,
+        ),
       };
     }),
 
@@ -1595,12 +1598,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         timestamp: Date.now(),
         status: "cancelled",
       };
+      // Also update session if one exists
+      const session = state.agentSessions[taskId];
+      const sessionUpdates = session
+        ? {
+            agentSessions: {
+              ...state.agentSessions,
+              [taskId]: { ...session, status: "cancelled" as const, updatedAt: Date.now() },
+            },
+            sessionList: state.sessionList.map((s) =>
+              s.id === taskId ? { ...s, status: "cancelled" as const, updatedAt: Date.now() } : s,
+            ),
+          }
+        : {};
+
       return {
         agentTasks: {
           ...state.agentTasks,
           [emailId]: { ...task, status: "cancelled" },
         },
         agentTaskHistory: [...state.agentTaskHistory, entry],
+        ...sessionUpdates,
         // Keep globalAgentTaskKey so the user can return to the cancelled task
       };
     }),
@@ -1690,8 +1708,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadSessionList: async (accountId) => {
     const result = await window.api.agent.listSessions(accountId);
-    if (result.success && result.data) {
+    if (result && result.success && result.data) {
       set({ sessionList: result.data });
+    } else if (result && !result.success) {
+      console.warn("[store] Failed to load session list:", result.error);
     }
   },
 
@@ -1735,7 +1755,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
       };
     }),
-
 }));
 
 // Expose store for E2E tests

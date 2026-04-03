@@ -220,14 +220,6 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
     }
   }, [agentTaskKey, hasAgentTask, hasPersistedTrace, setSidebarTab, availableTabs]);
 
-  // Set the active session ID when the agent tab is active and there's a task
-  useEffect(() => {
-    const task = useAppStore.getState().agentTasks[displayAgentKey ?? ""];
-    if (task && sidebarTab === "agent") {
-      useAppStore.getState().setActiveSessionId(task.taskId);
-    }
-  }, [displayAgentKey, sidebarTab]);
-
   // Load persisted agent trace from DB when the selected email has a draft
   // with an agentTaskId but no in-memory agent task (e.g. after app restart).
   // Debounced to avoid blocking j/k navigation — traces can be very large
@@ -285,26 +277,6 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
             },
             result.data.events,
           );
-
-          // Create a session record for the restored trace so it shows in session history
-          const { createSession } = useAppStore.getState();
-          createSession({
-            id: taskId,
-            title: email.subject || "Restored session",
-            emailId: email.id,
-            threadId: email.threadId || null,
-            accountId: email.accountId || "",
-            providerIds: ["claude"],
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            status: "completed",
-            runs: {
-              claude: {
-                status: "completed",
-                events: result.data.events,
-              },
-            },
-          });
         })
         .catch((err: unknown) => {
           console.error("[EmailPreviewSidebar] Failed to load agent trace:", err);
@@ -399,23 +371,25 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
          When j/k changes selectedEmailId, displayAgentKey stays the same so React
          sees identical props → skips reconciliation of 1000+ EventTimeline nodes.
          Without this, the DOM teardown blocks the main thread for ~1s. */}
-      <div
-        className="flex-1 flex flex-col overflow-hidden"
-        style={{ display: sidebarTab === "agent" ? undefined : "none" }}
-      >
-        {displayHasPersistedTrace && !displayHasAgentTask ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-sm text-gray-400 dark:text-gray-500">
-              <div className="animate-spin w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full mx-auto mb-2" />
-              Loading agent trace…
+      {displayAgentKey && (
+        <div
+          className="flex-1 flex flex-col overflow-hidden"
+          style={{ display: sidebarTab === "agent" ? undefined : "none" }}
+        >
+          {displayHasAgentTask ? (
+            <AgentTabContent emailId={displayAgentKey} />
+          ) : displayHasPersistedTrace ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center text-sm text-gray-400 dark:text-gray-500">
+                <div className="animate-spin w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-purple-500 rounded-full mx-auto mb-2" />
+                Loading agent trace…
+              </div>
             </div>
-          </div>
-        ) : (
-          <AgentTabContent
-            emailId={displayAgentKey || agentTaskKey || selectedEmailId || "__global__"}
-          />
-        )}
-      </div>
+          ) : (
+            <AgentTabContent emailId={displayAgentKey} />
+          )}
+        </div>
+      )}
 
       {/* Sender / email panels */}
       <div

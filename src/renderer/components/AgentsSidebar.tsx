@@ -2,7 +2,7 @@ import { useAppStore } from "../store";
 import type {
   AgentProviderConfig,
   AgentTaskState,
-  AgentSessionSummary,
+  AgentTaskHistoryEntry,
 } from "../../shared/agent-types";
 
 function ProviderStatusDot({ status }: { status: AgentTaskState | "ready" | "unavailable" }) {
@@ -93,12 +93,11 @@ function ProviderRow({ provider }: { provider: AgentProviderConfig }) {
   );
 }
 
-function SessionRow({ session }: { session: AgentSessionSummary }) {
+function TaskHistoryRow({ entry }: { entry: AgentTaskHistoryEntry }) {
   const statusIcon: Record<string, string> = {
     completed: "text-green-500",
     failed: "text-red-500",
     cancelled: "text-gray-400",
-    active: "text-blue-500",
   };
 
   const relativeTime = (ts: number) => {
@@ -113,23 +112,28 @@ function SessionRow({ session }: { session: AgentSessionSummary }) {
     <div className="px-3 py-2 text-xs text-gray-600 dark:text-gray-400">
       <div className="flex items-center gap-1.5">
         <svg
-          className={`w-3 h-3 flex-shrink-0 ${statusIcon[session.status] ?? "text-gray-400"}`}
+          className={`w-3 h-3 flex-shrink-0 ${statusIcon[entry.status] ?? "text-gray-400"}`}
           fill="currentColor"
           viewBox="0 0 24 24"
         >
-          {session.status === "completed" ? (
+          {entry.status === "completed" ? (
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-          ) : session.status === "failed" ? (
+          ) : entry.status === "failed" ? (
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
           ) : (
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-5h2v2h-2zm0-8h2v6h-2z" />
           )}
         </svg>
-        <span className="truncate flex-1">{session.title}</span>
+        <span className="truncate flex-1">{entry.prompt}</span>
         <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">
-          {relativeTime(session.updatedAt)}
+          {relativeTime(entry.timestamp)}
         </span>
       </div>
+      {entry.summary && (
+        <div className="ml-4.5 mt-0.5 text-gray-400 dark:text-gray-500 truncate">
+          {entry.summary}
+        </div>
+      )}
     </div>
   );
 }
@@ -139,14 +143,14 @@ export function AgentsSidebar() {
     isAgentsSidebarOpen,
     toggleAgentsSidebar,
     availableProviders,
-    sessionList,
+    agentTaskHistory,
     setShowSettings,
   } = useAppStore();
 
   if (!isAgentsSidebarOpen) return null;
 
-  // Show most recent sessions first, limit to 20
-  const recentSessions = [...sessionList].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20);
+  // Show most recent tasks first, limit to 20
+  const recentHistory = [...agentTaskHistory].reverse().slice(0, 20);
 
   return (
     <div className="w-56 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col h-full">
@@ -183,8 +187,8 @@ export function AgentsSidebar() {
         )}
       </div>
 
-      {/* Recent Sessions */}
-      {recentSessions.length > 0 && (
+      {/* Task History */}
+      {recentHistory.length > 0 && (
         <>
           <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-700">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -192,8 +196,8 @@ export function AgentsSidebar() {
             </span>
           </div>
           <div className="flex-1 overflow-y-auto space-y-0.5">
-            {recentSessions.map((session) => (
-              <SessionRow key={session.id} session={session} />
+            {recentHistory.map((entry) => (
+              <TaskHistoryRow key={entry.taskId} entry={entry} />
             ))}
           </div>
         </>

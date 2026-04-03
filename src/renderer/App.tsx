@@ -676,8 +676,6 @@ export default function App() {
     }
   }, []);
 
-
-
   // Initialize theme and density from main process and listen for OS theme changes
   useEffect(() => {
     // Fetch persisted theme preference
