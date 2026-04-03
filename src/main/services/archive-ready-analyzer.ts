@@ -88,7 +88,6 @@ export class ArchiveReadyAnalyzer {
     const recentEmails = sorted.slice(-2);
 
     const parts: string[] = [];
-    parts.push(`Thread subject: ${sorted[0]?.subject || "(no subject)"}`);
     parts.push(`Number of messages in thread: ${sorted.length}`);
     if (userEmail) {
       parts.push(`User's email: ${userEmail}`);
@@ -96,6 +95,8 @@ export class ArchiveReadyAnalyzer {
     parts.push("");
 
     parts.push(UNTRUSTED_DATA_INSTRUCTION);
+    parts.push("");
+    parts.push(wrapUntrustedEmail(`Thread subject: ${sorted[0]?.subject || "(no subject)"}`));
     parts.push("");
 
     for (const email of recentEmails) {
