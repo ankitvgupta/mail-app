@@ -208,9 +208,10 @@ function resolveSnippetVariables(
     const varName = match[1];
     // Skip system variables that weren't resolved (missing context)
     if (SYSTEM_VARS.has(varName.toLowerCase())) continue;
-    if (!prompted.has(varName)) {
+    // Use lowercase key to match the case-insensitive replacement below
+    if (!prompted.has(varName.toLowerCase())) {
       const value = window.prompt(`Fill in {${varName}}:`, "") ?? "";
-      prompted.set(varName, escapeHtml(value));
+      prompted.set(varName.toLowerCase(), escapeHtml(value));
     }
   }
 
