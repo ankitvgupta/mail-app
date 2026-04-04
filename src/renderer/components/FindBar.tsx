@@ -71,6 +71,17 @@ export function FindBar() {
   useEffect(() => {
     const handleEnter = (e: KeyboardEvent) => {
       if (e.key !== "Enter") return;
+      // Don't intercept Cmd+Enter (send email) or Ctrl+Enter
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Don't intercept if user is typing in another input (compose editor, etc.)
+      const active = document.activeElement;
+      const isOtherInput =
+        active &&
+        active !== inputRef.current &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          (active as HTMLElement).isContentEditable);
+      if (isOtherInput) return;
       const text = inputRef.current?.value;
       if (!text) return;
       e.preventDefault();
