@@ -2,7 +2,6 @@ import { BrowserWindow, shell, nativeTheme, app } from "electron";
 import { join } from "path";
 import { is } from "@electron-toolkit/utils";
 import { getConfig } from "./ipc/settings.ipc";
-import { findState } from "./ipc/find.ipc";
 
 export function getIconPath(): string {
   if (app.isPackaged) {
@@ -74,18 +73,9 @@ export function createWindow(): BrowserWindow {
       return;
     }
 
-    // Enter/Shift+Enter → cycle find matches.
-    // Handled here (before-input-event) rather than in the renderer because
-    // findInPage steals focus to the matched element — if we relied on the
-    // input's onKeyDown, focus would need to be restored first, which resets
-    // Chromium's internal find cursor and breaks cycling.
-    if (input.key === "Enter" && !input.meta && !input.control && !input.alt && findState.isActive()) {
-      event.preventDefault();
-      mainWindow?.webContents.findInPage(findState.getText(), {
-        findNext: true,
-        forward: !input.shift,
-      });
-    }
+    // Enter cycling is handled in the renderer (FindBar.tsx window-level
+    // keydown listener) — before-input-event doesn't reliably fire for all
+    // input methods (e.g. CDP key injection).
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

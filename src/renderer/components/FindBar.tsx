@@ -7,8 +7,9 @@ export function FindBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Display the match count via a ref + direct DOM manipulation.
-  // React re-renders would also work but this avoids unnecessary VDOM diffs.
   const matchCountRef = useRef<HTMLSpanElement>(null);
+  // Track last known match state for optimistic UI updates on Enter.
+  const lastMatchRef = useRef({ ordinal: 0, total: 0 });
 
   const close = useCallback(() => {
     window.api.find.stop();
@@ -30,6 +31,7 @@ export function FindBar() {
   useEffect(() => {
     window.api.find.removeResultListener();
     window.api.find.onResult((result: { activeMatchOrdinal: number; matches: number }) => {
+      lastMatchRef.current = { ordinal: result.activeMatchOrdinal, total: result.matches };
       if (matchCountRef.current) {
         matchCountRef.current.textContent =
           result.matches > 0
@@ -65,11 +67,9 @@ export function FindBar() {
     window.api.find.find(text, { findNext: findNext ?? false, forward: forward ?? true });
   }, []);
 
-  // Enter/Shift+Enter cycling. Primary handler is before-input-event in the
-  // main process (window.ts) which calls findInPage directly — this avoids
-  // focus issues since it fires before focus changes. This window-level
-  // listener is a fallback for environments where before-input-event doesn't
-  // fire (e.g. Playwright CDP key injection).
+  // Enter/Shift+Enter → cycle through matches. Uses a window-level capture
+  // listener because findInPage steals focus to the matched element, so the
+  // input's own onKeyDown won't fire for subsequent Enter presses.
   useEffect(() => {
     const handleEnter = (e: KeyboardEvent) => {
       if (e.key !== "Enter") return;
@@ -79,6 +79,17 @@ export function FindBar() {
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Optimistic UI: update counter immediately so it feels instant.
+      // Chromium's findInPage takes ~400ms to fire found-in-page.
+      const { ordinal, total } = lastMatchRef.current;
+      if (total > 0 && matchCountRef.current) {
+        const forward = !e.shiftKey;
+        const next = forward
+          ? (ordinal % total) + 1
+          : ((ordinal - 2 + total) % total) + 1;
+        lastMatchRef.current.ordinal = next;
+        matchCountRef.current.textContent = `${next} of ${total}`;
+      }
       findText(text, true, !e.shiftKey);
     };
     window.addEventListener("keydown", handleEnter, { capture: true });
@@ -103,24 +114,23 @@ export function FindBar() {
     }, 150);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      e.stopPropagation();
-      e.nativeEvent.stopImmediatePropagation();
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      if (query) {
-        findText(query, true, !e.shiftKey);
-      }
+  const optimisticUpdate = useCallback((forward: boolean) => {
+    const { ordinal, total } = lastMatchRef.current;
+    if (total > 0 && matchCountRef.current) {
+      const next = forward
+        ? (ordinal % total) + 1
+        : ((ordinal - 2 + total) % total) + 1;
+      lastMatchRef.current.ordinal = next;
+      matchCountRef.current.textContent = `${next} of ${total}`;
     }
-  };
+  }, []);
 
   const goNext = () => {
-    if (query) findText(query, true, true);
+    if (query) { optimisticUpdate(true); findText(query, true, true); }
   };
 
   const goPrev = () => {
-    if (query) findText(query, true, false);
+    if (query) { optimisticUpdate(false); findText(query, true, false); }
   };
 
   return (
@@ -134,7 +144,6 @@ export function FindBar() {
         type="text"
         value={query}
         onChange={(e) => handleInputChange(e.target.value)}
-        onKeyDown={handleKeyDown}
         placeholder="Find in page..."
         className="flex-1 min-w-0 px-2 py-1 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         data-testid="find-bar-input"

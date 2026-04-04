@@ -35,8 +35,6 @@ export function registerFindIpc(): void {
   // Fire-and-forget: call findInPage, results come back via found-in-page.
   // Always use findNext: true — Electron doesn't fire found-in-page for
   // findNext: false when called from an IPC handler.
-  // Deferred via setImmediate — calling findInPage synchronously inside an
-  // IPC handler prevents the found-in-page event from firing.
   ipcMain.on(
     "find:find",
     (
@@ -47,11 +45,7 @@ export function registerFindIpc(): void {
       if (!w || !text) return;
       ensureListener(w);
       lastFindText = text;
-      setImmediate(() => {
-        if (!w.isDestroyed()) {
-          w.webContents.findInPage(text, { forward: forward ?? true, findNext: true });
-        }
-      });
+      w.webContents.findInPage(text, { forward: forward ?? true, findNext: true });
     },
   );
 
