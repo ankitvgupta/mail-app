@@ -120,6 +120,10 @@ class PrefetchService {
   private completedAgentDraftLog: AgentDraftItem[] = []; // ring buffer, last 50
   private processedDraftThreads = new Set<string>(); // threadIds with queued/processed agent drafts
 
+  // Startup cache: populated by sync:get-emails to avoid duplicate getInboxEmails() call
+  // at startup. Consumed once by processAllPending(), then cleared.
+  private cachedInboxEmails: DashboardEmail[] | null = null;
+
   // Progress tracking
   private processedCounts = {
     analysis: 0,
@@ -165,6 +169,18 @@ When you see emails in a thread where ${eaName} is coordinating scheduling with 
       );
     }
     return this.archiveReadyAnalyzer;
+  }
+
+  /**
+   * Cache inbox emails from sync:get-emails to avoid duplicate getInboxEmails() call
+   * at startup. Called per-account; results are accumulated across accounts.
+   */
+  addCachedInboxEmails(emails: DashboardEmail[]): void {
+    if (!this.cachedInboxEmails) {
+      this.cachedInboxEmails = [];
+    }
+    // Use concat instead of push(...spread) to avoid stack overflow on large inboxes
+    this.cachedInboxEmails = this.cachedInboxEmails.concat(emails);
   }
 
   /**
@@ -241,11 +257,14 @@ When you see emails in a thread where ${eaName} is coordinating scheduling with 
       `[PERF] processAllPending getConfig took ${(performance.now() - tConfig).toFixed(1)}ms`,
     );
 
-    // Only process inbox emails - use efficient DB query instead of loading all emails
+    // Use cached inbox emails from sync:get-emails if available (startup path),
+    // otherwise fall back to DB query (non-startup callers like prompt change, rerun drafts).
     const tGetEmails = performance.now();
-    const inboxEmails = getInboxEmails();
+    const usedCache = this.cachedInboxEmails !== null;
+    const inboxEmails = this.cachedInboxEmails ?? getInboxEmails();
+    this.cachedInboxEmails = null; // consume once
     log.info(
-      `[PERF] processAllPending getInboxEmails took ${(performance.now() - tGetEmails).toFixed(1)}ms, returned ${inboxEmails.length} emails`,
+      `[PERF] processAllPending getInboxEmails took ${(performance.now() - tGetEmails).toFixed(1)}ms, returned ${inboxEmails.length} emails (cache=${usedCache})`,
     );
 
     const unanalyzed = inboxEmails.filter((e) => !e.analysis);

@@ -63,3 +63,13 @@ Show a small badge ("Web Search", "YC") on each enrichment sidebar panel so user
 - **Effort:** S (human: ~2 hrs / CC: ~10 min)
 - **Depends on:** Undo override feature
 - **Context:** Current undo only handles the simple case (delete draft memory or most recent memory). If a memory was promoted and has influenced other analyses, deleting it may cause re-classification inconsistency. Options: (A) delete regardless, (B) redirect to Settings > Memories for manual disable.
+
+## Performance
+
+### P2: Optimize getInboxEmails() query performance
+- **What:** Add indexes on label_ids, avoid scanning all emails for thread merge when merge cache is already warm, reduce column selection for non-renderer callers
+- **Why:** Non-startup callers of processAllPending (prompt change, rerun drafts) still hit the expensive 2-query + Union-Find path. With large inboxes (1000+ emails), this takes 50-100ms on the main thread.
+- **Effort:** M (human: ~1 day / CC: ~15 min)
+- **Depends on:** Nothing
+- **Context:** The startup path was fixed by caching sync:get-emails results (see prefetch cache PR). But callers 2-5 of processAllPending still run the full query. The merge cache (`_mergeGroupsByAccount`) is usually warm, so `buildMergeCache` could short-circuit. The LIKE '%"INBOX"%' pattern on label_ids defeats indexes — consider a boolean `is_inbox` column or a normalized labels table.
+- **Added:** 2026-04-03, eng review of prefetch startup fix

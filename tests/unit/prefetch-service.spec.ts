@@ -648,3 +648,103 @@ test.describe("agent draft priority values", () => {
     expect(analysisPriority).toBeLessThan(getAgentDraftPriority("high"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: inbox email cache for startup optimization
+// ---------------------------------------------------------------------------
+
+test.describe("inbox email cache", () => {
+  // Re-implement the cache logic from PrefetchService
+  class InboxEmailCache {
+    private cachedInboxEmails: Array<{ id: string; accountId: string }> | null = null;
+
+    addCachedInboxEmails(emails: Array<{ id: string; accountId: string }>): void {
+      if (!this.cachedInboxEmails) {
+        this.cachedInboxEmails = [];
+      }
+      this.cachedInboxEmails.push(...emails);
+    }
+
+    consumeOrFallback(fallback: () => Array<{ id: string; accountId: string }>): {
+      emails: Array<{ id: string; accountId: string }>;
+      usedCache: boolean;
+    } {
+      const usedCache = this.cachedInboxEmails !== null;
+      const emails = this.cachedInboxEmails ?? fallback();
+      this.cachedInboxEmails = null;
+      return { emails, usedCache };
+    }
+
+    get hasCachedEmails(): boolean {
+      return this.cachedInboxEmails !== null;
+    }
+  }
+
+  test("starts with no cache", () => {
+    const cache = new InboxEmailCache();
+    expect(cache.hasCachedEmails).toBe(false);
+  });
+
+  test("addCachedInboxEmails populates cache", () => {
+    const cache = new InboxEmailCache();
+    cache.addCachedInboxEmails([{ id: "e1", accountId: "acc1" }]);
+    expect(cache.hasCachedEmails).toBe(true);
+  });
+
+  test("accumulates emails across multiple addCachedInboxEmails calls (multi-account)", () => {
+    const cache = new InboxEmailCache();
+    cache.addCachedInboxEmails([{ id: "e1", accountId: "acc1" }]);
+    cache.addCachedInboxEmails([{ id: "e2", accountId: "acc2" }]);
+
+    const { emails, usedCache } = cache.consumeOrFallback(() => []);
+    expect(usedCache).toBe(true);
+    expect(emails).toHaveLength(2);
+    expect(emails.map((e) => e.id)).toEqual(["e1", "e2"]);
+  });
+
+  test("consumeOrFallback uses cache when available", () => {
+    const cache = new InboxEmailCache();
+    cache.addCachedInboxEmails([{ id: "e1", accountId: "acc1" }]);
+
+    const fallbackCalled = { value: false };
+    const { emails, usedCache } = cache.consumeOrFallback(() => {
+      fallbackCalled.value = true;
+      return [{ id: "fallback", accountId: "acc1" }];
+    });
+
+    expect(usedCache).toBe(true);
+    expect(fallbackCalled.value).toBe(false);
+    expect(emails[0].id).toBe("e1");
+  });
+
+  test("consumeOrFallback clears cache after use", () => {
+    const cache = new InboxEmailCache();
+    cache.addCachedInboxEmails([{ id: "e1", accountId: "acc1" }]);
+
+    cache.consumeOrFallback(() => []);
+    expect(cache.hasCachedEmails).toBe(false);
+  });
+
+  test("second consumeOrFallback uses fallback (cache cleared)", () => {
+    const cache = new InboxEmailCache();
+    cache.addCachedInboxEmails([{ id: "e1", accountId: "acc1" }]);
+
+    cache.consumeOrFallback(() => []);
+
+    const { emails, usedCache } = cache.consumeOrFallback(() => [
+      { id: "db-email", accountId: "acc1" },
+    ]);
+    expect(usedCache).toBe(false);
+    expect(emails[0].id).toBe("db-email");
+  });
+
+  test("consumeOrFallback uses fallback when cache was never populated", () => {
+    const cache = new InboxEmailCache();
+
+    const { emails, usedCache } = cache.consumeOrFallback(() => [
+      { id: "db-email", accountId: "acc1" },
+    ]);
+    expect(usedCache).toBe(false);
+    expect(emails[0].id).toBe("db-email");
+  });
+});
