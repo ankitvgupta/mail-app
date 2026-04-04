@@ -141,6 +141,11 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
       // Always allow Escape to close modals or go back in view modes
       if (e.key === "Escape") {
+        // Find bar handles its own Escape via a capture-phase window listener.
+        // Bail out here to avoid double-action (e.g. closing find bar AND
+        // switching view mode) when a synthetic event from an iframe hits window.
+        if (state.isFindBarOpen) return;
+
         // Overlays take priority — always dismissable regardless of compose mode.
         // Without this, compose mode's early return blocks the agent/command palette
         // from closing when compose is also open (e.g. Cmd+J on an open draft).
