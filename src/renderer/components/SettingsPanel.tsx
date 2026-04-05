@@ -147,6 +147,9 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [cliTools, setCliTools] = useState<(CliToolConfig & { _key: number })[]>([]);
   const [isSavingCliTools, setIsSavingCliTools] = useState(false);
   const [cliToolsSaved, setCliToolsSaved] = useState(false);
+  const [extraPathDirs, setExtraPathDirs] = useState<string[]>([]);
+  const [isSavingPathDirs, setIsSavingPathDirs] = useState(false);
+  const [pathDirsSaved, setPathDirsSaved] = useState(false);
 
   // Signature management state
   const [signatures, setSignatures] = useState<Signature[]>([]);
@@ -232,6 +235,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       }
       setMcpServers(generalConfig.mcpServers ?? {});
       setCliTools((generalConfig.cliTools ?? []).map((t) => ({ ...t, _key: nextCliToolKey() })));
+      setExtraPathDirs(generalConfig.extraPathDirs ?? []);
       // PostHog analytics config — only set once to avoid clobbering unsaved edits on refetch
       if (!analyticsInitialized.current) {
         analyticsInitialized.current = true;
@@ -2965,6 +2969,92 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   }`}
                 >
                   {isSavingCliTools ? "Saving..." : cliToolsSaved ? "Saved" : "Save"}
+                </button>
+              </div>
+            </div>
+
+            {/* Extra PATH Directories */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+              <div className="mb-4">
+                <h4 className="text-base font-medium text-gray-900 dark:text-gray-100">
+                  Additional Tool Directories
+                </h4>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Extra directories to add to the system PATH so agents can find CLI tools
+                  installed in non-standard locations.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {extraPathDirs.map((dir, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={dir}
+                      onChange={(e) => {
+                        const updated = [...extraPathDirs];
+                        updated[idx] = e.target.value;
+                        setExtraPathDirs(updated);
+                      }}
+                      placeholder="/path/to/tools/bin"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 font-mono"
+                    />
+                    <button
+                      onClick={() => setExtraPathDirs(extraPathDirs.filter((_, i) => i !== idx))}
+                      className="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                      title="Remove directory"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => setExtraPathDirs([...extraPathDirs, ""])}
+                  className="text-sm text-purple-600 dark:text-purple-400 hover:underline"
+                >
+                  + Add Directory
+                </button>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={async () => {
+                    setIsSavingPathDirs(true);
+                    setPathDirsSaved(false);
+                    try {
+                      const validDirs = extraPathDirs.filter((d) => d.trim());
+                      await window.api.settings.set({
+                        extraPathDirs: validDirs.length > 0 ? validDirs : undefined,
+                      });
+                      queryClient.invalidateQueries({ queryKey: ["general-config"] });
+                      setExtraPathDirs(validDirs);
+                      setPathDirsSaved(true);
+                      setTimeout(() => setPathDirsSaved(false), 2000);
+                    } finally {
+                      setIsSavingPathDirs(false);
+                    }
+                  }}
+                  disabled={isSavingPathDirs}
+                  className={`px-4 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors ${
+                    pathDirsSaved
+                      ? "bg-green-600 dark:bg-green-500"
+                      : "bg-purple-600 hover:bg-purple-700"
+                  }`}
+                >
+                  {isSavingPathDirs ? "Saving..." : pathDirsSaved ? "Saved" : "Save"}
                 </button>
               </div>
             </div>

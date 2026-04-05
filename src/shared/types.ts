@@ -391,6 +391,7 @@ export const ConfigSchema = z.object({
     .optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   cliTools: z.array(CliToolConfigSchema).optional(),
+  extraPathDirs: z.array(z.string()).optional(),
   posthog: z
     .object({
       enabled: z.boolean().default(false),

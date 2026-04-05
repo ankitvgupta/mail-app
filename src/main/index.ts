@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, session, nativeTheme } from "electron";
 import { join } from "path";
-import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { electronApp, optimizer } from "@electron-toolkit/utils";
 
 import { getDataDir, initDevData } from "./data-dir";
@@ -63,29 +62,120 @@ if (process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");
 }
 
+// Disable Chromium's media session / Now Playing integration.
+// Without this, macOS prompts "Exo.app would like to access Apple Music" on first launch
+// because Chromium registers with the MediaPlayer framework for hardware media key handling.
+// An email client has no need for media key interception or Now Playing integration.
+if (process.platform === "darwin") {
+  app.commandLine.appendSwitch(
+    "disable-features",
+    "HardwareMediaKeyHandling,MediaSessionService,GlobalMediaControls",
+  );
+}
+
+// Redirect Chromium's default Desktop/Downloads paths to the app's own data directory.
+// Chromium probes ~/Desktop and ~/Downloads during initialization (for the file picker
+// and download manager), which triggers macOS TCC prompts on first launch. By overriding
+// these paths before Chromium initializes, we avoid the prompts entirely. The app already
+// saves attachments to its own userData/downloads directory.
+if (process.platform === "darwin") {
+  const safeDir = join(app.getPath("userData"), "downloads");
+  app.setPath("downloads", safeDir);
+  app.setPath("desktop", safeDir);
+}
+
 // Fix PATH for packaged macOS apps (launched from Finder/Dock get minimal PATH).
-// We use a non-interactive login shell (`-lc`, not `-ilc`) to avoid running the
-// user's .zshrc — interactive shell configs can access TCC-protected directories
-// (e.g. iterm2_shell_integration, neofetch) which would trigger macOS permission
-// prompts attributed to this app. A login shell still sources /etc/zprofile and
-// ~/.zprofile, which is where PATH-modifying tools (homebrew, nvm) typically live.
+// Instead of spawning a shell (which sources user profiles that can trigger TCC
+// prompts like "access files on a network volume" or "access contacts"), we read
+// macOS's PATH config files directly: /etc/paths + /etc/paths.d/* — the same
+// sources that path_helper(8) uses. We also probe common user-local tool dirs.
 if (app.isPackaged && process.platform === "darwin") {
+  const pathDirs: string[] = [];
+
+  // Read /etc/paths (system default PATH entries)
   try {
-    const userShell = process.env.SHELL || "/bin/zsh";
-    const output = execSync(`${userShell} -lc 'echo $PATH'`, {
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
-    const shellPath = output.split("\n").pop() || "";
-    if (shellPath) process.env.PATH = shellPath;
+    const lines = readFileSync("/etc/paths", "utf8").trim().split("\n");
+    pathDirs.push(...lines.filter(Boolean));
   } catch {
-    const fallbackPaths = [
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      `${process.env.HOME}/.nvm/current/bin`,
-    ].join(":");
-    process.env.PATH = `${fallbackPaths}:${process.env.PATH}`;
+    // Fall back to the essential system paths
+    pathDirs.push("/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin");
   }
+
+  // Read /etc/paths.d/* (homebrew, developer tools, etc.)
+  try {
+    for (const file of readdirSync("/etc/paths.d")) {
+      try {
+        const lines = readFileSync(`/etc/paths.d/${file}`, "utf8")
+          .trim()
+          .split("\n");
+        pathDirs.push(...lines.filter(Boolean));
+      } catch {
+        /* skip unreadable files */
+      }
+    }
+  } catch {
+    /* /etc/paths.d may not exist */
+  }
+
+  // Probe common user-local tool directories (nvm, cargo, homebrew, etc.)
+  const home = process.env.HOME;
+  if (home) {
+    // nvm: resolve the default version's bin directory from the alias file
+    try {
+      const nvmDefault = readFileSync(
+        join(home, ".nvm", "alias", "default"),
+        "utf8",
+      ).trim();
+      if (nvmDefault) {
+        // nvm aliases can be partial (e.g. "22") or full (e.g. "22.22.2").
+        // Find the best matching installed version.
+        const versionsDir = join(home, ".nvm", "versions", "node");
+        const installed = readdirSync(versionsDir);
+        const match = installed
+          .filter((v) => v.startsWith(`v${nvmDefault}`))
+          .sort()
+          .pop();
+        if (match) {
+          const nvmBin = join(versionsDir, match, "bin");
+          if (existsSync(nvmBin)) pathDirs.push(nvmBin);
+        }
+      }
+    } catch {
+      /* nvm not installed or no default alias */
+    }
+
+    const userDirs = [
+      `${home}/.cargo/bin`,
+      `${home}/.local/bin`,
+      "/opt/homebrew/bin", // fallback if /etc/paths.d/homebrew is missing
+    ];
+    for (const dir of userDirs) {
+      if (existsSync(dir) && !pathDirs.includes(dir)) pathDirs.push(dir);
+    }
+  }
+
+  // Read user-configured extra PATH directories from the config file.
+  // We read the JSON directly instead of going through electron-store because
+  // the settings module hasn't been imported yet at this point in startup.
+  try {
+    const configPath = join(getDataDir(), "exo-config.json");
+    if (existsSync(configPath)) {
+      const raw = JSON.parse(readFileSync(configPath, "utf8"));
+      const rawExtras = raw?.config?.extraPathDirs;
+      const extras: unknown[] = Array.isArray(rawExtras) ? rawExtras : [];
+      for (const dir of extras) {
+        if (typeof dir === "string" && dir && existsSync(dir)) {
+          pathDirs.push(dir);
+        }
+      }
+    }
+  } catch {
+    /* config not yet created or malformed — skip */
+  }
+
+  // Prepend discovered paths to the (minimal) inherited PATH
+  const discovered = pathDirs.join(":");
+  process.env.PATH = `${discovered}:${process.env.PATH}`;
 }
 
 // Load .env file if it exists (for API keys)
@@ -307,6 +397,16 @@ setAnthropicServiceDb(_db);
 }
 
 app.whenReady().then(async () => {
+  // Set the session download path to prevent Chromium from probing ~/Downloads.
+  // app.setPath() handles the path registry, but the session's download manager
+  // has its own path that defaults to the OS download directory.
+  if (process.platform === "darwin") {
+    const { mkdirSync } = await import("fs");
+    const safeDownloads = join(app.getPath("userData"), "downloads");
+    mkdirSync(safeDownloads, { recursive: true });
+    session.defaultSession.setDownloadPath(safeDownloads);
+  }
+
   // Migrate tokens/credentials from old ~/.config/exo/ path (macOS only)
   const { migrateOldConfigIfNeeded } = await import("./services/gmail-client");
   await migrateOldConfigIfNeeded();
