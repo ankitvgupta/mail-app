@@ -69,8 +69,19 @@ if (process.platform === "darwin") {
 if (process.platform === "darwin") {
   app.commandLine.appendSwitch(
     "disable-features",
-    "HardwareMediaKeyHandling,MediaSessionService",
+    "HardwareMediaKeyHandling,MediaSessionService,GlobalMediaControls",
   );
+}
+
+// Redirect Chromium's default Desktop/Downloads paths to the app's own data directory.
+// Chromium probes ~/Desktop and ~/Downloads during initialization (for the file picker
+// and download manager), which triggers macOS TCC prompts on first launch. By overriding
+// these paths before Chromium initializes, we avoid the prompts entirely. The app already
+// saves attachments to its own userData/downloads directory.
+if (process.platform === "darwin") {
+  const safeDir = join(app.getPath("userData"), "downloads");
+  app.setPath("downloads", safeDir);
+  app.setPath("desktop", safeDir);
 }
 
 // Fix PATH for packaged macOS apps (launched from Finder/Dock get minimal PATH).
