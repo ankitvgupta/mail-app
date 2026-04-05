@@ -644,6 +644,19 @@ export type ContactSuggestion = {
 };
 
 // ==============================================
+// Snippets (reusable text blocks for composing)
+export const SnippetSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  name: z.string().min(1),
+  body: z.string(), // HTML content
+  shortcut: z.string().optional(), // trigger text (e.g. "thanks")
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+export type Snippet = z.infer<typeof SnippetSchema>;
+
 // Inbox Splits (filtered inbox sections)
 // ==============================================
 

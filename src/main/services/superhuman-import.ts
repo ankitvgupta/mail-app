@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { randomUUID } from "crypto";
-import type { InboxSplit, SplitCondition } from "../../shared/types";
+import type { InboxSplit, Snippet, SplitCondition } from "../../shared/types";
 
 // Use createRequire to load native module at runtime (same pattern as db/index.ts)
 const require = createRequire(import.meta.url);
@@ -405,4 +405,89 @@ export function convertSuperhumanSplits(
   }
 
   return { splits, warnings };
+}
+
+// ============================================
+// Superhuman snippets
+// ============================================
+
+type SuperhumanSnippet = {
+  id: string;
+  name: string;
+  body: string; // HTML content
+  shortcut?: string;
+};
+
+/**
+ * Read snippets from a Superhuman database file.
+ * Uses the same streaming approach as readSuperhumanSplits.
+ */
+export async function readSuperhumanSnippets(filePath: string): Promise<SuperhumanSnippet[]> {
+  const tmpDir = await mkdtemp(join(tmpdir(), "sh-import-"));
+  const tmpFile = join(tmpDir, "superhuman.db");
+
+  try {
+    const srcFh = await open(filePath, "r");
+
+    try {
+      const srcStream = srcFh.createReadStream({ start: HEADER_SIZE });
+      const dstStream = createWriteStream(tmpFile);
+
+      await new Promise<void>((resolve, reject) => {
+        srcStream.pipe(dstStream);
+        dstStream.on("finish", resolve);
+        dstStream.on("error", reject);
+        srcStream.on("error", reject);
+      });
+    } finally {
+      await srcFh.close();
+    }
+
+    const db = new Database(tmpFile, { readonly: true });
+    try {
+      const row = db.prepare("SELECT json FROM general WHERE key = 'settings'").get() as
+        | { json: string }
+        | undefined;
+
+      if (!row) return [];
+
+      const settings = JSON.parse(row.json);
+      // Superhuman stores snippets under "snippets" key in settings
+      const snippets = settings?.snippets;
+      if (!Array.isArray(snippets)) return [];
+
+      return snippets;
+    } finally {
+      db.close();
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Convert Superhuman snippets to our Snippet format.
+ */
+export function convertSuperhumanSnippets(
+  shSnippets: SuperhumanSnippet[],
+  accountId: string,
+): Snippet[] {
+  const now = Date.now();
+  const snippets: Snippet[] = [];
+
+  for (const sh of shSnippets) {
+    if (!sh.name || typeof sh.body !== "string") continue;
+
+    snippets.push({
+      id: randomUUID(),
+      accountId,
+      name: sh.name,
+      body: sh.body,
+      shortcut: sh.shortcut || undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return snippets;
 }

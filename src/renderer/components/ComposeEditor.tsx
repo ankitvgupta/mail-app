@@ -8,9 +8,11 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import { useAppStore } from "../store";
 import { ContactMention } from "./MentionSuggestion";
+import type { Snippet } from "../../shared/types";
 
 interface ComposeEditorProps {
   initialContent?: string;
@@ -21,6 +23,8 @@ interface ComposeEditorProps {
   autoFocus?: boolean;
   /** Called when a contact is selected via @mention or +mention in the body */
   onAddToCc?: (email: string) => void;
+  /** Recipient email for snippet variable resolution */
+  recipientEmail?: string;
 }
 
 // Toolbar button component
@@ -67,9 +71,169 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+// Snippet picker dropdown
+function SnippetPicker({
+  snippets,
+  onSelect,
+  onClose,
+}: {
+  snippets: Snippet[];
+  onSelect: (snippet: Snippet) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Close on click outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-snippet-picker]")) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  const filtered = search
+    ? snippets.filter(
+        (s) =>
+          s.name.toLowerCase().includes(search.toLowerCase()) ||
+          (s.shortcut && s.shortcut.toLowerCase().includes(search.toLowerCase())),
+      )
+    : snippets;
+
+  return (
+    <div
+      data-snippet-picker
+      className="absolute top-full left-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 max-h-64 flex flex-col"
+    >
+      <div className="p-2 border-b border-gray-200 dark:border-gray-700">
+        <input
+          ref={inputRef}
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search snippets..."
+          className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onClose();
+            if (e.key === "Enter" && filtered.length > 0) {
+              onSelect(filtered[0]);
+            }
+          }}
+        />
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {filtered.length === 0 ? (
+          <div className="p-3 text-sm text-gray-500 dark:text-gray-400 text-center">
+            {snippets.length === 0 ? "No snippets. Create them in Settings." : "No matches."}
+          </div>
+        ) : (
+          filtered.map((snippet) => (
+            <button
+              key={snippet.id}
+              onClick={() => onSelect(snippet)}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-gray-900 dark:text-gray-100">{snippet.name}</span>
+                {snippet.shortcut && (
+                  <span className="px-1 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded font-mono">
+                    ;{snippet.shortcut}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                {snippet.body.replace(/<[^>]*>/g, "").substring(0, 80)}
+              </p>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Escape plain text for safe injection into HTML */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Resolve snippet variables:
+ * - {first_name} → recipient's first name
+ * - {my_name} → sender's display name
+ * - {custom_var} → prompt user
+ */
+function resolveSnippetVariables(
+  body: string,
+  recipientEmail?: string,
+  senderName?: string,
+): string {
+  let resolved = body;
+
+  // System variables that are auto-resolved (not prompted)
+  const SYSTEM_VARS = new Set(["my_name", "first_name"]);
+
+  // Resolve {my_name} — escape for HTML, use replacer to avoid $-pattern interpretation
+  if (senderName) {
+    const escaped = escapeHtml(senderName);
+    resolved = resolved.replace(/\{my_name\}/gi, () => escaped);
+  }
+
+  // Resolve {first_name} from recipient email (best effort: take part before @, capitalize)
+  if (recipientEmail) {
+    const localPart = recipientEmail.split("@")[0] || "";
+    const firstName = localPart.split(/[._-]/)[0];
+    const capitalized = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+    const escaped = escapeHtml(capitalized);
+    resolved = resolved.replace(/\{first_name\}/gi, () => escaped);
+  }
+
+  // Find remaining custom placeholders and prompt for them
+  const customVarRegex = /\{(\w+)\}/g;
+  let match;
+  const prompted = new Map<string, string>();
+  while ((match = customVarRegex.exec(resolved)) !== null) {
+    const varName = match[1];
+    // Skip system variables that weren't resolved (missing context)
+    if (SYSTEM_VARS.has(varName.toLowerCase())) continue;
+    // Use lowercase key to match the case-insensitive replacement below
+    if (!prompted.has(varName.toLowerCase())) {
+      const value = window.prompt(`Fill in {${varName}}:`, "") ?? "";
+      prompted.set(varName.toLowerCase(), escapeHtml(value));
+    }
+  }
+
+  for (const [varName, value] of prompted) {
+    resolved = resolved.replace(new RegExp(`\\{${varName}\\}`, "gi"), () => value);
+  }
+
+  return resolved;
+}
+
 // Toolbar component
-function Toolbar({ editor }: { editor: Editor | null }) {
+function Toolbar({
+  editor,
+  snippets,
+  onInsertSnippet,
+}: {
+  editor: Editor | null;
+  snippets: Snippet[];
+  onInsertSnippet: (snippet: Snippet) => void;
+}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showSnippetPicker, setShowSnippetPicker] = useState(false);
 
   const setLink = useCallback(() => {
     if (!editor) return;
@@ -268,6 +432,34 @@ function Toolbar({ editor }: { editor: Editor | null }) {
         onChange={handleFileSelected}
       />
 
+      {/* Insert snippet */}
+      <div className="relative">
+        <ToolbarButton
+          onClick={() => setShowSnippetPicker(!showSnippetPicker)}
+          active={showSnippetPicker}
+          title="Insert snippet (;)"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+            />
+          </svg>
+        </ToolbarButton>
+        {showSnippetPicker && (
+          <SnippetPicker
+            snippets={snippets}
+            onSelect={(snippet) => {
+              onInsertSnippet(snippet);
+              setShowSnippetPicker(false);
+            }}
+            onClose={() => setShowSnippetPicker(false)}
+          />
+        )}
+      </div>
+
       <div className="w-px h-5 bg-gray-300 dark:bg-gray-600 mx-1" />
 
       {/* Text alignment */}
@@ -312,8 +504,16 @@ export function ComposeEditor({
   className = "",
   autoFocus = false,
   onAddToCc,
+  recipientEmail,
 }: ComposeEditorProps) {
   const isDark = useAppStore((s) => s.resolvedTheme) === "dark";
+  const snippets = useAppStore((s) => s.snippets);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const accounts = useAppStore((s) => s.accounts);
+  const accountSnippets = snippets.filter((s) => s.accountId === currentAccountId);
+  const currentAccountRecord = accounts.find((a) => a.id === currentAccountId);
+  const senderName =
+    currentAccountRecord?.displayName || currentAccountRecord?.email?.split("@")[0];
 
   // Ref keeps the latest onAddToCc without recreating extensions
   const onAddToCcRef = useRef<((email: string) => void) | null>(onAddToCc ?? null);
@@ -440,7 +640,21 @@ export function ComposeEditor({
     <div
       className={`border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden bg-white dark:bg-gray-800 ${className}`}
     >
-      <Toolbar editor={editor} />
+      <Toolbar
+        editor={editor}
+        snippets={accountSnippets}
+        onInsertSnippet={(snippet) => {
+          if (!editor) return;
+          const resolved = resolveSnippetVariables(snippet.body, recipientEmail, senderName);
+          const sanitized = DOMPurify.sanitize(resolved);
+          // Plain-text snippets (from textarea) use \n for line breaks, but TipTap
+          // parses insertContent as HTML where \n is insignificant whitespace.
+          // Convert \n to <br> for plain-text bodies so line breaks are preserved.
+          const hasHtml = /<[a-z][\s\S]*>/i.test(sanitized);
+          const content = hasHtml ? sanitized : sanitized.replace(/\n/g, "<br>");
+          editor.chain().focus().insertContent(content).run();
+        }}
+      />
       <div className="dark:text-gray-100">
         <EditorContent editor={editor} />
       </div>
