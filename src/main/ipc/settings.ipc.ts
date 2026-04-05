@@ -273,10 +273,11 @@ export function registerSettingsIpc(): void {
 
       // Append any new extra PATH directories so they take effect without restart
       if ("extraPathDirs" in config) {
-        const currentPath = process.env.PATH || "";
+        const pathEntries = new Set((process.env.PATH || "").split(":"));
         for (const dir of newConfig.extraPathDirs ?? []) {
-          if (dir && !currentPath.includes(dir) && existsSync(dir)) {
-            process.env.PATH = `${dir}:${currentPath}`;
+          if (dir && !pathEntries.has(dir) && existsSync(dir)) {
+            process.env.PATH = `${dir}:${process.env.PATH}`;
+            pathEntries.add(dir);
           }
         }
       }
