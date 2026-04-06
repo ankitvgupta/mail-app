@@ -144,11 +144,27 @@ export function useComposeForm({
         if (result.success && result.data.length > 0) {
           setSendAsAliases(result.data);
 
-          // Smart reply default: if replying, auto-select the alias that the original email was sent to
+          // Smart reply default: auto-select the alias that the original email was sent to.
+          // replyInfo.to/cc only has the REPLY addresses (original sender for plain reply),
+          // so we also check the original email's To/CC from the store — that's where
+          // the user's alias appears as a recipient.
           if (replyInfo) {
-            const allRecipients = [...(replyInfo.to || []), ...(replyInfo.cc || [])].map((addr) =>
-              extractBareEmail(addr).toLowerCase(),
+            const replyRecipients = [...(replyInfo.to || []), ...(replyInfo.cc || [])].map(
+              (addr) => extractBareEmail(addr).toLowerCase(),
             );
+
+            // Also check the original email's recipients (covers plain reply)
+            const originalEmail = replyToEmailId
+              ? useAppStore.getState().emails.find((e) => e.id === replyToEmailId)
+              : undefined;
+            const originalRecipients = originalEmail
+              ? [
+                  ...(originalEmail.to || "").split(",").map((s) => s.trim()),
+                  ...(originalEmail.cc || "").split(",").map((s) => s.trim()),
+                ].map((addr) => extractBareEmail(addr).toLowerCase())
+              : [];
+
+            const allRecipients = [...replyRecipients, ...originalRecipients];
             const matchingAlias = result.data.find((a) =>
               allRecipients.includes(a.email.toLowerCase()),
             );

@@ -14,6 +14,7 @@ import type {
   MemorySource,
   MemoryType,
   DraftMemory,
+  SendAsAlias,
 } from "../../shared/types";
 import { createLogger } from "../services/logger";
 
@@ -2119,8 +2120,6 @@ export function setPrimaryAccount(accountId: string): void {
 // ============================================
 // Send-as alias operations
 // ============================================
-
-import type { SendAsAlias } from "../../shared/types";
 
 export function upsertSendAsAliases(accountId: string, aliases: SendAsAlias[]): void {
   const db = getDatabase();
