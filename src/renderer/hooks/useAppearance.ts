@@ -45,8 +45,20 @@ function applyThemeVariables(appearance: AppearanceConfig, isDark: boolean): voi
     root.style.setProperty("--accent-soft", colors.accentSoft);
   }
 
-  // Vibrancy — make surfaces semi-transparent so blur shows through
-  root.style.setProperty("--bg-alpha", appearance.vibrancy ? "0.78" : "1");
+  // Transparency — slider value (0 = opaque, 100 = fully transparent)
+  // Vibrancy toggle enables the OS blur; transparency controls the alpha independently
+  const transparencyPct = appearance.transparency ?? 0;
+  const alpha = transparencyPct > 0 ? Math.max(0.1, 1 - transparencyPct / 100) : 1;
+  root.style.setProperty("--bg-alpha", String(alpha));
+
+  // Background gradient — rendered behind the semi-transparent surfaces
+  if (appearance.backgroundGradient) {
+    root.style.setProperty("--bg-gradient", appearance.backgroundGradient);
+    root.classList.add("has-gradient");
+  } else {
+    root.style.removeProperty("--bg-gradient");
+    root.classList.remove("has-gradient");
+  }
 
   // Font scale
   const scale = FONT_SCALE_VALUES[appearance.fontScale] ?? 1;

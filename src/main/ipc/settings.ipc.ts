@@ -668,6 +668,8 @@ export function registerSettingsIpc(): void {
           themePreset: "default",
           accentColor: null,
           vibrancy: false,
+          transparency: 0,
+          backgroundGradient: null,
           fontScale: "default",
         },
       };

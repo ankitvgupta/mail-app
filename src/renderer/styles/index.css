@@ -52,6 +52,17 @@ html {
   font-size: calc(var(--font-scale) * 100%) !important;
 }
 
+/* Background gradient — fixed layer behind semi-transparent surfaces.
+   Only rendered when useAppearance adds the .has-gradient class. */
+html.has-gradient::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg-gradient);
+  pointer-events: none;
+}
+
 /* --- Surface color overrides ---
    Re-skin Tailwind's hardcoded grays so theme presets work
    without touching any component files. */

@@ -190,6 +190,50 @@ export const ACCENT_SWATCHES = [
   { name: "Cyan", hex: "#0891b2", rgb: "8 145 178" },
 ] as const;
 
+// Background gradient presets
+export const GRADIENT_PRESETS = [
+  {
+    id: "aurora",
+    name: "Aurora",
+    css: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 30%, #155e75 50%, #134e4a 70%, #0f172a 100%)",
+  },
+  {
+    id: "sunset",
+    name: "Sunset",
+    css: "linear-gradient(135deg, #1a1a2e 0%, #16213e 25%, #5e2563 50%, #c2185b 75%, #ff6f00 100%)",
+  },
+  {
+    id: "ocean",
+    name: "Ocean",
+    css: "linear-gradient(180deg, #0a1628 0%, #0d2847 30%, #0e4d64 60%, #0a1628 100%)",
+  },
+  {
+    id: "ember",
+    name: "Ember",
+    css: "linear-gradient(135deg, #1a0a0a 0%, #3d1212 30%, #7c2d12 55%, #451a03 80%, #1a0a0a 100%)",
+  },
+  {
+    id: "lavender",
+    name: "Lavender",
+    css: "linear-gradient(135deg, #1e1b2e 0%, #2d2252 30%, #4c1d95 55%, #2d2252 80%, #1e1b2e 100%)",
+  },
+  {
+    id: "forest",
+    name: "Forest",
+    css: "linear-gradient(180deg, #0a1a0a 0%, #14352a 30%, #1a4731 55%, #0f2318 80%, #0a1a0a 100%)",
+  },
+  {
+    id: "cosmic",
+    name: "Cosmic",
+    css: "linear-gradient(135deg, #0f0c29 0%, #302b63 40%, #24243e 70%, #0f0c29 100%)",
+  },
+  {
+    id: "rose-gold",
+    name: "Rose Gold",
+    css: "linear-gradient(135deg, #1c1017 0%, #3b1a2b 30%, #6b3a4a 50%, #b76e79 75%, #3b1a2b 100%)",
+  },
+] as const;
+
 // Font scale multipliers
 export const FONT_SCALE_VALUES = {
   small: 0.875,

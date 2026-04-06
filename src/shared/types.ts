@@ -369,6 +369,8 @@ export const AppearanceConfigSchema = z.object({
   themePreset: ThemePresetSchema.default("default"),
   accentColor: z.string().nullable().default(null),
   vibrancy: z.boolean().default(false),
+  transparency: z.number().min(0).max(100).default(0),
+  backgroundGradient: z.string().nullable().default(null),
   fontScale: FontScaleSchema.default("default"),
 });
 export type AppearanceConfig = z.infer<typeof AppearanceConfigSchema>;
