@@ -25,6 +25,7 @@ const api = {
     saveCredentials: (clientId: string, clientSecret: string): Promise<unknown> =>
       ipcRenderer.invoke("gmail:save-credentials", { clientId, clientSecret }),
     startOAuth: (): Promise<unknown> => ipcRenderer.invoke("gmail:start-oauth"),
+    abortOAuth: (): Promise<unknown> => ipcRenderer.invoke("gmail:abort-oauth"),
   },
 
   // Analysis operations
@@ -554,6 +555,22 @@ const api = {
     },
     removeAllListeners: (): void => {
       ipcRenderer.removeAllListeners("theme:changed");
+    },
+  },
+
+  // Appearance customization
+  appearance: {
+    get: (): Promise<unknown> => ipcRenderer.invoke("appearance:get"),
+    set: (config: Record<string, unknown>): Promise<unknown> =>
+      ipcRenderer.invoke("appearance:set", config),
+    onChange: (callback: (data: Record<string, unknown>) => void): void => {
+      ipcRenderer.on(
+        "appearance:changed",
+        (_: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data),
+      );
+    },
+    removeAllListeners: (): void => {
+      ipcRenderer.removeAllListeners("appearance:changed");
     },
   },
 
