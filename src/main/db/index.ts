@@ -393,35 +393,6 @@ const NUMBERED_MIGRATIONS: Migration[] = [
       `);
     },
   },
-  {
-    version: 2,
-    name: "add_send_as_aliases_and_from_address",
-    up: (db) => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS send_as_aliases (
-          email TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          display_name TEXT,
-          is_default INTEGER DEFAULT 0,
-          reply_to_address TEXT,
-          verification_status TEXT,
-          fetched_at INTEGER NOT NULL,
-          PRIMARY KEY (email, account_id),
-          FOREIGN KEY (account_id) REFERENCES accounts(id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_send_as_account ON send_as_aliases(account_id);
-      `);
-
-      // ALTER TABLE only for existing databases — fresh DBs get the column from SCHEMA
-      const tables = ["local_drafts", "outbox", "scheduled_messages"];
-      for (const table of tables) {
-        const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-        if (cols.length > 0 && !cols.some((c) => c.name === "from_address")) {
-          db.exec(`ALTER TABLE ${table} ADD COLUMN from_address TEXT`);
-        }
-      }
-    },
-  },
 ];
 
 function runNumberedMigrations(db: DatabaseInstance): void {
@@ -2103,7 +2074,6 @@ export function removeAccount(accountId: string): void {
     db.prepare("DELETE FROM calendar_sync_state WHERE account_id = ?").run(accountId);
     db.prepare("DELETE FROM memories WHERE account_id = ?").run(accountId);
     db.prepare("DELETE FROM agent_audit_log WHERE account_id = ?").run(accountId);
-    db.prepare("DELETE FROM send_as_aliases WHERE account_id = ?").run(accountId);
     db.prepare("DELETE FROM emails WHERE account_id = ?").run(accountId);
     db.prepare("DELETE FROM accounts WHERE id = ?").run(accountId);
   });
@@ -2114,65 +2084,6 @@ export function setPrimaryAccount(accountId: string): void {
   const db = getDatabase();
   db.prepare("UPDATE accounts SET is_primary = 0").run();
   db.prepare("UPDATE accounts SET is_primary = 1 WHERE id = ?").run(accountId);
-}
-
-// ============================================
-// Send-as alias operations
-// ============================================
-
-import type { SendAsAlias } from "../../shared/types";
-
-export function upsertSendAsAliases(accountId: string, aliases: SendAsAlias[]): void {
-  const db = getDatabase();
-  const now = Date.now();
-
-  const run = db.transaction(() => {
-    // Clear stale aliases for this account, then insert fresh
-    db.prepare("DELETE FROM send_as_aliases WHERE account_id = ?").run(accountId);
-
-    const stmt = db.prepare(`
-      INSERT INTO send_as_aliases (email, account_id, display_name, is_default, reply_to_address, verification_status, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const alias of aliases) {
-      stmt.run(
-        alias.email,
-        accountId,
-        alias.displayName || null,
-        alias.isDefault ? 1 : 0,
-        alias.replyToAddress || null,
-        "accepted",
-        now,
-      );
-    }
-  });
-  run();
-}
-
-export function getSendAsAliases(accountId: string): SendAsAlias[] {
-  const db = getDatabase();
-  const rows = db
-    .prepare(
-      `SELECT email, display_name as displayName, is_default as isDefault, reply_to_address as replyToAddress
-       FROM send_as_aliases WHERE account_id = ? ORDER BY is_default DESC, email ASC`,
-    )
-    .all(accountId) as Array<Record<string, unknown>>;
-
-  return rows.map((row) => ({
-    email: row.email as string,
-    displayName: (row.displayName as string | null) ?? undefined,
-    isDefault: Boolean(row.isDefault),
-    replyToAddress: (row.replyToAddress as string | null) ?? undefined,
-  }));
-}
-
-export function getSendAsAliasFetchedAt(accountId: string): number | null {
-  const db = getDatabase();
-  const row = db
-    .prepare("SELECT MAX(fetched_at) as fetchedAt FROM send_as_aliases WHERE account_id = ?")
-    .get(accountId) as { fetchedAt: number | null } | undefined;
-  return row?.fetchedAt ?? null;
 }
 
 // ============================================
@@ -2774,10 +2685,10 @@ export function saveLocalDraft(draft: LocalDraft): void {
     INSERT OR REPLACE INTO local_drafts (
       id, account_id, gmail_draft_id, thread_id, in_reply_to,
       to_addresses, cc_addresses, bcc_addresses, subject,
-      body_html, body_text, from_address, is_reply, is_forward,
+      body_html, body_text, is_reply, is_forward,
       created_at, updated_at, synced_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     draft.id,
@@ -2791,7 +2702,6 @@ export function saveLocalDraft(draft: LocalDraft): void {
     draft.subject,
     draft.bodyHtml,
     draft.bodyText || null,
-    draft.fromAddress || null,
     draft.isReply ? 1 : 0,
     draft.isForward ? 1 : 0,
     draft.createdAt,
@@ -2808,7 +2718,6 @@ export function getLocalDraft(draftId: string): LocalDraft | null {
            to_addresses as toAddresses, cc_addresses as ccAddresses,
            bcc_addresses as bccAddresses, subject,
            body_html as bodyHtml, body_text as bodyText,
-           from_address as fromAddress,
            is_reply as isReply, is_forward as isForward,
            created_at as createdAt, updated_at as updatedAt,
            synced_at as syncedAt
@@ -2828,7 +2737,6 @@ export function getLocalDrafts(accountId?: string): LocalDraft[] {
            to_addresses as toAddresses, cc_addresses as ccAddresses,
            bcc_addresses as bccAddresses, subject,
            body_html as bodyHtml, body_text as bodyText,
-           from_address as fromAddress,
            is_reply as isReply, is_forward as isForward,
            created_at as createdAt, updated_at as updatedAt,
            synced_at as syncedAt
@@ -2873,7 +2781,6 @@ function rowToLocalDraft(row: Record<string, unknown>): LocalDraft {
     subject: row.subject as string,
     bodyHtml: row.bodyHtml as string,
     bodyText: (row.bodyText as string | null) ?? undefined,
-    fromAddress: (row.fromAddress as string | null) ?? undefined,
     isReply: Boolean(row.isReply),
     isForward: Boolean(row.isForward),
     createdAt: row.createdAt as number,
@@ -3249,7 +3156,6 @@ export type OutboxItem = {
   accountId: string;
   type: OutboxType;
   threadId?: string;
-  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -3288,9 +3194,9 @@ export function insertOutboxMessage(
     INSERT INTO outbox (
       id, account_id, type, thread_id, to_addresses, cc_addresses, bcc_addresses,
       subject, body_html, body_text, in_reply_to, references_header,
-      attachments, from_address, status, retry_count, created_at, updated_at
+      attachments, status, retry_count, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
   `);
   const now = Date.now();
   stmt.run(
@@ -3307,7 +3213,6 @@ export function insertOutboxMessage(
     item.inReplyTo || null,
     item.references || null,
     item.attachments ? JSON.stringify(item.attachments) : null,
-    item.from || null,
     item.createdAt,
     now,
   );
@@ -3344,7 +3249,6 @@ export function getPendingOutbox(accountId?: string, limit: number = 10): Outbox
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
-           from_address as fromAddress,
            status, error_message as errorMessage, retry_count as retryCount,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM outbox
@@ -3367,7 +3271,6 @@ export function getOutboxItems(accountId?: string): OutboxItem[] {
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
-           from_address as fromAddress,
            status, error_message as errorMessage, retry_count as retryCount,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM outbox
@@ -3390,7 +3293,6 @@ export function getOutboxItem(id: string): OutboxItem | null {
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader, attachments,
-           from_address as fromAddress,
            status, error_message as errorMessage, retry_count as retryCount,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM outbox
@@ -3694,7 +3596,6 @@ export type ScheduledMessageRow = {
   accountId: string;
   type: "send" | "reply";
   threadId?: string;
-  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -3719,9 +3620,9 @@ export function insertScheduledMessage(
     INSERT INTO scheduled_messages (
       id, account_id, type, thread_id, to_addresses, cc_addresses, bcc_addresses,
       subject, body_html, body_text, in_reply_to, references_header,
-      from_address, scheduled_at, status, created_at, updated_at
+      scheduled_at, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
   `);
   const now = Date.now();
   stmt.run(
@@ -3737,7 +3638,6 @@ export function insertScheduledMessage(
     item.bodyText || null,
     item.inReplyTo || null,
     item.references || null,
-    item.from || null,
     item.scheduledAt,
     item.createdAt,
     now,
@@ -3752,7 +3652,6 @@ export function getDueScheduledMessages(limit: number = 10): ScheduledMessageRow
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
            scheduled_at as scheduledAt, status, error_message as errorMessage,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM scheduled_messages
@@ -3771,7 +3670,6 @@ export function getScheduledMessages(accountId?: string): ScheduledMessageRow[] 
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
            scheduled_at as scheduledAt, status, error_message as errorMessage,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM scheduled_messages
@@ -3794,7 +3692,6 @@ export function getScheduledMessage(id: string): ScheduledMessageRow | null {
            to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
            subject, body_html as bodyHtml, body_text as bodyText,
            in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
            scheduled_at as scheduledAt, status, error_message as errorMessage,
            created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
     FROM scheduled_messages
@@ -3875,7 +3772,6 @@ function rowToScheduledMessage(row: Record<string, unknown>): ScheduledMessageRo
     accountId: row.accountId as string,
     type: row.type as "send" | "reply",
     threadId: (row.threadId as string | null) ?? undefined,
-    from: (row.fromAddress as string | null) ?? undefined,
     to: JSON.parse(row.toAddresses as string) as string[],
     cc: row.ccAddresses ? (JSON.parse(row.ccAddresses as string) as string[]) : undefined,
     bcc: row.bccAddresses ? (JSON.parse(row.bccAddresses as string) as string[]) : undefined,
@@ -4149,7 +4045,6 @@ function rowToOutboxItem(row: Record<string, unknown>): OutboxItem {
     accountId: row.accountId as string,
     type: row.type as OutboxType,
     threadId: (row.threadId as string | null) ?? undefined,
-    from: (row.fromAddress as string | null) ?? undefined,
     to: JSON.parse(row.toAddresses as string) as string[],
     cc: row.ccAddresses ? (JSON.parse(row.ccAddresses as string) as string[]) : undefined,
     bcc: row.bccAddresses ? (JSON.parse(row.bccAddresses as string) as string[]) : undefined,

@@ -102,7 +102,6 @@ export function registerScheduledSendIpc(): void {
           accountId: options.accountId,
           type: options.threadId ? "reply" : "send",
           threadId: options.threadId,
-          from: options.from,
           to: formatAddressesWithNames(options.to, recipientNames),
           cc: options.cc ? formatAddressesWithNames(options.cc, recipientNames) : undefined,
           bcc: options.bcc ? formatAddressesWithNames(options.bcc, recipientNames) : undefined,

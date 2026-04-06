@@ -13,9 +13,6 @@ import {
   getArchiveReadyForThread,
   getEmailsByThread,
   updateEmailLabelIds,
-  getSendAsAliases,
-  getSendAsAliasFetchedAt,
-  upsertSendAsAliases,
 } from "../db";
 import { networkMonitor } from "../services/network-monitor";
 import { outboxService } from "../services/outbox-service";
@@ -30,7 +27,6 @@ import type {
   ReplyInfo,
   SendMessageOptions,
   SendMessageResult,
-  SendAsAlias,
 } from "../../shared/types";
 import { formatAddressesWithNames, extractThreadNames } from "../utils/address-formatting";
 import { createLogger } from "../services/logger";
@@ -58,7 +54,6 @@ function queueToOutbox(options: SendMessageOptions & { accountId: string }): Sen
     accountId: options.accountId,
     type: options.threadId ? "reply" : "send",
     threadId: options.threadId,
-    from: options.from,
     to: formattedTo,
     cc: formattedCc,
     bcc: formattedBcc,
@@ -848,44 +843,6 @@ export function registerComposeIpc(): void {
         return {
           success: false,
           error: error instanceof Error ? error.message : "Failed to mark message as read",
-        };
-      }
-    },
-  );
-
-  // Fetch send-as aliases for an account (cached with 1h TTL)
-  const SEND_AS_CACHE_TTL_MS = 60 * 60 * 1000;
-  ipcMain.handle(
-    "compose:get-send-as-aliases",
-    async (_, { accountId }: { accountId: string }): Promise<IpcResponse<SendAsAlias[]>> => {
-      try {
-        // Check cache freshness
-        const fetchedAt = getSendAsAliasFetchedAt(accountId);
-        if (fetchedAt && Date.now() - fetchedAt < SEND_AS_CACHE_TTL_MS) {
-          return { success: true, data: getSendAsAliases(accountId) };
-        }
-
-        // Fetch fresh from Gmail API
-        const syncService = getEmailSyncService();
-        const client = syncService.getClientForAccount(accountId);
-        if (!client) {
-          // Offline or no client — return cached if available
-          const cached = getSendAsAliases(accountId);
-          return { success: true, data: cached };
-        }
-
-        const aliases = await client.fetchSendAsAliases();
-        upsertSendAsAliases(accountId, aliases);
-        return { success: true, data: aliases };
-      } catch (error) {
-        // Fall back to cache on API error
-        const cached = getSendAsAliases(accountId);
-        if (cached.length > 0) {
-          return { success: true, data: cached };
-        }
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : "Failed to fetch send-as aliases",
         };
       }
     },

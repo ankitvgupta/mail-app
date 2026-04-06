@@ -99,7 +99,6 @@ class ScheduledSendService extends EventEmitter {
 
     try {
       const result = await client.sendMessage({
-        from: item.from,
         to: item.to,
         cc: item.cc,
         bcc: item.bcc,
