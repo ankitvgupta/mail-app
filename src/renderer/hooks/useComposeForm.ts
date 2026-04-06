@@ -2,7 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "../store";
 import { useSignature } from "./useSignature";
 import type { ComposeAttachmentItem } from "../components/AttachmentList";
-import type { ReplyInfo, IpcResponse, ContactSuggestion, ComposeMode } from "../../shared/types";
+import type {
+  ReplyInfo,
+  IpcResponse,
+  ContactSuggestion,
+  ComposeMode,
+  SendAsAlias,
+} from "../../shared/types";
 
 /** Extract bare email from a potentially formatted "Name <email>" address. */
 function extractBareEmail(addr: string): string {
@@ -25,6 +31,7 @@ function buildNameMapFromAddresses(addresses: string[]): Map<string, string> {
 // Shared send options shape (subset of the IPC API)
 export interface ComposeSendOptions {
   accountId: string;
+  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -123,6 +130,59 @@ export function useComposeForm({
       setNameMap((prev) => new Map(prev).set(suggestion.email.toLowerCase(), suggestion.name));
     }
   }, []);
+
+  // --- Send-as aliases ---
+  const [sendAsAliases, setSendAsAliases] = useState<SendAsAlias[]>([]);
+  const [from, setFrom] = useState<string | undefined>(undefined);
+
+  // Fetch aliases on mount
+  useEffect(() => {
+    if (typeof window.api.compose.getSendAsAliases !== "function") return;
+
+    (window.api.compose.getSendAsAliases(accountId) as Promise<IpcResponse<SendAsAlias[]>>)
+      .then((result) => {
+        if (result.success && result.data.length > 0) {
+          setSendAsAliases(result.data);
+
+          // Smart reply default: auto-select the alias that the original email was sent to.
+          // replyInfo.to/cc only has the REPLY addresses (original sender for plain reply),
+          // so we also check the original email's To/CC from the store — that's where
+          // the user's alias appears as a recipient.
+          if (replyInfo) {
+            const replyRecipients = [...(replyInfo.to || []), ...(replyInfo.cc || [])].map(
+              (addr) => extractBareEmail(addr).toLowerCase(),
+            );
+
+            // Also check the original email's recipients (covers plain reply)
+            const originalEmail = replyToEmailId
+              ? useAppStore.getState().emails.find((e) => e.id === replyToEmailId)
+              : undefined;
+            const originalRecipients = originalEmail
+              ? [
+                  ...(originalEmail.to || "").split(",").map((s) => s.trim()),
+                  ...(originalEmail.cc || "").split(",").map((s) => s.trim()),
+                ].map((addr) => extractBareEmail(addr).toLowerCase())
+              : [];
+
+            const allRecipients = [...replyRecipients, ...originalRecipients];
+            const matchingAlias = result.data.find((a) =>
+              allRecipients.includes(a.email.toLowerCase()),
+            );
+            if (matchingAlias) {
+              setFrom(matchingAlias.email);
+              return;
+            }
+          }
+
+          // Default to the default alias
+          const defaultAlias = result.data.find((a) => a.isDefault);
+          if (defaultAlias) setFrom(defaultAlias.email);
+        }
+      })
+      .catch(() => {
+        // Silently fail — compose still works without aliases
+      });
+  }, [accountId]);
 
   // --- Send state ---
   const [isSending, setIsSending] = useState(false);
@@ -250,6 +310,7 @@ export function useComposeForm({
 
     return {
       accountId,
+      from,
       to,
       cc: cc.length > 0 ? cc : undefined,
       bcc: bcc.length > 0 ? bcc : undefined,
@@ -265,6 +326,7 @@ export function useComposeForm({
     };
   }, [
     accountId,
+    from,
     to,
     cc,
     bcc,
@@ -407,6 +469,11 @@ export function useComposeForm({
     handleRecipientDrop,
     handleRecipientDragStart,
     handleMentionAddToCc,
+
+    // Send-as aliases
+    sendAsAliases,
+    from,
+    setFrom,
 
     // Content state
     subject,

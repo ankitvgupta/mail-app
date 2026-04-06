@@ -487,6 +487,14 @@ export type ComposeAttachment = {
   size?: number;
 };
 
+// Gmail send-as alias (cached from Gmail settings)
+export type SendAsAlias = {
+  email: string;
+  displayName?: string;
+  isDefault: boolean;
+  replyToAddress?: string;
+};
+
 // Options for composing a message (used internally)
 export type ComposeMessageOptions = {
   from?: string;
@@ -529,6 +537,7 @@ export const LocalDraftSchema = z.object({
   subject: z.string(),
   bodyHtml: z.string(),
   bodyText: z.string().optional(),
+  fromAddress: z.string().optional(),
   isReply: z.boolean().default(false),
   isForward: z.boolean().default(false),
   createdAt: z.number(),

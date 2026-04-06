@@ -70,6 +70,7 @@ const api = {
     // Send a new message
     send: (options: {
       accountId: string;
+      from?: string;
       to: string[];
       cc?: string[];
       bcc?: string[];
@@ -89,18 +90,23 @@ const api = {
       recipientNames?: Record<string, string>;
     }): Promise<unknown> => ipcRenderer.invoke("compose:send", options),
 
+    getSendAsAliases: (accountId: string): Promise<unknown> =>
+      ipcRenderer.invoke("compose:get-send-as-aliases", { accountId }),
+
     // Local drafts (stored in SQLite)
     saveLocalDraft: (draft: {
       accountId: string;
       gmailDraftId?: string;
       threadId?: string;
       inReplyTo?: string;
+      from?: string;
       to: string[];
       cc?: string[];
       bcc?: string[];
       subject: string;
       bodyHtml: string;
       bodyText?: string;
+      fromAddress?: string;
       isReply?: boolean;
       isForward?: boolean;
     }): Promise<unknown> => ipcRenderer.invoke("compose:save-local-draft", draft),
