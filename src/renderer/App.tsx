@@ -14,7 +14,7 @@ import { EmailPreviewSidebar } from "./components/EmailPreviewSidebar";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SetupWizard } from "./components/SetupWizard";
 import { SearchBar } from "./components/SearchBar";
-import { CommandPalette, CommandBarTrigger } from "./components/CommandPalette";
+import { CommandPalette } from "./components/CommandPalette";
 import { AgentCommandPalette } from "./components/AgentCommandPalette";
 import { AgentsSidebar } from "./components/AgentsSidebar";
 import { ShortcutHelp } from "./components/ShortcutHelp";
@@ -623,6 +623,7 @@ export default function App() {
     composeState,
     openCompose,
     isSearchOpen,
+    openSearch,
     closeSearch,
     isCommandPaletteOpen,
     closeCommandPalette,
@@ -1695,8 +1696,21 @@ export default function App() {
           <UpdateBanner />
         </div>
         <div className="titlebar-no-drag flex items-center space-x-2">
-          {/* Morphing search bar — opens command palette */}
-          <CommandBarTrigger onClick={() => useAppStore.getState().openCommandPalette()} />
+          {/* Search button */}
+          <button
+            onClick={openSearch}
+            className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1"
+            title="Search (/)"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </button>
           {/* Outbox badge (show when there are pending messages and online) */}
           {isOnline && outboxStats.pending > 0 && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-lg text-sm">
