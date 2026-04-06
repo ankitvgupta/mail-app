@@ -602,58 +602,62 @@ export default function App() {
   const scheduledPanelRef = useRef<HTMLDivElement>(null);
   const extensionsRegistered = useRef(false);
 
+  // State values — individual selectors to avoid re-rendering the entire App on unrelated changes
+  const showSettings = useAppStore((s) => s.showSettings);
+  const settingsInitialTab = useAppStore((s) => s.settingsInitialTab);
+  const accounts = useAppStore((s) => s.accounts);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const composeState = useAppStore((s) => s.composeState);
+  const isSearchOpen = useAppStore((s) => s.isSearchOpen);
+  const isCommandPaletteOpen = useAppStore((s) => s.isCommandPaletteOpen);
+  const isFindBarOpen = useAppStore((s) => s.isFindBarOpen);
+  const isAgentPaletteOpen = useAppStore((s) => s.isAgentPaletteOpen);
+  const isAgentsSidebarOpen = useAppStore((s) => s.isAgentsSidebarOpen);
+  const viewMode = useAppStore((s) => s.viewMode);
+  const activeSearchQuery = useAppStore((s) => s.activeSearchQuery);
+  const _activeSearchResults = useAppStore((s) => s.activeSearchResults);
+  const expiredAccountIds = useAppStore((s) => s.expiredAccountIds);
+  const extensionAuthRequired = useAppStore((s) => s.extensionAuthRequired);
+  const agentAuthRequired = useAppStore((s) => s.agentAuthRequired);
+  const isOnline = useAppStore((s) => s.isOnline);
+  const outboxStats = useAppStore((s) => s.outboxStats);
+  const scheduledMessageStats = useAppStore((s) => s.scheduledMessageStats);
+  const resolvedTheme = useAppStore((s) => s.resolvedTheme);
+  const syncProgress = useAppStore((s) => s.syncProgress);
+
+  // Actions — stable function references, safe in one destructuring
   const {
     setEmails,
     addEmails,
     setLoading,
     setError,
-    showSettings,
-    settingsInitialTab,
     setShowSettings,
-    accounts,
     setAccounts,
-    currentAccountId,
     setCurrentAccountId,
     setSyncStatus,
     setSyncProgress,
     getSyncStatus,
     setPrefetchProgress,
     setBackgroundSyncProgress,
-    composeState,
     openCompose,
-    isSearchOpen,
     openSearch,
     closeSearch,
-    isCommandPaletteOpen,
     closeCommandPalette,
-    isFindBarOpen,
-    isAgentPaletteOpen,
     setAgentPaletteOpen,
-    isAgentsSidebarOpen,
-    viewMode,
     setViewMode,
-    activeSearchQuery,
-    activeSearchResults: _activeSearchResults,
     clearActiveSearch: _clearActiveSearch,
     setSelectedEmailId: _setSelectedEmailId,
-    expiredAccountIds,
-    extensionAuthRequired,
-    agentAuthRequired,
     addExpiredAccount,
     removeExpiredAccount,
     addExtensionAuthRequired,
     removeExtensionAuthRequired,
     addAgentAuthRequired,
     removeAgentAuthRequired,
-    isOnline,
-    outboxStats,
-    scheduledMessageStats,
     setOnline,
     setOutboxStats,
     restorePendingRemoval,
     clearPendingRemoval,
     setScheduledMessageStats,
-    resolvedTheme,
     setThemePreference,
     setResolvedTheme,
     setInboxDensity,
@@ -662,7 +666,6 @@ export default function App() {
     setSentEmails,
     addSentEmails,
     setSplits,
-    syncProgress,
   } = useAppStore();
 
   // Initialize keyboard shortcuts
@@ -818,13 +821,15 @@ export default function App() {
         }
 
         // Load cached emails for all accounts (including expired ones)
+        // Fetch all accounts in parallel instead of sequentially
         const allEmails: DashboardEmail[] = [];
         const allSentEmails: DashboardEmail[] = [];
-        for (const acc of accountList) {
-          const [emailsResult, sentResult] = await Promise.all([
-            window.api.sync.getEmails(acc.id),
-            window.api.sync.getSentEmails(acc.id),
-          ]);
+        const accountResults = await Promise.all(
+          accountList.map((acc) =>
+            Promise.all([window.api.sync.getEmails(acc.id), window.api.sync.getSentEmails(acc.id)]),
+          ),
+        );
+        for (const [emailsResult, sentResult] of accountResults) {
           if (emailsResult.success && emailsResult.data) {
             allEmails.push(...emailsResult.data);
           }
