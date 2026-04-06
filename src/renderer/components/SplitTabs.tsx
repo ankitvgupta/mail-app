@@ -69,10 +69,16 @@ export function SplitTabs() {
     [threads, archiveReadyThreadIds, isNonExclusive],
   );
 
-  const draftsCount = useMemo(
+  // Count both local drafts (compose sessions) and AI-generated drafts (on emails)
+  const emailDraftsCount = useMemo(
+    () => threads.filter((t) => t.draft && t.draft.body).length,
+    [threads],
+  );
+  const localDraftsCount = useMemo(
     () => localDrafts.filter((d) => !currentAccountId || d.accountId === currentAccountId).length,
     [localDrafts, currentAccountId],
   );
+  const draftsCount = emailDraftsCount + localDraftsCount;
 
   // Calculate thread counts for each split
   const counts = useMemo(() => {
