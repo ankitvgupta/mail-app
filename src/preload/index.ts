@@ -558,6 +558,22 @@ const api = {
     },
   },
 
+  // Appearance customization
+  appearance: {
+    get: (): Promise<unknown> => ipcRenderer.invoke("appearance:get"),
+    set: (config: Record<string, unknown>): Promise<unknown> =>
+      ipcRenderer.invoke("appearance:set", config),
+    onChange: (callback: (data: Record<string, unknown>) => void): void => {
+      ipcRenderer.on(
+        "appearance:changed",
+        (_: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data),
+      );
+    },
+    removeAllListeners: (): void => {
+      ipcRenderer.removeAllListeners("appearance:changed");
+    },
+  },
+
   // Auth events (token expiry, extension re-auth)
   auth: {
     onTokenExpired: (

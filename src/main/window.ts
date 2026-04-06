@@ -27,7 +27,34 @@ function getInitialBackgroundColor(): string {
   }
 }
 
+// Check if vibrancy is enabled in persisted appearance config
+function getInitialVibrancy(): boolean {
+  try {
+    const config = getConfig();
+    return config.appearance?.vibrancy === true;
+  } catch {
+    return false;
+  }
+}
+
+// Apply or remove vibrancy/transparency on a BrowserWindow at runtime
+export function applyVibrancy(win: BrowserWindow, enabled: boolean): void {
+  if (process.platform === "darwin") {
+    // macOS: frosted glass effect
+    win.setVibrancy(enabled ? "under-window" : null);
+    win.setBackgroundColor(enabled ? "#00000000" : getInitialBackgroundColor());
+  } else if (process.platform === "win32") {
+    // Windows 11: acrylic blur
+    win.setBackgroundMaterial(enabled ? "acrylic" : "none");
+    if (!enabled) {
+      win.setBackgroundColor(getInitialBackgroundColor());
+    }
+  }
+}
+
 export function createWindow(): BrowserWindow {
+  const vibrancyEnabled = getInitialVibrancy();
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -37,8 +64,21 @@ export function createWindow(): BrowserWindow {
     autoHideMenuBar: true,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 15, y: 15 },
-    backgroundColor: getInitialBackgroundColor(),
+    backgroundColor: vibrancyEnabled ? "#00000000" : getInitialBackgroundColor(),
     icon: getIconPath(),
+
+    // macOS frosted glass
+    ...(vibrancyEnabled &&
+      process.platform === "darwin" && {
+        vibrancy: "under-window" as const,
+        visualEffectState: "active" as const,
+      }),
+
+    // Windows 11 acrylic
+    ...(vibrancyEnabled &&
+      process.platform === "win32" && {
+        backgroundMaterial: "acrylic" as const,
+      }),
     // Prevent Chromium from throttling timers in hidden windows during tests.
     // Without this, setTimeout-based logic (e.g. undo-send toast auto-dismiss)
     // gets frozen indefinitely when the window is never shown.

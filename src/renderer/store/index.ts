@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { clearPendingLabelUpdates } from "../hooks-bridge";
 import { applyOptimisticReads, addOptimisticReads } from "../optimistic-reads";
 import type {
+  AppearanceConfig,
   DashboardEmail,
   ComposeMode,
   OutboxStats,
@@ -248,6 +249,9 @@ interface AppState {
   themePreference: ThemePreference;
   resolvedTheme: "light" | "dark";
 
+  // Appearance customization
+  appearance: AppearanceConfig;
+
   // Inbox density state
   inboxDensity: InboxDensity;
 
@@ -420,6 +424,7 @@ interface AppState {
   // Theme actions
   setThemePreference: (preference: ThemePreference) => void;
   setResolvedTheme: (theme: "light" | "dark") => void;
+  setAppearance: (config: AppearanceConfig) => void;
 
   // Inbox density actions
   setInboxDensity: (density: InboxDensity) => void;
@@ -598,6 +603,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Theme state
   themePreference: "system",
   resolvedTheme: "light",
+
+  // Appearance defaults
+  appearance: {
+    themePreset: "default",
+    accentColor: null,
+    vibrancy: false,
+    fontScale: "default",
+  },
 
   // Inbox density state
   inboxDensity: "compact",
@@ -1040,6 +1053,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Theme actions
   setThemePreference: (preference) => set({ themePreference: preference }),
   setResolvedTheme: (theme) => set({ resolvedTheme: theme }),
+  setAppearance: (config) => set({ appearance: config }),
 
   // Inbox density actions
   setInboxDensity: (density) => set({ inboxDensity: density }),

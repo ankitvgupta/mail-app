@@ -358,6 +358,21 @@ export function resolveModelId(tier: ModelTier): string {
   return MODEL_TIER_IDS[tier];
 }
 
+// Appearance customization
+export const ThemePresetSchema = z.enum(["default", "midnight", "nord", "solarized", "rose"]);
+export type ThemePresetId = z.infer<typeof ThemePresetSchema>;
+
+export const FontScaleSchema = z.enum(["small", "default", "large"]);
+export type FontScale = z.infer<typeof FontScaleSchema>;
+
+export const AppearanceConfigSchema = z.object({
+  themePreset: ThemePresetSchema.default("default"),
+  accentColor: z.string().nullable().default(null),
+  vibrancy: z.boolean().default(false),
+  fontScale: FontScaleSchema.default("default"),
+});
+export type AppearanceConfig = z.infer<typeof AppearanceConfigSchema>;
+
 // Config schema
 export const ConfigSchema = z.object({
   maxEmails: z.number().default(50),
@@ -405,6 +420,7 @@ export const ConfigSchema = z.object({
       gatewayToken: z.string().default(""),
     })
     .optional(),
+  appearance: AppearanceConfigSchema.optional(),
   configVersion: z.number().optional(),
 });
 
