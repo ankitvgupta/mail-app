@@ -77,7 +77,13 @@ html.has-gradient::before {
   background-color: rgb(var(--bg-base)) !important;
 }
 
-/* When a gradient or vibrancy is active, make the base transparent so it shows through */
+/* When a gradient or vibrancy is active, make the ENTIRE base chain transparent.
+   This includes html, body, and any element using bg-gray-100 / bg-gray-900,
+   so the OS blur or gradient pseudo-element is visible. */
+html.has-gradient,
+html.has-vibrancy {
+  background-color: transparent !important;
+}
 html.has-gradient .bg-gray-100,
 html.has-vibrancy .bg-gray-100 {
   background-color: transparent !important;

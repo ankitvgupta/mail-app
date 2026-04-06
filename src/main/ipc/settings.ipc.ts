@@ -690,11 +690,10 @@ export function registerSettingsIpc(): void {
         getStore().set("config", { ...currentConfig, appearance });
 
         // Apply vibrancy to the main window
-        const { applyVibrancy } = await import("../window");
-        const { getMainWindow } = await import("../window");
-        const win = getMainWindow();
+        const windowModule = await import("../window");
+        const win = windowModule.getMainWindow();
         if (win) {
-          applyVibrancy(win, appearance.vibrancy);
+          windowModule.applyVibrancy(win, appearance.vibrancy);
         }
 
         // Broadcast to all renderer windows
