@@ -625,48 +625,46 @@ export default function App() {
   const resolvedTheme = useAppStore((s) => s.resolvedTheme);
   const syncProgress = useAppStore((s) => s.syncProgress);
 
-  // Actions — stable function references, safe in one destructuring
-  const {
-    setEmails,
-    addEmails,
-    setLoading,
-    setError,
-    setShowSettings,
-    setAccounts,
-    setCurrentAccountId,
-    setSyncStatus,
-    setSyncProgress,
-    getSyncStatus,
-    setPrefetchProgress,
-    setBackgroundSyncProgress,
-    openCompose,
-    openSearch,
-    closeSearch,
-    closeCommandPalette,
-    setAgentPaletteOpen,
-    setViewMode,
-    clearActiveSearch: _clearActiveSearch,
-    setSelectedEmailId: _setSelectedEmailId,
-    addExpiredAccount,
-    removeExpiredAccount,
-    addExtensionAuthRequired,
-    removeExtensionAuthRequired,
-    addAgentAuthRequired,
-    removeAgentAuthRequired,
-    setOnline,
-    setOutboxStats,
-    restorePendingRemoval,
-    clearPendingRemoval,
-    setScheduledMessageStats,
-    setThemePreference,
-    setResolvedTheme,
-    setInboxDensity,
-    setKeyboardBindings,
-    setUndoSendDelay,
-    setSentEmails,
-    addSentEmails,
-    setSplits,
-  } = useAppStore();
+  // Actions — individual selectors so useAppStore() without selector doesn't subscribe to all state
+  const setEmails = useAppStore((s) => s.setEmails);
+  const addEmails = useAppStore((s) => s.addEmails);
+  const setLoading = useAppStore((s) => s.setLoading);
+  const setError = useAppStore((s) => s.setError);
+  const setShowSettings = useAppStore((s) => s.setShowSettings);
+  const setAccounts = useAppStore((s) => s.setAccounts);
+  const setCurrentAccountId = useAppStore((s) => s.setCurrentAccountId);
+  const setSyncStatus = useAppStore((s) => s.setSyncStatus);
+  const setSyncProgress = useAppStore((s) => s.setSyncProgress);
+  const getSyncStatus = useAppStore((s) => s.getSyncStatus);
+  const setPrefetchProgress = useAppStore((s) => s.setPrefetchProgress);
+  const setBackgroundSyncProgress = useAppStore((s) => s.setBackgroundSyncProgress);
+  const openCompose = useAppStore((s) => s.openCompose);
+  const openSearch = useAppStore((s) => s.openSearch);
+  const closeSearch = useAppStore((s) => s.closeSearch);
+  const closeCommandPalette = useAppStore((s) => s.closeCommandPalette);
+  const setAgentPaletteOpen = useAppStore((s) => s.setAgentPaletteOpen);
+  const setViewMode = useAppStore((s) => s.setViewMode);
+  const _clearActiveSearch = useAppStore((s) => s.clearActiveSearch);
+  const _setSelectedEmailId = useAppStore((s) => s.setSelectedEmailId);
+  const addExpiredAccount = useAppStore((s) => s.addExpiredAccount);
+  const removeExpiredAccount = useAppStore((s) => s.removeExpiredAccount);
+  const addExtensionAuthRequired = useAppStore((s) => s.addExtensionAuthRequired);
+  const removeExtensionAuthRequired = useAppStore((s) => s.removeExtensionAuthRequired);
+  const addAgentAuthRequired = useAppStore((s) => s.addAgentAuthRequired);
+  const removeAgentAuthRequired = useAppStore((s) => s.removeAgentAuthRequired);
+  const setOnline = useAppStore((s) => s.setOnline);
+  const setOutboxStats = useAppStore((s) => s.setOutboxStats);
+  const restorePendingRemoval = useAppStore((s) => s.restorePendingRemoval);
+  const clearPendingRemoval = useAppStore((s) => s.clearPendingRemoval);
+  const setScheduledMessageStats = useAppStore((s) => s.setScheduledMessageStats);
+  const setThemePreference = useAppStore((s) => s.setThemePreference);
+  const setResolvedTheme = useAppStore((s) => s.setResolvedTheme);
+  const setInboxDensity = useAppStore((s) => s.setInboxDensity);
+  const setKeyboardBindings = useAppStore((s) => s.setKeyboardBindings);
+  const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
+  const setSentEmails = useAppStore((s) => s.setSentEmails);
+  const addSentEmails = useAppStore((s) => s.addSentEmails);
+  const setSplits = useAppStore((s) => s.setSplits);
 
   // Initialize keyboard shortcuts
   useKeyboardShortcuts({

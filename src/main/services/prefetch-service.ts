@@ -545,9 +545,7 @@ When you see emails in a thread where ${eaName} is coordinating scheduling with 
     // "agent-draft" entry here is never used at runtime — it exists only to
     // satisfy the Record<PrefetchTask["type"], number> type requirement.
     const CONCURRENCY: Record<PrefetchTask["type"], number> = {
-      // Reduced from 10 — concurrent API calls resolve near-simultaneously,
-      // causing synchronous DB write bursts that block the main thread
-      analysis: 5,
+      analysis: 10,
       "archive-ready": 5,
       // Sender-profile tasks make Claude API calls then do synchronous DB
       // reads/writes on resolution. With 10 concurrent tasks resolving near-

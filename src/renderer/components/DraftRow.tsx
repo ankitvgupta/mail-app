@@ -40,7 +40,15 @@ function formatRelativeDate(timestamp: number): string {
 
 // Lightweight regex strip — avoids DOMParser overhead in the hot render path
 function stripHtmlTags(html: string): string {
-  return html.replace(/<[^>]*>/g, "").trim();
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .trim();
 }
 
 export const DraftRow = React.memo(
@@ -132,7 +140,7 @@ export const DraftRow = React.memo(
     );
   },
   (prev, next) =>
-    // Skip re-render if visible props are unchanged (onClick is stable from parent)
+    // onClick excluded — its behavior only changes when draft content changes, tracked via updatedAt
     prev.draft.id === next.draft.id &&
     prev.draft.updatedAt === next.draft.updatedAt &&
     prev.isSelected === next.isSelected &&
