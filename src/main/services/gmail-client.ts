@@ -345,12 +345,38 @@ export class GmailClient {
           cleanup();
           resolve(code);
         } else {
-          res.writeHead(400, { "Content-Type": "text/plain", Connection: "close" });
-          res.end("Missing authorization code");
+          // Google returns ?error=access_denied when user isn't a test user or denies consent
+          const googleError = url.searchParams.get("error");
+          const message =
+            googleError === "access_denied"
+              ? "Access denied by Google. Make sure your email is added as a test user in Google Cloud Console → Audience → Test users."
+              : googleError
+                ? `Google authorization error: ${googleError}`
+                : "Missing authorization code";
+
+          // HTML-escape to prevent reflected XSS via the ?error= parameter
+          const safeMessage = message
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
+          res.end(`
+            <html>
+              <body style="font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+                <div style="text-align: center;">
+                  <h1>✗ Authorization Failed</h1>
+                  <p>${safeMessage}</p>
+                  <p style="margin-top: 1em; color: #666;">You can close this tab and try again in the app.</p>
+                </div>
+              </body>
+            </html>
+          `);
           server.closeAllConnections();
           server.close();
           cleanup();
-          reject(new Error("Missing authorization code"));
+          reject(new Error(message));
         }
       });
 
@@ -360,6 +386,18 @@ export class GmailClient {
         cleanup();
         reject(reason);
       };
+
+      // Reject on port binding failure instead of hanging forever
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        cleanup();
+        if (err.code === "EADDRINUSE") {
+          reject(
+            new Error("OAuth callback port 3847 is already in use. Try cancelling and retrying."),
+          );
+        } else {
+          reject(new Error(`OAuth server error: ${err.message}`));
+        }
+      });
 
       server.listen(3847, () => {
         log.info("Waiting for authorization...");

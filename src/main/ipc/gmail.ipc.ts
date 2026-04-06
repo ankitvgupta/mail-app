@@ -14,6 +14,10 @@ const useFakeData = isTestMode || isDemoMode;
 
 const gmailClients = new Map<string, GmailClient>();
 
+// Track the client during OAuth — getClient() only adds to gmailClients after
+// connect() resolves, but we need to abort the pending flow before that.
+let pendingOAuthClient: GmailClient | null = null;
+
 function resolveTargetAccountId(accountId?: string): string {
   const trimmedAccountId = accountId?.trim();
   const accounts = getAccounts();
@@ -109,6 +113,20 @@ export function registerGmailIpc(): void {
     },
   );
 
+  // Cancel an in-progress OAuth flow
+  ipcMain.handle("gmail:abort-oauth", async (): Promise<IpcResponse<void>> => {
+    // Check the pending client first — during OAuth, the client isn't in the map yet
+    if (pendingOAuthClient) {
+      pendingOAuthClient.abortOAuth();
+      pendingOAuthClient = null;
+    }
+    const existingClient = gmailClients.get("default");
+    if (existingClient) {
+      existingClient.abortOAuth();
+    }
+    return { success: true, data: undefined };
+  });
+
   // Start OAuth flow
   ipcMain.handle("gmail:start-oauth", async (): Promise<IpcResponse<void>> => {
     if (useFakeData) {
@@ -116,9 +134,27 @@ export function registerGmailIpc(): void {
     }
 
     try {
-      // Reset clients to force re-auth
+      // Abort any in-progress OAuth flow before starting a new one
+      if (pendingOAuthClient) {
+        pendingOAuthClient.abortOAuth();
+        pendingOAuthClient = null;
+      }
+      const existingClient = gmailClients.get("default");
+      if (existingClient) {
+        existingClient.abortOAuth();
+      }
+
+      // Reset clients and start fresh OAuth — store in pendingOAuthClient
+      // so abort-oauth can cancel the flow before connect() resolves
       gmailClients.clear();
-      const client = await getClient("default");
+      const client = new GmailClient("default");
+      pendingOAuthClient = client;
+      try {
+        await client.connect();
+      } finally {
+        pendingOAuthClient = null;
+      }
+      gmailClients.set("default", client);
 
       // Get the user's profile to save the account
       const profile = await client.getProfile();

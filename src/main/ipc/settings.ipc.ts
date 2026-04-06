@@ -1,6 +1,7 @@
 import { ipcMain, nativeTheme, BrowserWindow, shell, dialog } from "electron";
 import Store from "electron-store";
 import {
+  type AppearanceConfig,
   type Config,
   type EAConfig,
   type IpcResponse,
@@ -648,6 +649,45 @@ export function registerSettingsIpc(): void {
         }
 
         return { success: true, data: { resolved } };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+      }
+    },
+  );
+
+  // Get appearance config
+  ipcMain.handle("appearance:get", async (): Promise<IpcResponse<AppearanceConfig>> => {
+    try {
+      const config = getConfig();
+      return {
+        success: true,
+        data: config.appearance ?? { themePreset: "default", accentColor: null },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  });
+
+  // Set appearance config — saves to store, broadcasts to renderer
+  ipcMain.handle(
+    "appearance:set",
+    async (_, appearance: AppearanceConfig): Promise<IpcResponse<void>> => {
+      try {
+        const currentConfig = getConfig();
+        getStore().set("config", { ...currentConfig, appearance });
+
+        // Broadcast to all renderer windows
+        for (const w of BrowserWindow.getAllWindows()) {
+          w.webContents.send("appearance:changed", appearance);
+        }
+
+        return { success: true, data: undefined };
       } catch (error) {
         return {
           success: false,
