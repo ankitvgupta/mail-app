@@ -46,10 +46,18 @@ function applyThemeVariables(appearance: AppearanceConfig, isDark: boolean): voi
   }
 
   // Transparency — slider value (0 = opaque, 100 = fully transparent)
-  // Vibrancy toggle enables the OS blur; transparency controls the alpha independently
+  // When vibrancy is on, use at least 20% transparency so desktop blur shows through
   const transparencyPct = appearance.transparency ?? 0;
-  const alpha = transparencyPct > 0 ? Math.max(0.1, 1 - transparencyPct / 100) : 1;
+  const effectivePct = appearance.vibrancy ? Math.max(transparencyPct, 20) : transparencyPct;
+  const alpha = effectivePct > 0 ? Math.max(0.1, 1 - effectivePct / 100) : 1;
   root.style.setProperty("--bg-alpha", String(alpha));
+
+  // Vibrancy — make base layer transparent so OS blur shows through
+  if (appearance.vibrancy) {
+    root.classList.add("has-vibrancy");
+  } else {
+    root.classList.remove("has-vibrancy");
+  }
 
   // Background gradient — rendered behind the semi-transparent surfaces
   if (appearance.backgroundGradient) {

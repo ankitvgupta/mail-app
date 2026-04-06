@@ -77,12 +77,15 @@ html.has-gradient::before {
   background-color: rgb(var(--bg-base)) !important;
 }
 
-/* When a gradient is active, make the base layer transparent so it shows through */
-html.has-gradient .bg-gray-100 {
+/* When a gradient or vibrancy is active, make the base transparent so it shows through */
+html.has-gradient .bg-gray-100,
+html.has-vibrancy .bg-gray-100 {
   background-color: transparent !important;
 }
 html.has-gradient .dark .bg-gray-900,
-html.has-gradient.dark .bg-gray-900 {
+html.has-gradient.dark .bg-gray-900,
+html.has-vibrancy .dark .bg-gray-900,
+html.has-vibrancy.dark .bg-gray-900 {
   background-color: transparent !important;
 }
 
