@@ -1542,7 +1542,9 @@ export class GmailClient {
           (a) => a.email.toLowerCase() === accountEmail.toLowerCase() && a.displayName,
         );
         if (matching?.displayName) {
-          log.info(`[GmailClient] Display name from send-as alias match: "${matching.displayName}"`);
+          log.info(
+            `[GmailClient] Display name from send-as alias match: "${matching.displayName}"`,
+          );
           return matching.displayName;
         }
       }

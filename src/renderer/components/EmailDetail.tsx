@@ -2045,11 +2045,7 @@ function NewEmailCompose({
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4">
           {/* From selector (only shown when account has multiple send-as aliases) */}
-          <FromSelector
-            aliases={form.sendAsAliases}
-            selected={form.from}
-            onChange={form.setFrom}
-          />
+          <FromSelector aliases={form.sendAsAliases} selected={form.from} onChange={form.setFrom} />
 
           {/* To field with Cc/Bcc toggle */}
           <div className="flex items-center">
