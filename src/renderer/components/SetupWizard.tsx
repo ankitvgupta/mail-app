@@ -177,7 +177,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     oauthCancelledRef.current = true;
     await window.api.gmail.abortOAuth();
     setIsLoading(false);
-    setError("Authorization cancelled. Make sure your email is added as a test user, then try again.");
+    setError(
+      "Authorization cancelled. Make sure your email is added as a test user, then try again.",
+    );
   };
 
   const enterExtensionsStep = useCallback(async () => {
@@ -318,8 +320,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   </li>
                 </ol>
                 <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
-                  While your Google Cloud project is in &quot;Testing&quot; mode, only emails
-                  listed as test users can authorize. Google will block all other accounts.
+                  While your Google Cloud project is in &quot;Testing&quot; mode, only emails listed
+                  as test users can authorize. Google will block all other accounts.
                 </p>
               </div>
 

@@ -347,11 +347,12 @@ export class GmailClient {
         } else {
           // Google returns ?error=access_denied when user isn't a test user or denies consent
           const googleError = url.searchParams.get("error");
-          const message = googleError === "access_denied"
-            ? "Access denied by Google. Make sure your email is added as a test user in Google Cloud Console → Audience → Test users."
-            : googleError
-              ? `Google authorization error: ${googleError}`
-              : "Missing authorization code";
+          const message =
+            googleError === "access_denied"
+              ? "Access denied by Google. Make sure your email is added as a test user in Google Cloud Console → Audience → Test users."
+              : googleError
+                ? `Google authorization error: ${googleError}`
+                : "Missing authorization code";
 
           // HTML-escape to prevent reflected XSS via the ?error= parameter
           const safeMessage = message
@@ -390,7 +391,9 @@ export class GmailClient {
       server.on("error", (err: NodeJS.ErrnoException) => {
         cleanup();
         if (err.code === "EADDRINUSE") {
-          reject(new Error("OAuth callback port 3847 is already in use. Try cancelling and retrying."));
+          reject(
+            new Error("OAuth callback port 3847 is already in use. Try cancelling and retrying."),
+          );
         } else {
           reject(new Error(`OAuth server error: ${err.message}`));
         }
