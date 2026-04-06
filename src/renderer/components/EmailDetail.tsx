@@ -32,6 +32,7 @@ import { useComposeForm } from "../hooks/useComposeForm";
 import { THREAD_NAV_EVENT } from "../hooks/useKeyboardShortcuts";
 import type { ComposeFormState } from "../hooks/useComposeForm";
 import { ComposeToolbar } from "./ComposeToolbar";
+import { FromSelector } from "./FromSelector";
 import { trackEvent } from "../services/posthog";
 import { draftBodyToHtml } from "../../shared/draft-utils";
 import { AnalysisPrioritySection } from "./AnalysisPrioritySection";
@@ -1593,6 +1594,11 @@ function InlineReply({
         </div>
         {showAddressFields && (
           <>
+            <FromSelector
+              aliases={form.sendAsAliases}
+              selected={form.from}
+              onChange={form.setFrom}
+            />
             <AddressInput
               label="To"
               value={form.to}
@@ -2038,6 +2044,13 @@ function NewEmailCompose({
       {/* Compose form */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4">
+          {/* From selector (only shown when account has multiple send-as aliases) */}
+          <FromSelector
+            aliases={form.sendAsAliases}
+            selected={form.from}
+            onChange={form.setFrom}
+          />
+
           {/* To field with Cc/Bcc toggle */}
           <div className="flex items-center">
             <div className="flex-1 min-w-0">

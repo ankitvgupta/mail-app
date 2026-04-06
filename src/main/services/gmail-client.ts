@@ -16,6 +16,7 @@ import type {
   SendMessageOptions,
   ComposeMessageOptions,
   AttachmentMeta,
+  SendAsAlias,
 } from "../../shared/types";
 import { getAccounts } from "../db";
 import { getDataDir } from "../data-dir";
@@ -1502,32 +1503,47 @@ export class GmailClient {
    * Falls back to the Google People API (own profile) if send-as has no name,
    * which is common for Google Workspace accounts.
    */
+  /**
+   * Fetch all verified send-as aliases from Gmail settings.
+   * Only returns aliases with accepted verification status (or primary).
+   */
+  async fetchSendAsAliases(): Promise<SendAsAlias[]> {
+    const gmail = this.gmail!;
+    const response = await gmail.users.settings.sendAs.list({ userId: "me" });
+    const rawAliases = response.data.sendAs || [];
+
+    // Only include verified aliases (primary is always verified)
+    return rawAliases
+      .filter((s) => s.isPrimary || s.verificationStatus === "accepted")
+      .map((s) => ({
+        email: s.sendAsEmail!,
+        displayName: s.displayName?.trim() || undefined,
+        isDefault: Boolean(s.isDefault),
+        replyToAddress: s.replyToAddress || undefined,
+      }));
+  }
+
   async fetchDisplayName(): Promise<string | null> {
     try {
-      const gmail = this.gmail!;
+      // Reuse fetchSendAsAliases to avoid duplicate API call
+      const aliases = await this.fetchSendAsAliases();
 
-      // Try send-as settings first (the name shown on outgoing mail)
-      const sendAsResponse = await gmail.users.settings.sendAs.list({ userId: "me" });
-      const primarySendAs = sendAsResponse.data.sendAs?.find((s) => s.isPrimary);
-      const sendAsName = primarySendAs?.displayName?.trim() || null;
-      if (sendAsName) {
-        log.info(`[GmailClient] Display name from send-as: "${sendAsName}"`);
-        return sendAsName;
+      // Prefer the default alias's display name
+      const defaultAlias = aliases.find((a) => a.isDefault);
+      if (defaultAlias?.displayName) {
+        log.info(`[GmailClient] Display name from send-as: "${defaultAlias.displayName}"`);
+        return defaultAlias.displayName;
       }
 
-      // Fallback: check all send-as aliases for one matching this account's email.
-      // Use getProfile() instead of getAccountInfo() since the account may not
-      // be in the DB yet during OAuth registration.
+      // Fallback: find alias matching this account's email
       const accountEmail = this.getAccountInfo()?.email || (await this.getProfile()).emailAddress;
       if (accountEmail) {
-        const matchingAlias = sendAsResponse.data.sendAs?.find(
-          (s) =>
-            s.sendAsEmail?.toLowerCase() === accountEmail.toLowerCase() && s.displayName?.trim(),
+        const matching = aliases.find(
+          (a) => a.email.toLowerCase() === accountEmail.toLowerCase() && a.displayName,
         );
-        if (matchingAlias?.displayName) {
-          const name = matchingAlias.displayName.trim();
-          log.info(`[GmailClient] Display name from send-as alias match: "${name}"`);
-          return name;
+        if (matching?.displayName) {
+          log.info(`[GmailClient] Display name from send-as alias match: "${matching.displayName}"`);
+          return matching.displayName;
         }
       }
 

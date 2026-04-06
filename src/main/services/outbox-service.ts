@@ -22,6 +22,7 @@ export type OutboxMessage = {
   accountId: string;
   type: "send" | "reply";
   threadId?: string;
+  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -81,6 +82,7 @@ class OutboxService extends EventEmitter {
       accountId: message.accountId,
       type: message.type,
       threadId: message.threadId,
+      from: message.from,
       to: message.to,
       cc: message.cc,
       bcc: message.bcc,
@@ -346,6 +348,7 @@ class OutboxService extends EventEmitter {
 
     try {
       const result = await client.sendMessage({
+        from: item.from,
         to: item.to,
         cc: item.cc,
         bcc: item.bcc,

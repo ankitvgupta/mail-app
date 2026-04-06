@@ -8,6 +8,19 @@ CREATE TABLE IF NOT EXISTS accounts (
   added_at INTEGER NOT NULL
 );
 
+-- Gmail send-as aliases per account (cached from Gmail settings API)
+CREATE TABLE IF NOT EXISTS send_as_aliases (
+  email TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  display_name TEXT,
+  is_default INTEGER DEFAULT 0,
+  reply_to_address TEXT,
+  verification_status TEXT,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (email, account_id),
+  FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
 -- Sync state for each account (for incremental sync)
 CREATE TABLE IF NOT EXISTS sync_state (
   account_id TEXT PRIMARY KEY,
@@ -355,6 +368,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_account ON memories(account_id);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, scope_value);
 CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id);
 CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to);
+CREATE INDEX IF NOT EXISTS idx_send_as_account ON send_as_aliases(account_id);
 `;
 
 // FTS5 full-text search schema (separate because SQLite can't IF NOT EXISTS for virtual tables)
