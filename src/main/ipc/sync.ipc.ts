@@ -880,13 +880,16 @@ export function registerSyncIpc(): void {
         // Delay 3 seconds to let the UI fully load first
         // Skip if any account is doing a first-time sync — fullSync with
         // runTriage will handle queueing only the recent emails after triage.
-        setTimeout(() => {
+        setTimeout(async () => {
+          // Calendar sync is time-sensitive — run independently of prefetch
+          calendarSyncService.syncNow();
+
           if (emailSyncService.hasFirstSyncPending()) {
             log.info("[Prefetch] Skipping processAllPending — first-time sync in progress");
             prefetchService.closeStartupCache();
           } else {
             log.info("[PERF] prefetch starting (3s after sync:init)");
-            prefetchService.processAllPending().catch((error) => {
+            await prefetchService.processAllPending().catch((error) => {
               log.error({ err: error }, "[Sync] Error starting prefetch");
             });
           }
@@ -894,10 +897,6 @@ export function registerSyncIpc(): void {
 
         // Process any queued outbox messages from previous session
         outboxService.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
-
-        // Trigger calendar sync now that accounts are connected
-        // (the initial sync at startup may have found 0 accounts)
-        calendarSyncService.syncNow();
       }
 
       log.info(`[PERF] sync:init END total ${(performance.now() - t0).toFixed(1)}ms`);

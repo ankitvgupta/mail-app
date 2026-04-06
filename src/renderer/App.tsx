@@ -602,68 +602,69 @@ export default function App() {
   const scheduledPanelRef = useRef<HTMLDivElement>(null);
   const extensionsRegistered = useRef(false);
 
-  const {
-    setEmails,
-    addEmails,
-    setLoading,
-    setError,
-    showSettings,
-    settingsInitialTab,
-    setShowSettings,
-    accounts,
-    setAccounts,
-    currentAccountId,
-    setCurrentAccountId,
-    setSyncStatus,
-    setSyncProgress,
-    getSyncStatus,
-    setPrefetchProgress,
-    setBackgroundSyncProgress,
-    composeState,
-    openCompose,
-    isSearchOpen,
-    openSearch,
-    closeSearch,
-    isCommandPaletteOpen,
-    closeCommandPalette,
-    isFindBarOpen,
-    isAgentPaletteOpen,
-    setAgentPaletteOpen,
-    isAgentsSidebarOpen,
-    viewMode,
-    setViewMode,
-    activeSearchQuery,
-    activeSearchResults: _activeSearchResults,
-    clearActiveSearch: _clearActiveSearch,
-    setSelectedEmailId: _setSelectedEmailId,
-    expiredAccountIds,
-    extensionAuthRequired,
-    agentAuthRequired,
-    addExpiredAccount,
-    removeExpiredAccount,
-    addExtensionAuthRequired,
-    removeExtensionAuthRequired,
-    addAgentAuthRequired,
-    removeAgentAuthRequired,
-    isOnline,
-    outboxStats,
-    scheduledMessageStats,
-    setOnline,
-    setOutboxStats,
-    restorePendingRemoval,
-    clearPendingRemoval,
-    setScheduledMessageStats,
-    resolvedTheme,
-    setThemePreference,
-    setResolvedTheme,
-    setInboxDensity,
-    setKeyboardBindings,
-    setUndoSendDelay,
-    setSentEmails,
-    addSentEmails,
-    setSplits,
-    syncProgress,
-  } = useAppStore();
+  // State values — individual selectors to avoid re-rendering the entire App on unrelated changes
+  const showSettings = useAppStore((s) => s.showSettings);
+  const settingsInitialTab = useAppStore((s) => s.settingsInitialTab);
+  const accounts = useAppStore((s) => s.accounts);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const composeState = useAppStore((s) => s.composeState);
+  const isSearchOpen = useAppStore((s) => s.isSearchOpen);
+  const isCommandPaletteOpen = useAppStore((s) => s.isCommandPaletteOpen);
+  const isFindBarOpen = useAppStore((s) => s.isFindBarOpen);
+  const isAgentPaletteOpen = useAppStore((s) => s.isAgentPaletteOpen);
+  const isAgentsSidebarOpen = useAppStore((s) => s.isAgentsSidebarOpen);
+  const viewMode = useAppStore((s) => s.viewMode);
+  const activeSearchQuery = useAppStore((s) => s.activeSearchQuery);
+  const _activeSearchResults = useAppStore((s) => s.activeSearchResults);
+  const expiredAccountIds = useAppStore((s) => s.expiredAccountIds);
+  const extensionAuthRequired = useAppStore((s) => s.extensionAuthRequired);
+  const agentAuthRequired = useAppStore((s) => s.agentAuthRequired);
+  const isOnline = useAppStore((s) => s.isOnline);
+  const outboxStats = useAppStore((s) => s.outboxStats);
+  const scheduledMessageStats = useAppStore((s) => s.scheduledMessageStats);
+  const resolvedTheme = useAppStore((s) => s.resolvedTheme);
+  const syncProgress = useAppStore((s) => s.syncProgress);
+
+  // Actions — individual selectors so useAppStore() without selector doesn't subscribe to all state
+  const setEmails = useAppStore((s) => s.setEmails);
+  const addEmails = useAppStore((s) => s.addEmails);
+  const setLoading = useAppStore((s) => s.setLoading);
+  const setError = useAppStore((s) => s.setError);
+  const setShowSettings = useAppStore((s) => s.setShowSettings);
+  const setAccounts = useAppStore((s) => s.setAccounts);
+  const setCurrentAccountId = useAppStore((s) => s.setCurrentAccountId);
+  const setSyncStatus = useAppStore((s) => s.setSyncStatus);
+  const setSyncProgress = useAppStore((s) => s.setSyncProgress);
+  const getSyncStatus = useAppStore((s) => s.getSyncStatus);
+  const setPrefetchProgress = useAppStore((s) => s.setPrefetchProgress);
+  const setBackgroundSyncProgress = useAppStore((s) => s.setBackgroundSyncProgress);
+  const openCompose = useAppStore((s) => s.openCompose);
+  const openSearch = useAppStore((s) => s.openSearch);
+  const closeSearch = useAppStore((s) => s.closeSearch);
+  const closeCommandPalette = useAppStore((s) => s.closeCommandPalette);
+  const setAgentPaletteOpen = useAppStore((s) => s.setAgentPaletteOpen);
+  const setViewMode = useAppStore((s) => s.setViewMode);
+  const _clearActiveSearch = useAppStore((s) => s.clearActiveSearch);
+  const _setSelectedEmailId = useAppStore((s) => s.setSelectedEmailId);
+  const addExpiredAccount = useAppStore((s) => s.addExpiredAccount);
+  const removeExpiredAccount = useAppStore((s) => s.removeExpiredAccount);
+  const addExtensionAuthRequired = useAppStore((s) => s.addExtensionAuthRequired);
+  const removeExtensionAuthRequired = useAppStore((s) => s.removeExtensionAuthRequired);
+  const addAgentAuthRequired = useAppStore((s) => s.addAgentAuthRequired);
+  const removeAgentAuthRequired = useAppStore((s) => s.removeAgentAuthRequired);
+  const setOnline = useAppStore((s) => s.setOnline);
+  const setOutboxStats = useAppStore((s) => s.setOutboxStats);
+  const restorePendingRemoval = useAppStore((s) => s.restorePendingRemoval);
+  const clearPendingRemoval = useAppStore((s) => s.clearPendingRemoval);
+  const setScheduledMessageStats = useAppStore((s) => s.setScheduledMessageStats);
+  const setThemePreference = useAppStore((s) => s.setThemePreference);
+  const setResolvedTheme = useAppStore((s) => s.setResolvedTheme);
+  const setInboxDensity = useAppStore((s) => s.setInboxDensity);
+  const setKeyboardBindings = useAppStore((s) => s.setKeyboardBindings);
+  const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
+  const setSentEmails = useAppStore((s) => s.setSentEmails);
+  const addSentEmails = useAppStore((s) => s.addSentEmails);
+  const setSplits = useAppStore((s) => s.setSplits);
 
   // Initialize keyboard shortcuts
   useKeyboardShortcuts({
@@ -818,13 +819,15 @@ export default function App() {
         }
 
         // Load cached emails for all accounts (including expired ones)
+        // Fetch all accounts in parallel instead of sequentially
         const allEmails: DashboardEmail[] = [];
         const allSentEmails: DashboardEmail[] = [];
-        for (const acc of accountList) {
-          const [emailsResult, sentResult] = await Promise.all([
-            window.api.sync.getEmails(acc.id),
-            window.api.sync.getSentEmails(acc.id),
-          ]);
+        const accountResults = await Promise.all(
+          accountList.map((acc) =>
+            Promise.all([window.api.sync.getEmails(acc.id), window.api.sync.getSentEmails(acc.id)]),
+          ),
+        );
+        for (const [emailsResult, sentResult] of accountResults) {
           if (emailsResult.success && emailsResult.data) {
             allEmails.push(...emailsResult.data);
           }
