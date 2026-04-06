@@ -1016,7 +1016,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                       </h3>
                       <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                         Transparent window with blur effect
-                        {process.platform !== "darwin" && process.platform !== "win32"
+                        {!navigator.platform.startsWith("Mac") &&
+                        !navigator.platform.startsWith("Win")
                           ? " (macOS / Windows 11)"
                           : ""}
                       </p>
