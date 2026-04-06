@@ -17,8 +17,10 @@ import {
   type McpServerConfig,
   type ModelConfig,
   type ModelTier,
+  type AppearanceConfig,
   type CliToolConfig,
 } from "../../shared/types";
+import { THEME_PRESET_LIST, ACCENT_SWATCHES } from "../../shared/theme-presets";
 import { useAppStore, type Account, type SettingsTab } from "../store";
 import { reconfigurePostHog, trackEvent } from "../services/posthog";
 import { SplitConfigEditor } from "./SplitConfigEditor";
@@ -51,6 +53,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     setUndoSendDelay,
     currentAccountId,
     highlightMemoryIds,
+    appearance,
+    setAppearance,
   } = useAppStore();
   const [isAddingAccount, setIsAddingAccount] = useState(false);
   const [addAccountPhase, setAddAccountPhase] = useState("Connecting...");
@@ -351,6 +355,18 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setThemePreference(theme);
       setResolvedTheme(result.data.resolved);
     }
+  };
+
+  // Update appearance — applies locally + persists via IPC
+  const updateAppearance = async (patch: Partial<AppearanceConfig>) => {
+    const updated = { ...appearance, ...patch };
+    setAppearance(updated);
+    await window.api.appearance.set(updated);
+  };
+
+  // Live preview only (no IPC) — used during color picker drag
+  const previewAppearance = (patch: Partial<AppearanceConfig>) => {
+    setAppearance({ ...appearance, ...patch });
   };
 
   const handleDensityChange = async (density: InboxDensity) => {
@@ -852,48 +868,153 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 Configure how Exo generates draft replies.
               </p>
 
-              {/* Appearance / Theme Toggle */}
-              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
-                <div className="mb-3">
-                  <h3 className="font-semibold text-gray-900 dark:text-gray-100">Appearance</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Choose your preferred color theme.
-                  </p>
+              {/* Appearance */}
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6 space-y-5">
+                {/* Light / Dark / System toggle */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">Mode</h3>
+                  <div className="flex space-x-2">
+                    {(["light", "dark", "system"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => handleThemeChange(mode)}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors capitalize ${
+                          themePreference === mode
+                            ? "bg-blue-600 dark:bg-blue-500 text-white"
+                            : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleThemeChange("light")}
-                    data-active={themePreference === "light" ? "true" : undefined}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      themePreference === "light"
-                        ? "bg-blue-600 dark:bg-blue-500 text-white"
-                        : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-                    }`}
-                  >
-                    Light
-                  </button>
-                  <button
-                    onClick={() => handleThemeChange("dark")}
-                    data-active={themePreference === "dark" ? "true" : undefined}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      themePreference === "dark"
-                        ? "bg-blue-600 dark:bg-blue-500 text-white"
-                        : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-                    }`}
-                  >
-                    Dark
-                  </button>
-                  <button
-                    onClick={() => handleThemeChange("system")}
-                    data-active={themePreference === "system" ? "true" : undefined}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      themePreference === "system"
-                        ? "bg-blue-600 dark:bg-blue-500 text-white"
-                        : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-                    }`}
-                  >
-                    System
-                  </button>
+
+                {/* Theme presets */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">Theme</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    Color palettes for surfaces and accents.
+                  </p>
+                  <div className="flex space-x-3">
+                    {THEME_PRESET_LIST.map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => updateAppearance({ themePreset: preset.id })}
+                        title={preset.name}
+                        className={`flex flex-col items-center gap-1.5 group`}
+                      >
+                        {/* Two-tone swatch: surface + accent */}
+                        <div
+                          className={`w-10 h-10 rounded-full overflow-hidden border-2 transition-all ${
+                            appearance.themePreset === preset.id
+                              ? "border-blue-500 ring-2 ring-blue-500/30 scale-110"
+                              : "border-gray-300 dark:border-gray-600 group-hover:border-gray-400"
+                          }`}
+                        >
+                          <div
+                            className="w-full h-1/2"
+                            style={{ backgroundColor: preset.preview.surface }}
+                          />
+                          <div
+                            className="w-full h-1/2"
+                            style={{ backgroundColor: preset.preview.accent }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-600 dark:text-gray-400">
+                          {preset.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Accent color picker */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                    Accent Color
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    Override the theme accent with a custom color.
+                  </p>
+                  <div className="flex items-center space-x-2">
+                    {/* "Auto" = use preset default */}
+                    <button
+                      onClick={() => updateAppearance({ accentColor: null })}
+                      title="Use theme default"
+                      className={`w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center text-xs font-medium ${
+                        !appearance.accentColor
+                          ? "border-blue-500 ring-2 ring-blue-500/30"
+                          : "border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                      }`}
+                    >
+                      <span className="text-gray-500 dark:text-gray-400">A</span>
+                    </button>
+
+                    {/* Preset accent swatches */}
+                    {ACCENT_SWATCHES.map((swatch) => (
+                      <button
+                        key={swatch.hex}
+                        onClick={() => updateAppearance({ accentColor: swatch.hex })}
+                        title={swatch.name}
+                        className={`w-8 h-8 rounded-full border-2 transition-all ${
+                          appearance.accentColor === swatch.hex
+                            ? "border-blue-500 ring-2 ring-blue-500/30 scale-110"
+                            : "border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                        }`}
+                        style={{ backgroundColor: swatch.hex }}
+                      />
+                    ))}
+
+                    {/* Custom color input */}
+                    <label
+                      title="Custom color"
+                      className={`relative w-8 h-8 rounded-full border-2 transition-all cursor-pointer overflow-hidden ${
+                        appearance.accentColor &&
+                        !ACCENT_SWATCHES.some((s) => s.hex === appearance.accentColor)
+                          ? "border-blue-500 ring-2 ring-blue-500/30"
+                          : "border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                      }`}
+                      style={{
+                        backgroundColor:
+                          appearance.accentColor &&
+                          !ACCENT_SWATCHES.some((s) => s.hex === appearance.accentColor)
+                            ? appearance.accentColor
+                            : undefined,
+                      }}
+                    >
+                      <input
+                        type="color"
+                        value={appearance.accentColor ?? "#2563eb"}
+                        onInput={(e) =>
+                          previewAppearance({
+                            accentColor: (e.target as HTMLInputElement).value,
+                          })
+                        }
+                        onChange={(e) => updateAppearance({ accentColor: e.target.value })}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                      {/* Color wheel icon when no custom color is active */}
+                      {(!appearance.accentColor ||
+                        ACCENT_SWATCHES.some((s) => s.hex === appearance.accentColor)) && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <svg
+                            className="w-4 h-4 text-gray-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
+                            />
+                          </svg>
+                        </div>
+                      )}
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -1404,7 +1525,21 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
               {accountError && (
                 <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-4 py-3 rounded-lg mb-4">
-                  {accountError}
+                  <p>{accountError}</p>
+                  {accountError.includes("Access denied") && (
+                    <p className="mt-2 text-xs">
+                      Add your email as a test user in{" "}
+                      <a
+                        href="https://console.cloud.google.com/auth/audience"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline font-medium"
+                      >
+                        Google Cloud Console → Audience
+                      </a>
+                      , then try again.
+                    </p>
+                  )}
                 </div>
               )}
 

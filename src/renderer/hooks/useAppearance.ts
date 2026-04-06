@@ -1,0 +1,88 @@
+import { useEffect } from "react";
+import { useAppStore } from "../store";
+import { THEME_PRESETS } from "../../shared/theme-presets";
+import { AppearanceConfigSchema, type AppearanceConfig } from "../../shared/types";
+import type { ThemeColors } from "../../shared/theme-presets";
+
+// Convert "#2563eb" → "37 99 235", fallback to blue if invalid
+function hexToRgbTriplet(hex: string): string {
+  const h = hex.replace(/^#/, "");
+  const valid = /^[0-9a-fA-F]{6}$/.test(h);
+  const n = parseInt(valid ? h : "2563eb", 16);
+  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+
+// Lighten or darken an RGB triplet by a factor (-1 to 1)
+function adjustBrightness(triplet: string, factor: number): string {
+  const [r, g, b] = triplet.split(" ").map(Number);
+  const adjust = (c: number) =>
+    Math.min(255, Math.max(0, Math.round(factor > 0 ? c + (255 - c) * factor : c * (1 + factor))));
+  return `${adjust(r)} ${adjust(g)} ${adjust(b)}`;
+}
+
+// Apply the full set of CSS variables to <html>
+function applyThemeVariables(appearance: AppearanceConfig, isDark: boolean): void {
+  const preset = THEME_PRESETS[appearance.themePreset] ?? THEME_PRESETS.default;
+  const colors: ThemeColors = isDark ? preset.dark : preset.light;
+  const root = document.documentElement;
+
+  // Surface & text colors from preset
+  root.style.setProperty("--bg-base", colors.bgBase);
+  root.style.setProperty("--bg-surface", colors.bgSurface);
+  root.style.setProperty("--bg-elevated", colors.bgElevated);
+  root.style.setProperty("--border-default", colors.borderDefault);
+  root.style.setProperty("--text-primary", colors.textPrimary);
+  root.style.setProperty("--text-secondary", colors.textSecondary);
+
+  // Accent — custom color overrides the preset
+  if (appearance.accentColor) {
+    const rgb = hexToRgbTriplet(appearance.accentColor);
+    root.style.setProperty("--accent", rgb);
+    root.style.setProperty("--accent-hover", adjustBrightness(rgb, isDark ? 0.25 : -0.15));
+    root.style.setProperty("--accent-soft", adjustBrightness(rgb, isDark ? -0.6 : 0.7));
+  } else {
+    root.style.setProperty("--accent", colors.accent);
+    root.style.setProperty("--accent-hover", colors.accentHover);
+    root.style.setProperty("--accent-soft", colors.accentSoft);
+  }
+}
+
+/**
+ * Reads appearance config from the store, applies CSS variables to <html>,
+ * and listens for changes from the main process.
+ */
+export function useAppearance(): void {
+  const appearance = useAppStore((s) => s.appearance);
+  const setAppearance = useAppStore((s) => s.setAppearance);
+  const resolvedTheme = useAppStore((s) => s.resolvedTheme);
+
+  // Fetch persisted config on mount
+  useEffect(() => {
+    window.api.appearance
+      .get()
+      .then((result: { success: boolean; data?: unknown }) => {
+        if (result.success && result.data) {
+          const parsed = AppearanceConfigSchema.safeParse(result.data);
+          if (parsed.success) setAppearance(parsed.data);
+        }
+      })
+      .catch(() => {
+        // Appearance fetch failed — keep defaults
+      });
+
+    // Listen for changes broadcast from main process (e.g. from another window)
+    window.api.appearance.onChange((data: Record<string, unknown>) => {
+      const parsed = AppearanceConfigSchema.safeParse(data);
+      if (parsed.success) setAppearance(parsed.data);
+    });
+
+    return () => {
+      window.api.appearance.removeAllListeners();
+    };
+  }, [setAppearance]);
+
+  // Re-apply CSS variables whenever appearance config or resolved theme changes
+  useEffect(() => {
+    applyThemeVariables(appearance, resolvedTheme === "dark");
+  }, [appearance, resolvedTheme]);
+}

@@ -2,7 +2,183 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar styles */
+/* ============================================================
+   Theme variable system
+
+   CSS custom properties set by useAppearance hook at runtime.
+   Default values here match the current Tailwind gray/blue palette
+   so the app looks identical without any appearance config.
+   ============================================================ */
+
+@layer base {
+  :root {
+    /* Surface colors (space-separated RGB for use with rgb() / rgba()) */
+    --bg-base: 243 244 246;
+    --bg-surface: 255 255 255;
+    --bg-elevated: 255 255 255;
+    --border-default: 229 231 235;
+
+    /* Text */
+    --text-primary: 17 24 39;
+    --text-secondary: 75 85 99;
+
+    /* Accent (interactive elements) */
+    --accent: 37 99 235;
+    --accent-hover: 29 78 216;
+    --accent-soft: 219 234 254;
+  }
+
+  .dark {
+    --bg-base: 17 24 39;
+    --bg-surface: 31 41 55;
+    --bg-elevated: 55 65 81;
+    --border-default: 55 65 81;
+    --text-primary: 243 244 246;
+    --text-secondary: 156 163 175;
+    --accent: 59 130 246;
+    --accent-hover: 96 165 250;
+    --accent-soft: 30 58 138;
+  }
+}
+
+
+/* --- Surface color overrides ---
+   Re-skin Tailwind's hardcoded grays so theme presets work
+   without touching any component files. */
+
+/* bg-gray-100 → base in light, elevated in dark (matches dark:bg-gray-700 intent) */
+.bg-gray-100 {
+  background-color: rgb(var(--bg-base)) !important;
+}
+.dark .bg-gray-100 {
+  background-color: rgb(var(--bg-elevated)) !important;
+}
+
+/* dark:bg-gray-900 (dark base) */
+.dark .bg-gray-900 {
+  background-color: rgb(var(--bg-base)) !important;
+}
+
+/* bg-white (light surface — sidebar, cards, titlebar) */
+.bg-white {
+  background-color: rgb(var(--bg-surface)) !important;
+}
+
+/* dark:bg-gray-800 (dark surface) */
+.dark .bg-gray-800 {
+  background-color: rgb(var(--bg-surface)) !important;
+}
+
+/* dark:bg-gray-700 (dark elevated — dropdowns, inputs) */
+.dark .bg-gray-700 {
+  background-color: rgb(var(--bg-elevated)) !important;
+}
+
+/* border overrides */
+.border-gray-200 {
+  border-color: rgb(var(--border-default)) !important;
+}
+.dark .border-gray-700,
+.dark .border-gray-600 {
+  border-color: rgb(var(--border-default)) !important;
+}
+.divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(var(--border-default)) !important;
+}
+.dark .divide-gray-700 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(var(--border-default)) !important;
+}
+
+/* --- Accent color overrides ---
+   Re-skin Tailwind's hardcoded blues for interactive elements. */
+
+/* Primary accent backgrounds */
+.bg-blue-600 {
+  background-color: rgb(var(--accent)) !important;
+}
+.dark .bg-blue-500 {
+  background-color: rgb(var(--accent)) !important;
+}
+.hover\:bg-blue-700:hover {
+  background-color: rgb(var(--accent-hover)) !important;
+}
+.dark .hover\:bg-blue-600:hover,
+.dark .dark\:hover\:bg-blue-600:hover {
+  background-color: rgb(var(--accent-hover)) !important;
+}
+
+/* Soft accent backgrounds */
+.bg-blue-100 {
+  background-color: rgb(var(--accent-soft) / 0.3) !important;
+}
+.bg-blue-50 {
+  background-color: rgb(var(--accent-soft) / 0.15) !important;
+}
+.dark .bg-blue-900\/30,
+.dark .bg-blue-900\/40,
+.dark .bg-blue-900\/60,
+.dark .bg-blue-900\/20 {
+  background-color: rgb(var(--accent-soft) / 0.3) !important;
+}
+.hover\:bg-blue-100:hover {
+  background-color: rgb(var(--accent-soft) / 0.4) !important;
+}
+.dark .hover\:bg-blue-900\/40:hover,
+.dark .dark\:hover\:bg-blue-900\/40:hover {
+  background-color: rgb(var(--accent-soft) / 0.4) !important;
+}
+.dark .hover\:bg-blue-900\/50:hover,
+.dark .dark\:hover\:bg-blue-900\/50:hover {
+  background-color: rgb(var(--accent-soft) / 0.5) !important;
+}
+
+/* Accent text */
+.text-blue-600 {
+  color: rgb(var(--accent)) !important;
+}
+.dark .text-blue-400,
+.dark .dark\:text-blue-400 {
+  color: rgb(var(--accent-hover)) !important;
+}
+.text-blue-700 {
+  color: rgb(var(--accent)) !important;
+}
+.dark .text-blue-300,
+.dark .dark\:text-blue-300 {
+  color: rgb(var(--accent-hover)) !important;
+}
+.text-blue-800 {
+  color: rgb(var(--accent)) !important;
+}
+.dark .text-blue-200,
+.dark .dark\:text-blue-200 {
+  color: rgb(var(--accent-hover)) !important;
+}
+.hover\:text-blue-500:hover,
+.hover\:text-blue-800:hover {
+  color: rgb(var(--accent-hover)) !important;
+}
+
+/* Accent borders & rings */
+.border-blue-500,
+.border-blue-600 {
+  border-color: rgb(var(--accent)) !important;
+}
+.dark .border-blue-500,
+.dark .dark\:border-blue-500 {
+  border-color: rgb(var(--accent)) !important;
+}
+.ring-blue-500,
+.focus\:ring-blue-500:focus {
+  --tw-ring-color: rgb(var(--accent)) !important;
+}
+
+/* Checkbox/toggle accent */
+.peer-checked\:bg-blue-600 {
+  background-color: rgb(var(--accent)) !important;
+}
+
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -13,21 +189,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
   border-radius: 4px;
+  background: rgb(var(--text-secondary) / 0.3) !important;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-/* Dark mode scrollbar */
-.dark ::-webkit-scrollbar-thumb {
-  background: #4b5563;
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: rgb(var(--text-secondary) / 0.5) !important;
 }
 
 /* Titlebar drag region */
