@@ -67,29 +67,38 @@ html.has-gradient::before {
    Re-skin Tailwind's hardcoded grays so theme presets work
    without touching any component files. */
 
-/* bg-gray-100 (light base) */
+/* bg-gray-100 (light base) — always opaque, gradient/desktop shows behind this */
 .bg-gray-100 {
-  background-color: rgb(var(--bg-base) / var(--bg-alpha)) !important;
+  background-color: rgb(var(--bg-base)) !important;
 }
 
-/* dark:bg-gray-900 (dark base) */
+/* dark:bg-gray-900 (dark base) — always opaque */
 .dark .bg-gray-900 {
-  background-color: rgb(var(--bg-base) / var(--bg-alpha)) !important;
+  background-color: rgb(var(--bg-base)) !important;
 }
 
-/* bg-white (light surface — sidebar, cards, titlebar) */
+/* When a gradient is active, make the base layer transparent so it shows through */
+html.has-gradient .bg-gray-100 {
+  background-color: transparent !important;
+}
+html.has-gradient .dark .bg-gray-900,
+html.has-gradient.dark .bg-gray-900 {
+  background-color: transparent !important;
+}
+
+/* bg-white (light surface — sidebar, cards, titlebar) — alpha for internal transparency */
 .bg-white {
   background-color: rgb(var(--bg-surface) / var(--bg-alpha)) !important;
 }
 
-/* dark:bg-gray-800 (dark surface) */
+/* dark:bg-gray-800 (dark surface) — alpha for internal transparency */
 .dark .bg-gray-800 {
   background-color: rgb(var(--bg-surface) / var(--bg-alpha)) !important;
 }
 
 /* dark:bg-gray-700 (dark elevated — dropdowns, inputs) */
 .dark .bg-gray-700 {
-  background-color: rgb(var(--bg-elevated)) !important;
+  background-color: rgb(var(--bg-elevated) / var(--bg-alpha)) !important;
 }
 
 /* border overrides */
