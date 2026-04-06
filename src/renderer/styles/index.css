@@ -46,9 +46,12 @@
    Re-skin Tailwind's hardcoded grays so theme presets work
    without touching any component files. */
 
-/* bg-gray-100 (light base) */
+/* bg-gray-100 → base in light, elevated in dark (matches dark:bg-gray-700 intent) */
 .bg-gray-100 {
   background-color: rgb(var(--bg-base)) !important;
+}
+.dark .bg-gray-100 {
+  background-color: rgb(var(--bg-elevated)) !important;
 }
 
 /* dark:bg-gray-900 (dark base) */
@@ -175,15 +178,7 @@
   background-color: rgb(var(--accent)) !important;
 }
 
-/* Scrollbar themed colors */
-::-webkit-scrollbar-thumb {
-  background: rgb(var(--text-secondary) / 0.3) !important;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--text-secondary) / 0.5) !important;
-}
-
-/* Scrollbar base (colors handled by theme overrides above) */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -195,6 +190,11 @@
 
 ::-webkit-scrollbar-thumb {
   border-radius: 4px;
+  background: rgb(var(--text-secondary) / 0.3) !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--text-secondary) / 0.5) !important;
 }
 
 /* Titlebar drag region */

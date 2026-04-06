@@ -357,11 +357,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     }
   };
 
-  // Update a single appearance field — merges with current config, persists, and applies
+  // Update appearance — applies locally + persists via IPC
   const updateAppearance = async (patch: Partial<AppearanceConfig>) => {
     const updated = { ...appearance, ...patch };
     setAppearance(updated);
     await window.api.appearance.set(updated);
+  };
+
+  // Live preview only (no IPC) — used during color picker drag
+  const previewAppearance = (patch: Partial<AppearanceConfig>) => {
+    setAppearance({ ...appearance, ...patch });
   };
 
   const handleDensityChange = async (density: InboxDensity) => {
@@ -981,6 +986,11 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                       <input
                         type="color"
                         value={appearance.accentColor ?? "#2563eb"}
+                        onInput={(e) =>
+                          previewAppearance({
+                            accentColor: (e.target as HTMLInputElement).value,
+                          })
+                        }
                         onChange={(e) => updateAppearance({ accentColor: e.target.value })}
                         className="absolute inset-0 opacity-0 cursor-pointer"
                       />

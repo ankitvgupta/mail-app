@@ -364,7 +364,11 @@ export type ThemePresetId = z.infer<typeof ThemePresetSchema>;
 
 export const AppearanceConfigSchema = z.object({
   themePreset: ThemePresetSchema.default("default"),
-  accentColor: z.string().nullable().default(null),
+  accentColor: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .nullable()
+    .default(null),
 });
 export type AppearanceConfig = z.infer<typeof AppearanceConfigSchema>;
 

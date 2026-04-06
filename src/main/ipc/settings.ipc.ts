@@ -665,7 +665,7 @@ export function registerSettingsIpc(): void {
       const config = getConfig();
       return {
         success: true,
-        data: config.appearance ?? { themePreset: "default", accentColor: null },
+        data: config.appearance ?? AppearanceConfigSchema.parse({}),
       };
     } catch (error) {
       return {
