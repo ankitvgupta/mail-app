@@ -365,13 +365,18 @@ export type ThemePresetId = z.infer<typeof ThemePresetSchema>;
 export const FontScaleSchema = z.enum(["small", "default", "large"]);
 export type FontScale = z.infer<typeof FontScaleSchema>;
 
+export const BorderRadiusSchema = z.enum(["sharp", "default", "round"]);
+export type BorderRadius = z.infer<typeof BorderRadiusSchema>;
+
 export const AppearanceConfigSchema = z.object({
   themePreset: ThemePresetSchema.default("default"),
   accentColor: z.string().nullable().default(null),
   vibrancy: z.boolean().default(false),
-  transparency: z.number().min(0).max(100).default(0),
-  backgroundGradient: z.string().nullable().default(null),
   fontScale: FontScaleSchema.default("default"),
+  borderRadius: BorderRadiusSchema.default("default"),
+  reduceMotion: z.boolean().default(false),
+  sidebarWidth: z.enum(["narrow", "default", "wide"]).default("default"),
+  lineSpacing: z.enum(["compact", "default", "relaxed"]).default("default"),
 });
 export type AppearanceConfig = z.infer<typeof AppearanceConfigSchema>;
 

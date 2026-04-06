@@ -32,6 +32,15 @@
 
     /* Font scale: multiplier for root font-size */
     --font-scale: 1;
+
+    /* Border radius for cards, buttons, inputs */
+    --radius: 8px;
+
+    /* Sidebar (email list) width */
+    --sidebar-width: 400px;
+
+    /* Line spacing for email content */
+    --line-spacing: 1.5;
   }
 
   .dark {
@@ -47,70 +56,38 @@
   }
 }
 
-/* Font scale — scales the entire UI proportionally.
-   Window is always created with transparent:true, so html must
-   have an opaque background by default to prevent see-through. */
+/* Font scale — scales the entire UI proportionally */
 html {
   font-size: calc(var(--font-scale) * 100%) !important;
-  background-color: rgb(var(--bg-base)) !important;
-}
-
-/* Background gradient — fixed layer behind semi-transparent surfaces.
-   Only rendered when useAppearance adds the .has-gradient class. */
-html.has-gradient::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: var(--bg-gradient);
-  pointer-events: none;
 }
 
 /* --- Surface color overrides ---
    Re-skin Tailwind's hardcoded grays so theme presets work
    without touching any component files. */
 
-/* bg-gray-100 (light base) — always opaque, gradient/desktop shows behind this */
+/* bg-gray-100 (light base) */
 .bg-gray-100 {
-  background-color: rgb(var(--bg-base)) !important;
+  background-color: rgb(var(--bg-base) / var(--bg-alpha)) !important;
 }
 
-/* dark:bg-gray-900 (dark base) — always opaque */
+/* dark:bg-gray-900 (dark base) */
 .dark .bg-gray-900 {
-  background-color: rgb(var(--bg-base)) !important;
+  background-color: rgb(var(--bg-base) / var(--bg-alpha)) !important;
 }
 
-/* When a gradient or vibrancy is active, make the ENTIRE base chain transparent.
-   This includes html, body, and any element using bg-gray-100 / bg-gray-900,
-   so the OS blur or gradient pseudo-element is visible. */
-html.has-gradient,
-html.has-vibrancy {
-  background-color: transparent !important;
-}
-html.has-gradient .bg-gray-100,
-html.has-vibrancy .bg-gray-100 {
-  background-color: transparent !important;
-}
-html.has-gradient .dark .bg-gray-900,
-html.has-gradient.dark .bg-gray-900,
-html.has-vibrancy .dark .bg-gray-900,
-html.has-vibrancy.dark .bg-gray-900 {
-  background-color: transparent !important;
-}
-
-/* bg-white (light surface — sidebar, cards, titlebar) — alpha for internal transparency */
+/* bg-white (light surface — sidebar, cards, titlebar) */
 .bg-white {
   background-color: rgb(var(--bg-surface) / var(--bg-alpha)) !important;
 }
 
-/* dark:bg-gray-800 (dark surface) — alpha for internal transparency */
+/* dark:bg-gray-800 (dark surface) */
 .dark .bg-gray-800 {
   background-color: rgb(var(--bg-surface) / var(--bg-alpha)) !important;
 }
 
 /* dark:bg-gray-700 (dark elevated — dropdowns, inputs) */
 .dark .bg-gray-700 {
-  background-color: rgb(var(--bg-elevated) / var(--bg-alpha)) !important;
+  background-color: rgb(var(--bg-elevated)) !important;
 }
 
 /* border overrides */
@@ -223,6 +200,44 @@ html.has-vibrancy.dark .bg-gray-900 {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--text-secondary) / 0.5) !important;
+}
+
+/* --- Border radius overrides ---
+   Re-skin all rounded-lg elements so sharp/default/round works globally. */
+.rounded-lg {
+  border-radius: var(--radius) !important;
+}
+.rounded-xl {
+  border-radius: calc(var(--radius) * 1.5) !important;
+}
+.rounded {
+  border-radius: calc(var(--radius) * 0.5) !important;
+}
+
+/* --- Sidebar width ---
+   Applied to the email list container via inline style in EmailList. */
+.email-list-sidebar {
+  width: var(--sidebar-width) !important;
+  min-width: var(--sidebar-width) !important;
+  max-width: var(--sidebar-width) !important;
+  flex: none !important;
+}
+
+/* --- Line spacing ---
+   Applies to email body content areas. */
+.email-body,
+.email-html-body {
+  line-height: var(--line-spacing) !important;
+}
+
+/* --- Reduce motion ---
+   When [data-reduce-motion] is set on <html>, disable all transitions and animations. */
+html[data-reduce-motion] *,
+html[data-reduce-motion] *::before,
+html[data-reduce-motion] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
 }
 
 /* Scrollbar base (colors handled by theme overrides above) */

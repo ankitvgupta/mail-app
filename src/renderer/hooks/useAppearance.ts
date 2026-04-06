@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 import { useAppStore } from "../store";
-import { THEME_PRESETS, FONT_SCALE_VALUES } from "../../shared/theme-presets";
+import {
+  THEME_PRESETS,
+  FONT_SCALE_VALUES,
+  BORDER_RADIUS_VALUES,
+  SIDEBAR_WIDTH_VALUES,
+  LINE_SPACING_VALUES,
+} from "../../shared/theme-presets";
 import type { AppearanceConfig } from "../../shared/types";
 import type { ThemeColors } from "../../shared/theme-presets";
 
@@ -45,32 +51,31 @@ function applyThemeVariables(appearance: AppearanceConfig, isDark: boolean): voi
     root.style.setProperty("--accent-soft", colors.accentSoft);
   }
 
-  // Transparency — slider value (0 = opaque, 100 = fully transparent)
-  // When vibrancy is on, use at least 20% transparency so desktop blur shows through
-  const transparencyPct = appearance.transparency ?? 0;
-  const effectivePct = appearance.vibrancy ? Math.max(transparencyPct, 20) : transparencyPct;
-  const alpha = effectivePct > 0 ? Math.max(0.1, 1 - effectivePct / 100) : 1;
-  root.style.setProperty("--bg-alpha", String(alpha));
-
-  // Vibrancy — make base layer transparent so OS blur shows through
-  if (appearance.vibrancy) {
-    root.classList.add("has-vibrancy");
-  } else {
-    root.classList.remove("has-vibrancy");
-  }
-
-  // Background gradient — rendered behind the semi-transparent surfaces
-  if (appearance.backgroundGradient) {
-    root.style.setProperty("--bg-gradient", appearance.backgroundGradient);
-    root.classList.add("has-gradient");
-  } else {
-    root.style.removeProperty("--bg-gradient");
-    root.classList.remove("has-gradient");
-  }
+  // Vibrancy — make surfaces semi-transparent so blur shows through
+  root.style.setProperty("--bg-alpha", appearance.vibrancy ? "0.78" : "1");
 
   // Font scale
   const scale = FONT_SCALE_VALUES[appearance.fontScale] ?? 1;
   root.style.setProperty("--font-scale", String(scale));
+
+  // Border radius
+  const radius = BORDER_RADIUS_VALUES[appearance.borderRadius] ?? "8px";
+  root.style.setProperty("--radius", radius);
+
+  // Sidebar width
+  const sidebarWidth = SIDEBAR_WIDTH_VALUES[appearance.sidebarWidth] ?? "400px";
+  root.style.setProperty("--sidebar-width", sidebarWidth);
+
+  // Line spacing
+  const lineSpacing = LINE_SPACING_VALUES[appearance.lineSpacing] ?? "1.5";
+  root.style.setProperty("--line-spacing", lineSpacing);
+
+  // Reduce motion
+  if (appearance.reduceMotion) {
+    root.setAttribute("data-reduce-motion", "");
+  } else {
+    root.removeAttribute("data-reduce-motion");
+  }
 }
 
 /**

@@ -668,9 +668,11 @@ export function registerSettingsIpc(): void {
           themePreset: "default",
           accentColor: null,
           vibrancy: false,
-          transparency: 0,
-          backgroundGradient: null,
           fontScale: "default",
+          borderRadius: "default",
+          reduceMotion: false,
+          sidebarWidth: "default",
+          lineSpacing: "default",
         },
       };
     } catch (error) {
@@ -690,10 +692,11 @@ export function registerSettingsIpc(): void {
         getStore().set("config", { ...currentConfig, appearance });
 
         // Apply vibrancy to the main window
-        const windowModule = await import("../window");
-        const win = windowModule.getMainWindow();
+        const { applyVibrancy } = await import("../window");
+        const { getMainWindow } = await import("../window");
+        const win = getMainWindow();
         if (win) {
-          windowModule.applyVibrancy(win, appearance.vibrancy);
+          applyVibrancy(win, appearance.vibrancy);
         }
 
         // Broadcast to all renderer windows

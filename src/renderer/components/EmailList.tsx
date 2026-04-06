@@ -445,7 +445,7 @@ export function EmailList() {
 
   // Email list takes available width (flex-1)
   return (
-    <div className="flex-1 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
+    <div className="email-list-sidebar bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
       {/* Header - top-level mailbox tabs + actions */}
       <div className="h-10 px-4 flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-1">

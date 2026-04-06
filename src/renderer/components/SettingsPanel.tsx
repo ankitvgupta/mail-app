@@ -20,7 +20,7 @@ import {
   type AppearanceConfig,
   type CliToolConfig,
 } from "../../shared/types";
-import { THEME_PRESET_LIST, ACCENT_SWATCHES, GRADIENT_PRESETS } from "../../shared/theme-presets";
+import { THEME_PRESET_LIST, ACCENT_SWATCHES } from "../../shared/theme-presets";
 import { useAppStore, type Account, type SettingsTab } from "../store";
 import { reconfigurePostHog, trackEvent } from "../services/posthog";
 import { SplitConfigEditor } from "./SplitConfigEditor";
@@ -1007,31 +1007,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   </div>
                 </div>
 
-                {/* Transparency slider */}
-                <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                    Transparency
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                    Make surfaces see-through. Combine with a gradient or frosted glass.
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={0}
-                      max={80}
-                      step={5}
-                      value={appearance.transparency ?? 0}
-                      onChange={(e) => updateAppearance({ transparency: Number(e.target.value) })}
-                      className="flex-1 h-2 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                    />
-                    <span className="text-sm font-mono text-gray-500 dark:text-gray-400 w-10 text-right">
-                      {appearance.transparency ?? 0}%
-                    </span>
-                  </div>
-                </div>
-
-                {/* Frosted glass (OS-level blur) */}
+                {/* Window transparency / vibrancy */}
                 <div>
                   <div className="flex items-center justify-between">
                     <div>
@@ -1039,7 +1015,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                         Frosted Glass
                       </h3>
                       <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
-                        OS-level blur behind transparent surfaces
+                        Transparent window with blur effect
                         {!navigator.platform.startsWith("Mac") &&
                         !navigator.platform.startsWith("Win")
                           ? " (macOS / Windows 11)"
@@ -1055,45 +1031,6 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-600 peer-checked:bg-blue-600" />
                     </label>
-                  </div>
-                </div>
-
-                {/* Background gradient */}
-                <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                    Background Gradient
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                    Shows through transparent surfaces. Best with transparency above 20%.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {/* None option */}
-                    <button
-                      onClick={() => updateAppearance({ backgroundGradient: null })}
-                      title="None"
-                      className={`w-12 h-12 rounded-lg border-2 transition-all flex items-center justify-center text-xs ${
-                        !appearance.backgroundGradient
-                          ? "border-blue-500 ring-2 ring-blue-500/30"
-                          : "border-gray-300 dark:border-gray-600 hover:border-gray-400"
-                      }`}
-                    >
-                      <span className="text-gray-400">Off</span>
-                    </button>
-
-                    {/* Gradient swatches */}
-                    {GRADIENT_PRESETS.map((g) => (
-                      <button
-                        key={g.id}
-                        onClick={() => updateAppearance({ backgroundGradient: g.css })}
-                        title={g.name}
-                        className={`w-12 h-12 rounded-lg border-2 transition-all ${
-                          appearance.backgroundGradient === g.css
-                            ? "border-blue-500 ring-2 ring-blue-500/30 scale-105"
-                            : "border-gray-300 dark:border-gray-600 hover:border-gray-400"
-                        }`}
-                        style={{ background: g.css }}
-                      />
-                    ))}
                   </div>
                 </div>
 
@@ -1114,6 +1051,98 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                         {size}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* Border radius */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                    Corner Roundness
+                  </h3>
+                  <div className="flex space-x-2">
+                    {(["sharp", "default", "round"] as const).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => updateAppearance({ borderRadius: r })}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors capitalize ${
+                          appearance.borderRadius === r
+                            ? "bg-blue-600 dark:bg-blue-500 text-white"
+                            : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sidebar width */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                    Sidebar Width
+                  </h3>
+                  <div className="flex space-x-2">
+                    {(["narrow", "default", "wide"] as const).map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => updateAppearance({ sidebarWidth: w })}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors capitalize ${
+                          appearance.sidebarWidth === w
+                            ? "bg-blue-600 dark:bg-blue-500 text-white"
+                            : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Line spacing */}
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                    Line Spacing
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    Adjusts spacing in email content.
+                  </p>
+                  <div className="flex space-x-2">
+                    {(["compact", "default", "relaxed"] as const).map((ls) => (
+                      <button
+                        key={ls}
+                        onClick={() => updateAppearance({ lineSpacing: ls })}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors capitalize ${
+                          appearance.lineSpacing === ls
+                            ? "bg-blue-600 dark:bg-blue-500 text-white"
+                            : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        {ls}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Reduce motion */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                        Reduce Motion
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                        Disable animations and transitions.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={appearance.reduceMotion}
+                        onChange={(e) => updateAppearance({ reduceMotion: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-600 peer-checked:bg-blue-600" />
+                    </label>
                   </div>
                 </div>
               </div>

@@ -609,9 +609,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     themePreset: "default",
     accentColor: null,
     vibrancy: false,
-    transparency: 0,
-    backgroundGradient: null,
     fontScale: "default",
+    borderRadius: "default",
+    reduceMotion: false,
+    sidebarWidth: "default",
+    lineSpacing: "default",
   },
 
   // Inbox density state
