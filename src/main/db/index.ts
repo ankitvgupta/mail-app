@@ -410,10 +410,16 @@ const NUMBERED_MIGRATIONS: Migration[] = [
           FOREIGN KEY (account_id) REFERENCES accounts(id)
         );
         CREATE INDEX IF NOT EXISTS idx_send_as_account ON send_as_aliases(account_id);
-        ALTER TABLE local_drafts ADD COLUMN from_address TEXT;
-        ALTER TABLE outbox ADD COLUMN from_address TEXT;
-        ALTER TABLE scheduled_messages ADD COLUMN from_address TEXT;
       `);
+
+      // ALTER TABLE only for existing databases — fresh DBs get the column from SCHEMA
+      const tables = ["local_drafts", "outbox", "scheduled_messages"];
+      for (const table of tables) {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (cols.length > 0 && !cols.some((c) => c.name === "from_address")) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN from_address TEXT`);
+        }
+      }
     },
   },
 ];

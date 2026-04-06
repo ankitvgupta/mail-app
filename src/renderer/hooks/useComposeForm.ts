@@ -137,6 +137,8 @@ export function useComposeForm({
 
   // Fetch aliases on mount
   useEffect(() => {
+    if (typeof window.api.compose.getSendAsAliases !== "function") return;
+
     (window.api.compose.getSendAsAliases(accountId) as Promise<IpcResponse<SendAsAlias[]>>)
       .then((result) => {
         if (result.success && result.data.length > 0) {
