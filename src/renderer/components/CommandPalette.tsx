@@ -1,4 +1,36 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { AnimatePresence, motion, MotionConfig } from "framer-motion";
+import {
+  Search,
+  Plus,
+  Reply,
+  Archive,
+  Trash2,
+  Star,
+  Mail,
+  Settings,
+  Keyboard,
+  Sun,
+  Moon,
+  Monitor,
+  User,
+  Clock,
+  Eye,
+  ArrowUp,
+  Layout,
+  RefreshCw,
+  Forward,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandShortcut,
+} from "./ui/command";
 import { useAppStore, useThreadedEmails } from "../store";
 import { splitAddressList, extractFirstName } from "../utils/address-parsing";
 import type { DashboardEmail, IpcResponse } from "../../shared/types";
@@ -10,85 +42,10 @@ type CommandAction = {
   label: string;
   category: string;
   shortcut?: string;
-  icon?: string; // SVG path data for a 24x24 viewBox
+  icon?: LucideIcon;
   execute: () => void;
-  /** Return false to hide the action from the palette */
   available?: () => boolean;
 };
-
-// --- Icon paths (24x24 viewBox, stroke-based) ---
-
-const ICONS = {
-  search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
-  compose: "M12 4v16m8-8H4",
-  reply: "M3 10l9-7 9 7M3 10v10a1 1 0 001 1h16a1 1 0 001-1V10",
-  archive: "M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4",
-  trash:
-    "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
-  star: "M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z",
-  mail: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
-  settings:
-    "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z",
-  keyboard:
-    "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707",
-  sun: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z",
-  moon: "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z",
-  monitor:
-    "M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
-  user: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
-  clock: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
-  eye: "M15 12a3 3 0 11-6 0 3 3 0 016 0z",
-  arrowUp: "M5 10l7-7m0 0l7 7m-7-7v18",
-  arrowDown: "M19 14l-7 7m0 0l-7-7m7 7V3",
-  layout:
-    "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z",
-  refresh:
-    "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
-  forward: "M13 7l5 5m0 0l-5 5m5-5H6",
-};
-
-function ActionIcon({ path }: { path?: string }) {
-  if (!path) {
-    return (
-      <div className="w-5 h-5 flex items-center justify-center text-gray-400 dark:text-gray-500">
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-      </div>
-    );
-  }
-  return (
-    <svg
-      className="w-5 h-5 text-gray-400 dark:text-gray-500 flex-shrink-0"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d={path} />
-    </svg>
-  );
-}
-
-// --- Fuzzy match ---
-
-function fuzzyMatch(text: string, query: string): boolean {
-  const lowerText = text.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-
-  // Check substring first (highest quality match)
-  if (lowerText.includes(lowerQuery)) return true;
-
-  // Check each query word appears in text
-  const words = lowerQuery.split(/\s+/);
-  return words.every((w) => lowerText.includes(w));
-}
 
 // --- Component ---
 
@@ -99,9 +56,6 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const {
     accounts,
@@ -138,7 +92,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Search emails",
         category: "Navigation",
         shortcut: "/",
-        icon: ICONS.search,
+        icon: Search,
         execute: () => openSearch(),
       },
       {
@@ -146,7 +100,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Go to inbox",
         category: "Navigation",
         shortcut: "g i",
-        icon: ICONS.mail,
+        icon: Mail,
         execute: () => {
           setViewMode("split");
           useAppStore.getState().clearActiveSearch();
@@ -157,7 +111,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Go to top of list",
         category: "Navigation",
         shortcut: "g g",
-        icon: ICONS.arrowUp,
+        icon: ArrowUp,
         execute: () => {
           if (threads.length > 0) {
             setSelectedThreadId(threads[0].threadId);
@@ -172,7 +126,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Compose new email",
         category: "Compose",
         shortcut: "c",
-        icon: ICONS.compose,
+        icon: Plus,
         execute: () => {
           setViewMode("full");
           openCompose("new");
@@ -183,7 +137,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Reply all",
         category: "Compose",
         shortcut: "r",
-        icon: ICONS.reply,
+        icon: Reply,
         available: () => hasSelectedEmail,
         execute: () => {
           if (selectedEmailId) {
@@ -196,7 +150,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Reply (single)",
         category: "Compose",
         shortcut: "R",
-        icon: ICONS.reply,
+        icon: Reply,
         available: () => hasSelectedEmail,
         execute: () => {
           if (selectedEmailId) {
@@ -209,7 +163,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Forward email",
         category: "Compose",
         shortcut: "f",
-        icon: ICONS.forward,
+        icon: Forward,
         available: () => hasSelectedEmail,
         execute: () => {
           if (selectedEmailId) {
@@ -224,7 +178,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Archive email",
         category: "Email Actions",
         shortcut: "e",
-        icon: ICONS.archive,
+        icon: Archive,
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
@@ -252,7 +206,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Delete email",
         category: "Email Actions",
         shortcut: "#",
-        icon: ICONS.trash,
+        icon: Trash2,
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
@@ -280,7 +234,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Discard draft",
         category: "Email Actions",
         shortcut: "#",
-        icon: ICONS.trash,
+        icon: Trash2,
         available: () => !!useAppStore.getState().selectedDraftId,
         execute: () => {
           const state = useAppStore.getState();
@@ -297,7 +251,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Mark as unread",
         category: "Email Actions",
         shortcut: "u",
-        icon: ICONS.eye,
+        icon: Eye,
         available: () => hasSelectedThread,
         execute: () => {
           const state = useAppStore.getState();
@@ -332,7 +286,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Snooze email",
         category: "Email Actions",
         shortcut: "h",
-        icon: ICONS.clock,
+        icon: Clock,
         available: () => hasSelectedEmail,
         execute: () => {
           setShowSnoozeMenu(true);
@@ -342,7 +296,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "star",
         label: "Star / Unstar email",
         category: "Email Actions",
-        icon: ICONS.star,
+        icon: Star,
         available: () => hasSelectedEmail,
         execute: () => {
           const state = useAppStore.getState();
@@ -351,7 +305,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             if (email) {
               const currentLabels = email.labelIds || [];
               const isStarred = currentLabels.includes("STARRED");
-              const previousLabels: Record<string, string[]> = { [email.id]: [...currentLabels] };
+              const previousLabels: Record<string, string[]> = {
+                [email.id]: [...currentLabels],
+              };
               const newLabels = isStarred
                 ? currentLabels.filter((l) => l !== "STARRED")
                 : [...currentLabels, "STARRED"];
@@ -376,7 +332,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "toggle-view",
         label: viewMode === "split" ? "Switch to full view" : "Switch to split view",
         category: "View",
-        icon: ICONS.layout,
+        icon: Layout,
         execute: () => {
           setViewMode(viewMode === "split" ? "full" : "split");
         },
@@ -385,7 +341,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "refresh-inbox",
         label: "Refresh inbox",
         category: "View",
-        icon: ICONS.refresh,
+        icon: RefreshCw,
         execute: () => {
           const state = useAppStore.getState();
           if (state.currentAccountId) {
@@ -400,7 +356,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Open settings",
         category: "Settings",
         shortcut: "\u2318,",
-        icon: ICONS.settings,
+        icon: Settings,
         execute: () => setShowSettings(true),
       },
       {
@@ -408,9 +364,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         label: "Show keyboard shortcuts",
         category: "Settings",
         shortcut: "?",
-        icon: ICONS.keyboard,
+        icon: Keyboard,
         execute: () => {
-          // Dispatch a ? keypress to toggle shortcuts
           window.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
         },
       },
@@ -420,7 +375,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "theme-light",
         label: "Switch to light theme",
         category: "Appearance",
-        icon: ICONS.sun,
+        icon: Sun,
         available: () => themePreference !== "light",
         execute: () => {
           setThemePreference("light");
@@ -431,7 +386,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "theme-dark",
         label: "Switch to dark theme",
         category: "Appearance",
-        icon: ICONS.moon,
+        icon: Moon,
         available: () => themePreference !== "dark",
         execute: () => {
           setThemePreference("dark");
@@ -442,7 +397,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "theme-system",
         label: "Use system theme",
         category: "Appearance",
-        icon: ICONS.monitor,
+        icon: Monitor,
         available: () => themePreference !== "system",
         execute: () => {
           setThemePreference("system");
@@ -477,7 +432,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "instant-intro",
         label: "Instant Intro (move introducer to Bcc)",
         category: "Compose",
-        icon: ICONS.forward,
+        icon: Forward,
         available: () => hasSelectedEmail,
         execute: () => {
           if (!selectedEmailId) return;
@@ -488,7 +443,6 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           const currentAccount = state.accounts.find((a) => a.id === state.currentAccountId);
           const userEmail = currentAccount?.email?.toLowerCase() ?? "";
 
-          // Escape HTML special characters to prevent injection from email headers
           const escapeHtml = (s: string): string =>
             s
               .replace(/&/g, "&amp;")
@@ -496,24 +450,20 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
               .replace(/>/g, "&gt;")
               .replace(/"/g, "&quot;");
 
-          // Parse email address from "Name <email>" or bare "email" format
           const parseEmail = (addr: string): string => {
             const match = addr.match(/<([^>]+)>/);
             return match ? match[1] : addr.trim();
           };
 
-          // Parse display name from "Name <email>" format
           const parseName = (addr: string): string => {
             const match = addr.match(/^([^<]+?)\s*</);
             return match ? match[1].trim().replace(/"/g, "") : "";
           };
 
-          // The introducer is the sender
           const introducerEmail = parseEmail(email.from);
           const introducerName = parseName(email.from) || introducerEmail.split("@")[0];
           const introducerFirst = extractFirstName(introducerName);
 
-          // Other recipients (excluding user and introducer) are the introduced people
           const allRecipients = [
             ...splitAddressList(email.to ?? ""),
             ...splitAddressList(email.cc ?? ""),
@@ -522,7 +472,6 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             const lower = e.toLowerCase();
             return lower !== userEmail && lower !== introducerEmail.toLowerCase();
           });
-          // Deduplicate (preserve original casing of first occurrence)
           const seen = new Set<string>();
           const uniqueIntroduced = introducedEmails.filter((e) => {
             const lower = e.toLowerCase();
@@ -531,7 +480,6 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             return true;
           });
 
-          // Build names for the greeting
           const introducedNames = uniqueIntroduced.map((addr) => {
             const original = allRecipients.find(
               (r) => parseEmail(r).toLowerCase() === addr.toLowerCase(),
@@ -568,7 +516,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: "open-agents-sidebar",
         label: "Open Agents Sidebar",
         category: "Agents",
-        icon: ICONS.settings,
+        icon: Settings,
         execute: () => useAppStore.getState().toggleAgentsSidebar(),
       },
       {
@@ -584,7 +532,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         id: `switch-account-${account.id}`,
         label: `Switch to ${account.email}`,
         category: "Accounts",
-        icon: ICONS.user,
+        icon: User,
         available: () => account.id !== currentAccountId,
         execute: () => {
           setCurrentAccountId(account.id);
@@ -624,13 +572,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     setShowSnoozeMenu,
   ]);
 
-  // Filter actions by query
-  const filteredActions = useMemo(() => {
-    if (!query.trim()) return actions;
-    return actions.filter((a) => fuzzyMatch(a.label, query) || fuzzyMatch(a.category, query));
-  }, [actions, query]);
-
-  // Group filtered actions by category
+  // Group actions by category in a fixed order
   const groupedActions = useMemo(() => {
     const groups: { category: string; actions: CommandAction[] }[] = [];
     const categoryOrder = [
@@ -645,171 +587,132 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     ];
 
     for (const cat of categoryOrder) {
-      const catActions = filteredActions.filter((a) => a.category === cat);
+      const catActions = actions.filter((a) => a.category === cat);
       if (catActions.length > 0) {
         groups.push({ category: cat, actions: catActions });
       }
     }
     return groups;
-  }, [filteredActions]);
+  }, [actions]);
 
-  // Flat list for keyboard navigation
-  const flatList = useMemo(() => groupedActions.flatMap((g) => g.actions), [groupedActions]);
-
-  // Reset state when opened/closed
+  // Reset query when palette opens
   useEffect(() => {
-    if (isOpen) {
-      setQuery("");
-      setSelectedIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (isOpen) setQuery("");
   }, [isOpen]);
-
-  // Reset selection when query changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const el = listRef.current.querySelector(`[data-index="${selectedIndex}"]`);
-    if (el) {
-      el.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedIndex]);
 
   const executeAction = useCallback(
     (action: CommandAction) => {
       onClose();
-      // Small delay to let the palette close before executing
       requestAnimationFrame(() => action.execute());
     },
     [onClose],
   );
 
+  // Escape closes the palette (cmdk clears input first if non-empty)
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      switch (e.key) {
-        case "Escape":
-          e.preventDefault();
-          e.stopPropagation();
-          onClose();
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, flatList.length - 1));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
-          break;
-        case "Enter":
-          e.preventDefault();
-          e.stopPropagation();
-          if (flatList[selectedIndex]) {
-            executeAction(flatList[selectedIndex]);
-          }
-          break;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
       }
     },
-    [flatList, selectedIndex, executeAction, onClose],
+    [onClose],
   );
 
-  if (!isOpen) return null;
-
-  // Build a flat index counter for data-index attributes
-  let flatIndex = 0;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+    <AnimatePresence>
+      {isOpen && (
+        <MotionConfig transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.1 }}>
+          <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="absolute inset-0 bg-black/40"
+              onClick={onClose}
+            />
 
-      {/* Palette panel */}
-      <div className="relative w-full max-w-xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl dark:shadow-black/40 overflow-hidden border border-gray-200 dark:border-gray-700">
-        {/* Input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-          <svg
-            className="w-5 h-5 text-gray-400 flex-shrink-0"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a command..."
-            className="flex-1 text-base outline-none placeholder-gray-400 dark:text-gray-100 dark:placeholder-gray-500 bg-transparent"
-          />
-          <kbd className="px-2 py-0.5 text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 rounded">
-            esc
-          </kbd>
-        </div>
-
-        {/* Results */}
-        <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
-          {groupedActions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-              No matching commands
-            </div>
-          ) : (
-            groupedActions.map(({ category, actions: catActions }) => (
-              <div key={category}>
-                <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                  {category}
+            {/* Palette */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              className="relative w-full max-w-xl rounded-xl shadow-2xl dark:shadow-black/40 overflow-hidden border border-gray-200 dark:border-gray-700"
+            >
+              <Command
+                onKeyDown={handleKeyDown}
+                filter={(value, search) => {
+                  // cmdk's filter returns 0 or 1
+                  const lower = value.toLowerCase();
+                  const q = search.toLowerCase();
+                  if (lower.includes(q)) return 1;
+                  return q.split(/\s+/).every((w) => lower.includes(w)) ? 1 : 0;
+                }}
+              >
+                {/* Input */}
+                <div className="flex items-center gap-3 px-4 border-b border-gray-200 dark:border-gray-700">
+                  <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  <CommandInput
+                    autoFocus
+                    value={query}
+                    onValueChange={setQuery}
+                    placeholder="Type a command..."
+                  />
+                  <kbd className="px-1.5 py-0.5 text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 rounded flex-shrink-0">
+                    esc
+                  </kbd>
                 </div>
-                {catActions.map((action) => {
-                  const idx = flatIndex++;
-                  const isSelected = idx === selectedIndex;
-                  return (
-                    <button
-                      key={action.id}
-                      data-index={idx}
-                      onClick={() => executeAction(action)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`w-full px-4 py-2 flex items-center gap-3 text-left text-sm transition-colors ${
-                        isSelected
-                          ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                          : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                      }`}
-                    >
-                      <ActionIcon path={action.icon} />
-                      <span className="flex-1">{action.label}</span>
-                      {action.shortcut && (
-                        <kbd className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-mono text-gray-500 dark:text-gray-400">
-                          {action.shortcut}
-                        </kbd>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="flex items-center gap-4 px-4 py-2 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">&uarr;&darr;</kbd>{" "}
-            navigate
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Enter</kbd> execute
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Esc</kbd> close
-          </span>
-        </div>
-      </div>
-    </div>
+                {/* Results */}
+                <CommandList>
+                  <CommandEmpty>No matching commands</CommandEmpty>
+                  {groupedActions.map(({ category, actions: catActions }) => (
+                    <CommandGroup key={category} heading={category}>
+                      {catActions.map((action) => (
+                        <CommandItem
+                          key={action.id}
+                          value={`${action.label} ${action.category}`}
+                          onSelect={() => executeAction(action)}
+                        >
+                          {action.icon ? (
+                            <action.icon className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                          ) : (
+                            <div className="w-4 h-4" />
+                          )}
+                          <span className="flex-1">{action.label}</span>
+                          {action.shortcut && <CommandShortcut>{action.shortcut}</CommandShortcut>}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ))}
+                </CommandList>
+
+                {/* Footer */}
+                <div className="flex items-center gap-4 px-4 py-2 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                  <span>
+                    <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">
+                      &uarr;&darr;
+                    </kbd>{" "}
+                    navigate
+                  </span>
+                  <span>
+                    <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Enter</kbd>{" "}
+                    execute
+                  </span>
+                  <span>
+                    <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Esc</kbd>{" "}
+                    close
+                  </span>
+                </div>
+              </Command>
+            </motion.div>
+          </div>
+        </MotionConfig>
+      )}
+    </AnimatePresence>
   );
 }
 
