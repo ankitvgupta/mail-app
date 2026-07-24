@@ -229,10 +229,50 @@ test.describe("Packaged app smoke", () => {
     app = await launchPackagedApp();
     page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
-    await page.keyboard.press("ControlOrMeta+j");
+
+    // Opening via the keyboard here races React's global key listener on slower
+    // packaged CI starts. This smoke is about the packaged provider surface, so
+    // wait for the renderer store and open that surface directly.
+    await page.waitForFunction(
+      () =>
+        typeof (
+          window as unknown as {
+            __ZUSTAND_STORE__?: { getState?: () => Record<string, unknown> };
+          }
+        ).__ZUSTAND_STORE__?.getState === "function",
+      undefined,
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __ZUSTAND_STORE__: {
+            getState: () => {
+              setAgentPaletteOpen: (open: boolean) => void;
+            };
+          };
+        }
+      ).__ZUSTAND_STORE__;
+      store.getState().setAgentPaletteOpen(true);
+    });
+
+    await expect(page.getByPlaceholder("Ask agent anything...")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          await page.evaluate(async () => {
+            await window.api.agent.providers();
+          });
+          return page.getByRole("button", { name: "OpenCode" }).count();
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(1);
 
     await expect(page.getByRole("button", { name: "OpenCode" })).toBeVisible({
-      timeout: 10_000,
+      timeout: 5_000,
     });
   });
 });
