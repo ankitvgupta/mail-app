@@ -16,8 +16,13 @@ import type {
   MessageCreateParamsNonStreaming,
   Message,
 } from "@anthropic-ai/sdk/resources/messages";
+import { z } from "zod";
 import type { LlmProvider } from "../../shared/types";
 import { createLogger } from "./logger";
+import {
+  openCodeInferenceService,
+  type OpenCodeInferenceService,
+} from "./opencode-inference-service";
 import { randomUUID } from "crypto";
 
 const log = createLogger("llm");
@@ -69,6 +74,7 @@ export interface LlmCallRecord {
   duration_ms: number;
   success: number;
   error_message: string | null;
+  provider: string;
 }
 
 export interface UsageStats {
@@ -105,6 +111,14 @@ export interface CreateOptions {
    * Ignored for Anthropic.
    */
   think?: boolean | "low" | "medium" | "high" | "max";
+  outputSchema?: z.ZodType;
+}
+
+type OpenCodeServiceLike = Pick<OpenCodeInferenceService, "complete">;
+let openCodeService: OpenCodeServiceLike = openCodeInferenceService;
+
+export function _setOpenCodeServiceForTesting(service?: OpenCodeServiceLike): void {
+  openCodeService = service ?? openCodeInferenceService;
 }
 
 // --- Anthropic client (api.anthropic.com) ---
@@ -266,17 +280,18 @@ function recordCall(
   success: boolean,
   errorMessage: string | null,
   provider?: LlmProvider,
+  costCentsOverride?: number,
 ): void {
   if (!_insertStmt) {
     log.warn("LLM service: database not initialized, skipping call recording");
     return;
   }
 
-  // Ollama Cloud is subscription-based — no per-token cost
   const costCents =
-    provider === "ollama-cloud"
+    costCentsOverride ??
+    (provider === "ollama-cloud"
       ? 0
-      : calculateCostCents(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens);
+      : calculateCostCents(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens));
 
   try {
     _insertStmt.run(
@@ -613,6 +628,87 @@ export async function createMessage(
   const isOllama = provider === "ollama-cloud";
   const model = params.model;
   const startTime = Date.now();
+
+  if (provider === "opencode") {
+    if (params.tools?.length) {
+      throw new Error("OpenCode feature inference does not support tools");
+    }
+    const controller = timeoutMs ? new AbortController() : undefined;
+    const timer = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
+    try {
+      const result = await openCodeService.complete({
+        selector: params.model || undefined,
+        system: flattenSystemPrompt(params.system),
+        prompt: params.messages
+          .map(
+            (message) =>
+              `${message.role.toUpperCase()}:\n${flattenMessageContent(message.content)}`,
+          )
+          .join("\n\n"),
+        outputSchema: options.outputSchema
+          ? (z.toJSONSchema(options.outputSchema) as Record<string, unknown>)
+          : undefined,
+        signal: controller?.signal,
+      });
+      const resolvedModel = `${result.providerId}/${result.modelId}`;
+      const text =
+        result.structured === undefined ? result.text : JSON.stringify(result.structured);
+      const response = {
+        id: result.id,
+        type: "message",
+        role: "assistant",
+        model: resolvedModel,
+        content: [{ type: "text", text, citations: null }],
+        container: null,
+        stop_details: null,
+        stop_reason: result.finishReason === "length" ? "max_tokens" : "end_turn",
+        stop_sequence: null,
+        usage: {
+          input_tokens: result.inputTokens,
+          output_tokens: result.outputTokens,
+          cache_creation_input_tokens: result.cacheWriteTokens,
+          cache_read_input_tokens: result.cacheReadTokens,
+          server_tool_use: null,
+          service_tier: null,
+        },
+      } as Message;
+      recordCall(
+        resolvedModel,
+        caller,
+        emailId ?? null,
+        accountId ?? null,
+        result.inputTokens,
+        result.outputTokens,
+        result.cacheReadTokens,
+        result.cacheWriteTokens,
+        Date.now() - startTime,
+        true,
+        null,
+        "opencode",
+        result.costDollars === undefined ? undefined : result.costDollars * 100,
+      );
+      return response;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      recordCall(
+        params.model || "opencode-default",
+        caller,
+        emailId ?? null,
+        accountId ?? null,
+        0,
+        0,
+        0,
+        0,
+        Date.now() - startTime,
+        false,
+        errorMessage,
+        "opencode",
+      );
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
   // Strip cache_control for Ollama (unsupported)
   const effectiveParams = isOllama ? adjustParamsForOllama(params) : params;
