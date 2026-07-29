@@ -125,6 +125,7 @@ export class OpenCodeInferenceService {
       if (!prompted.data) throw new Error("OpenCode session.prompt returned no response");
 
       const { info, parts } = prompted.data;
+      if (info.error) throw info.error;
       return {
         id: info.id,
         text: parts

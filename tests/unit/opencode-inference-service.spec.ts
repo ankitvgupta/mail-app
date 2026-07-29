@@ -29,6 +29,13 @@ type FakeOptions = {
   providerFailure?: boolean;
   toolFailure?: boolean;
   promptFailure?: Error;
+  assistantError?: {
+    name: "ProviderAuthError";
+    data: {
+      providerID: string;
+      message: string;
+    };
+  };
   deleteFailure?: Error;
   deleteResponseFailure?: boolean;
   structured?: unknown;
@@ -75,6 +82,9 @@ function createFake(options: FakeOptions = {}) {
         cache: { read: 10, write: 4 },
       },
       finish: "stop",
+      ...(options.assistantError === undefined
+        ? {}
+        : { error: options.assistantError }),
       ...(options.structured === undefined ? {} : { structured: options.structured }),
     },
     parts: [{ type: "text" as const, text: "hello" }],
@@ -358,6 +368,23 @@ test("cleanup failure does not replace the original prompt failure", async () =>
   await expect(service.complete({ prompt: "hello" })).rejects.toThrow(
     "original prompt failure",
   );
+});
+
+test("cleanup failure does not replace an assistant message error", async () => {
+  const assistantError = {
+    name: "ProviderAuthError" as const,
+    data: {
+      providerID: "openai",
+      message: "Missing credentials",
+    },
+  };
+  const { calls, service } = createFake({
+    assistantError,
+    deleteFailure: new Error("cleanup failure"),
+  });
+
+  await expect(service.complete({ prompt: "hello" })).rejects.toEqual(assistantError);
+  expect(calls.deletes).toEqual(["session-1"]);
 });
 
 test("cleanup response failure is visible after a successful prompt", async () => {
