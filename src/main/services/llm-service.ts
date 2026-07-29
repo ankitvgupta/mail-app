@@ -289,7 +289,7 @@ function recordCall(
 
   const costCents =
     costCentsOverride ??
-    (provider === "ollama-cloud"
+    (provider === "ollama-cloud" || provider === "opencode"
       ? 0
       : calculateCostCents(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens));
 

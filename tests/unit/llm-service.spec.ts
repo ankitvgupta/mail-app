@@ -283,6 +283,33 @@ test.describe("AnthropicService", () => {
     expect(row.duration_ms).toBeGreaterThanOrEqual(0);
   });
 
+  test("records zero cost when OpenCode does not report cost", async () => {
+    _setOpenCodeServiceForTesting({
+      complete: async () => ({
+        id: "assistant-no-cost",
+        text: "Done",
+        providerId: "openai",
+        modelId: "gpt-5.2",
+        finishReason: "stop",
+        inputTokens: 120,
+        outputTokens: 35,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 4,
+        reasoningTokens: 7,
+      }),
+    });
+
+    await createMessage(makeTestParams("openai/gpt-5.2"), {
+      caller: "test-opencode-no-cost",
+      provider: "opencode",
+    });
+
+    const row = testDb.prepare("SELECT cost_cents FROM llm_calls LIMIT 1").get() as {
+      cost_cents: number;
+    };
+    expect(row.cost_cents).toBe(0);
+  });
+
   test("records one failed OpenCode call and rethrows the service error", async () => {
     const failure = new Error("OpenCode unavailable");
     let calls = 0;
