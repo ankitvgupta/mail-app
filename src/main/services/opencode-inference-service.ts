@@ -3,10 +3,7 @@ import { dirname, delimiter as pathDelimiter } from "node:path";
 import type * as OpenCodeV2Client from "@opencode-ai/sdk/v2/client";
 import type * as OpenCodeV2Server from "@opencode-ai/sdk/v2/server";
 
-import {
-  resolveOpenCodeRoute,
-  type OpenCodeModelOption,
-} from "../../shared/types";
+import { resolveOpenCodeRoute, type OpenCodeModelOption } from "../../shared/types";
 import { resolveOpencodeBinary } from "../agents/providers/opencode/opencode-agent-provider";
 import { createLogger } from "./logger";
 
