@@ -19,7 +19,6 @@ import {
   resolveModelId,
   resolveAgentOllamaConfig,
   resolveBackgroundAgentProviderId,
-  DEFAULT_BACKGROUND_AGENT_PROVIDER,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_HOSTLER_HARNESS,
 } from "../../shared/types";
@@ -207,7 +206,12 @@ export function getSenderLookupConfig(): {
   };
 }
 
-/** Resolve provider + model for a feature, supporting Ollama Cloud routing. */
+export function getOpenCodeModelSelector(feature: keyof ModelConfig): string {
+  const opencode = getConfig().opencode;
+  return opencode?.featureModels?.[feature] ?? opencode?.model ?? "";
+}
+
+/** Resolve provider + model for a feature, supporting configured providers. */
 export function getFeatureModelConfig(feature: keyof ModelConfig): {
   provider: LlmProvider;
   model: string;
@@ -221,6 +225,9 @@ export function getFeatureModelConfig(feature: keyof ModelConfig): {
       DEFAULT_OLLAMA_MODEL;
     return { provider, model };
   }
+  if (provider === "opencode") {
+    return { provider, model: getOpenCodeModelSelector(feature) };
+  }
   const mc = getModelConfig();
   return { provider: "anthropic", model: resolveModelId(mc[feature]) };
 }
@@ -228,26 +235,11 @@ export function getFeatureModelConfig(feature: keyof ModelConfig): {
 /**
  * Which agent provider background auto-drafts should launch right now.
  *
- * Wraps the pure resolveBackgroundAgentProviderId with the one gate it can't
- * express: OpenCode also needs an LLM credential (its isAvailable() requires
- * Ollama or Anthropic), and the Anthropic key may come from process.env,
- * which the renderer-safe resolver can't read. Without this, enabling
- * OpenCode with no credentials would fail every background draft — and each
- * failed email is skipped for the rest of the session.
- *
- * The bundled opencode binary is deliberately not checked here: it ships
- * with the app, so its absence is a broken install that should fail loudly
- * in the provider, not silently fall back.
+ * OpenCode owns its authentication and reports auth/model errors from its
+ * subprocess, so settings resolution only applies the shared runtime gate.
  */
 export function getBackgroundAgentProviderId(): string {
-  const config = getConfig();
-  const resolved = resolveBackgroundAgentProviderId(config);
-  if (resolved === "opencode") {
-    const hasAnthropic = Boolean(config.anthropicApiKey || process.env.ANTHROPIC_API_KEY);
-    const hasOllama = Boolean(config.ollamaCloud?.apiKey);
-    if (!hasAnthropic && !hasOllama) return DEFAULT_BACKGROUND_AGENT_PROVIDER;
-  }
-  return resolved;
+  return resolveBackgroundAgentProviderId(getConfig());
 }
 
 export function registerSettingsIpc(): void {
@@ -376,6 +368,20 @@ export function registerSettingsIpc(): void {
           };
         }
       }
+      if ("opencode" in config) {
+        const incoming = config.opencode;
+        const existing = currentConfig.opencode;
+        newConfig = {
+          ...newConfig,
+          opencode: incoming
+            ? {
+                enabled: incoming.enabled ?? existing?.enabled ?? false,
+                model: incoming.model ?? existing?.model,
+                featureModels: incoming.featureModels ?? existing?.featureModels,
+              }
+            : undefined,
+        };
+      }
       // backgroundAgentProvider routes every background auto-draft to an
       // agent provider. IPC payloads are compile-time-typed only, so guard
       // the type here — a persisted non-string would wedge every future
@@ -492,11 +498,12 @@ export function registerSettingsIpc(): void {
       // Propagate OpenCode config to the agent framework.
       // The provider's updateConfig() will close the existing opencode server
       // so the next run picks up new model / enable state.
-      if ("opencode" in config) {
+      if ("opencode" in config || "featureProviders" in config) {
         agentCoordinator.updateConfig({
           opencode: {
             enabled: newConfig.opencode?.enabled ?? false,
             model: newConfig.opencode?.model,
+            featureModels: newConfig.opencode?.featureModels,
           },
         });
       }

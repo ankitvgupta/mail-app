@@ -191,9 +191,10 @@ test.describe("deriveTraceProviderIds", () => {
 });
 
 test.describe("applyAgentDrafterSelection", () => {
-  test("selecting an external runtime routes background drafts there and leaves the Claude-runtime model untouched", () => {
+  test("selecting OpenCode synchronizes its background and Agent Drafter routes", () => {
     expect(applyAgentDrafterSelection("opencode")).toEqual({
       backgroundAgentProvider: "opencode",
+      agentDrafterProvider: "opencode",
     });
     expect(applyAgentDrafterSelection("hostler")).toEqual({
       backgroundAgentProvider: "hostler",

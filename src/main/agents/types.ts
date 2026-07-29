@@ -176,7 +176,7 @@ export interface AgentFrameworkConfig {
   providers?: Record<string, ProviderSettings>;
   /** OpenCode-specific settings. Kept top-level (not under providers) so the
    *  provider can read it without going through ProviderSettings's narrow shape. */
-  opencode?: { enabled: boolean; model?: string };
+  opencode?: { enabled: boolean; model?: string; featureModels?: Record<string, string> };
   /** Hostler-specific settings (hosted cloud agent backend). Kept top-level
    *  for the same reason as opencode — harness/model don't fit ProviderSettings. */
   hostler?: {

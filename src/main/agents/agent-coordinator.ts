@@ -91,7 +91,11 @@ export class AgentCoordinator {
         },
       },
       opencode: appConfig.opencode
-        ? { enabled: appConfig.opencode.enabled, model: appConfig.opencode.model }
+        ? {
+            enabled: appConfig.opencode.enabled,
+            model: appConfig.opencode.model,
+            featureModels: appConfig.opencode.featureModels,
+          }
         : { enabled: false },
       hostler: appConfig.hostler
         ? {
