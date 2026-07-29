@@ -787,7 +787,7 @@ export function resolveOpencodePlatformBinary({
  * In dev: resolve the optional platform dependency or node_modules/.bin.
  * In packaged Electron: resolve its executable beneath process.resourcesPath.
  */
-const resolveOpencodeBinary = (() => {
+export const resolveOpencodeBinary = (() => {
   let cached: string | null | undefined;
   return (): string | null => {
     if (cached !== undefined) return cached;
