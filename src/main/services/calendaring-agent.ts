@@ -1,6 +1,7 @@
 import { createMessage } from "./llm-service";
 import { stripJsonFences } from "../../shared/strip-json-fences";
 import {
+  CalendaringResultSchema,
   DEFAULT_CALENDARING_PROMPT,
   DEFAULT_EA_DEFERRAL_TEMPLATE,
   type CalendaringResult,
@@ -39,7 +40,12 @@ ${wrapUntrustedEmail(`From: ${email.from}\nTo: ${email.to}\nSubject: ${email.sub
           },
         ],
       },
-      { caller: "calendaring-agent", emailId: email.id, provider: this.provider },
+      {
+        caller: "calendaring-agent",
+        emailId: email.id,
+        provider: this.provider,
+        outputSchema: CalendaringResultSchema,
+      },
     );
 
     const textBlock = response.content.find((block) => block.type === "text");

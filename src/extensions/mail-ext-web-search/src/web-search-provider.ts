@@ -1,4 +1,5 @@
 import { createMessage } from "../../../main/services/llm-service";
+import { z } from "zod";
 import type {
   ExtensionContext,
   EnrichmentProvider,
@@ -28,6 +29,14 @@ export interface WebSearchProviderDeps {
    */
   getParsingModelConfig: () => { provider: LlmProvider; model: string };
 }
+
+const SenderProfileResponseSchema = z.object({
+  name: z.string(),
+  summary: z.string(),
+  title: z.string().optional(),
+  company: z.string().optional(),
+  linkedinUrl: z.string().optional(),
+});
 
 // Known reminder/automated service patterns
 const REMINDER_SERVICE_PATTERNS = [
@@ -394,7 +403,11 @@ Rules:
         },
       ],
     },
-    { caller: "web-search-sender-lookup-exa", provider: parsingModel.provider },
+    {
+      caller: "web-search-sender-lookup-exa",
+      provider: parsingModel.provider,
+      outputSchema: SenderProfileResponseSchema,
+    },
   );
 
   let text = "";
@@ -480,6 +493,13 @@ export function createWebSearchProvider(
         // no signal. Skip the fallback in that case and log clearly.
         let useExa = searchConfig.provider === "exa";
         if (useExa && !searchConfig.exaApiKey) {
+          const parsingModel = deps.getParsingModelConfig();
+          if (parsingModel.provider !== "anthropic") {
+            context.logger.error(
+              "Sender Lookup requires an Exa API key when its parsing model is not Anthropic",
+            );
+            return null;
+          }
           if (searchConfig.anthropicConfigured) {
             context.logger.warn(
               "senderLookupProvider=exa but exaApiKey is empty; falling back to Anthropic web_search",

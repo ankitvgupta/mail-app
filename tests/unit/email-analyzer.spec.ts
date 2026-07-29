@@ -13,7 +13,11 @@ import {
   resetAnthropicMock,
   getCapturedRequests,
 } from "../mocks/anthropic-api-mock";
-import { _setClientForTesting } from "../../src/main/services/llm-service";
+import {
+  _setClientForTesting,
+  _setOpenCodeServiceForTesting,
+} from "../../src/main/services/llm-service";
+import type { OpenCodeInferenceRequest } from "../../src/main/services/opencode-inference-service";
 import type { Email } from "../../src/shared/types";
 import { ANALYSIS_JSON_FORMAT } from "../../src/shared/types";
 
@@ -52,6 +56,44 @@ test.describe("EmailAnalyzer", () => {
 
   test.afterEach(() => {
     _setClientForTesting(null as unknown);
+    _setOpenCodeServiceForTesting();
+  });
+
+  test("analyze() constrains OpenCode output to the analysis schema", async () => {
+    const requests: OpenCodeInferenceRequest[] = [];
+    _setOpenCodeServiceForTesting({
+      complete: async (request) => {
+        requests.push(request);
+        return {
+          id: "assistant-1",
+          text: "",
+          structured: { needs_reply: true, reason: "Direct question" },
+          providerId: "openai",
+          modelId: "gpt-5.2",
+          finishReason: "stop",
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        };
+      },
+    });
+    const analyzer = new EmailAnalyzer("openai/gpt-5.2", undefined, "opencode");
+
+    await analyzer.analyze(makeEmail());
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].outputSchema).toEqual({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        needs_reply: { type: "boolean" },
+        reason: { type: "string" },
+      },
+      required: ["needs_reply", "reason"],
+      additionalProperties: false,
+    });
   });
 
   test("analyze() returns correct AnalysisResult for a needs-reply email", async () => {

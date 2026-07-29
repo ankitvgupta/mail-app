@@ -18,7 +18,11 @@ import {
   resetAnthropicMock,
   getCapturedRequests,
 } from "../mocks/anthropic-api-mock";
-import { _setClientForTesting } from "../../src/main/services/llm-service";
+import {
+  _setClientForTesting,
+  _setOpenCodeServiceForTesting,
+} from "../../src/main/services/llm-service";
+import type { OpenCodeInferenceRequest } from "../../src/main/services/opencode-inference-service";
 import { ArchiveReadyAnalyzer } from "../../src/main/services/archive-ready-analyzer";
 import { ARCHIVE_READY_JSON_FORMAT, DEFAULT_ARCHIVE_READY_PROMPT } from "../../src/shared/types";
 import type { DashboardEmail } from "../../src/shared/types";
@@ -300,6 +304,44 @@ test.describe("ArchiveReadyAnalyzer.analyzeThread", () => {
 
   test.afterEach(() => {
     _setClientForTesting(null as unknown);
+    _setOpenCodeServiceForTesting();
+  });
+
+  test("constrains OpenCode output to the archive-ready schema", async () => {
+    const requests: OpenCodeInferenceRequest[] = [];
+    _setOpenCodeServiceForTesting({
+      complete: async (request) => {
+        requests.push(request);
+        return {
+          id: "assistant-1",
+          text: "",
+          structured: { archive_ready: true, reason: "Conversation complete" },
+          providerId: "openai",
+          modelId: "gpt-5.2",
+          finishReason: "stop",
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        };
+      },
+    });
+    const analyzer = new ArchiveReadyAnalyzer("openai/gpt-5.2", undefined, "opencode");
+
+    await analyzer.analyzeThread([makeDashboardEmail()]);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].outputSchema).toEqual({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        archive_ready: { type: "boolean" },
+        reason: { type: "string" },
+      },
+      required: ["archive_ready", "reason"],
+      additionalProperties: false,
+    });
   });
 
   test("returns archive_ready=true when Claude says so", async () => {

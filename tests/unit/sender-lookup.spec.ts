@@ -3,9 +3,23 @@
  *
  * The actual provider lives in src/extensions/mail-ext-web-search/src/web-search-provider.ts
  * and imports Anthropic SDK + extension types that transitively depend on electron.
- * We re-implement the pure helper functions here and test the logic directly.
+ * We re-implement the pure helper functions here and exercise provider routing directly.
  */
 import { test, expect } from "@playwright/test";
+import { createRequire } from "node:module";
+import type { ExtensionContext } from "../../src/shared/extension-types";
+import type { DashboardEmail } from "../../src/shared/types";
+import { _setClientForTesting } from "../../src/main/services/llm-service";
+import {
+  MockAnthropic,
+  getCapturedRequests,
+  mockAnthropicResponse,
+  resetAnthropicMock,
+} from "../mocks/anthropic-api-mock";
+
+const require = createRequire(import.meta.url);
+const webSearchProviderModule: typeof import("../../src/extensions/mail-ext-web-search/src/web-search-provider") = require("../../src/extensions/mail-ext-web-search/src/web-search-provider.ts");
+const { createWebSearchProvider } = webSearchProviderModule;
 
 // =============================================================================
 // Re-implemented pure functions from web-search-provider.ts
@@ -548,5 +562,74 @@ test.describe("cache key computation", () => {
   test("cache expiration constant is 7 days in milliseconds", () => {
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     expect(SEVEN_DAYS_MS).toBe(604_800_000);
+  });
+});
+
+test.describe("sender lookup provider routing", () => {
+  test.beforeEach(() => {
+    resetAnthropicMock();
+    _setClientForTesting(new MockAnthropic());
+  });
+
+  test.afterEach(() => {
+    _setClientForTesting(null as unknown);
+  });
+
+  test("skips Exa without a key when OpenCode is the parsing provider", async () => {
+    mockAnthropicResponse({
+      text: '{"name":"Alice","summary":"Anthropic fallback should not run"}',
+    });
+    const errors: string[] = [];
+    const context: ExtensionContext = {
+      extensionId: "web-search",
+      extensionPath: "/test/web-search",
+      storage: {
+        get: async <T>() => null,
+        set: async <T>() => {},
+        delete: async () => {},
+      },
+      secrets: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+      },
+      logger: {
+        info: () => {},
+        warn: () => {},
+        error: (message) => errors.push(message),
+        debug: () => {},
+      },
+    };
+    const provider = createWebSearchProvider(context, {
+      getModelId: () => "claude-sonnet-4-20250514",
+      getSearchConfig: () => ({
+        provider: "exa",
+        exaApiKey: "",
+        anthropicConfigured: true,
+      }),
+      getParsingModelConfig: () => ({
+        provider: "opencode",
+        model: "openai/gpt-5.2",
+      }),
+    });
+    const email: DashboardEmail = {
+      id: "msg-1",
+      threadId: "thread-1",
+      subject: "Hello",
+      from: "Alice <alice@example.com>",
+      to: "user@example.com",
+      date: "2026-07-29T12:00:00Z",
+      body: "Hello",
+      snippet: "Hello",
+      labelIds: ["INBOX"],
+    };
+
+    const result = await provider.enrich(email, [email]);
+
+    expect(result).toBeNull();
+    expect(getCapturedRequests()).toHaveLength(0);
+    expect(errors).toContain(
+      "Sender Lookup requires an Exa API key when its parsing model is not Anthropic",
+    );
   });
 });
