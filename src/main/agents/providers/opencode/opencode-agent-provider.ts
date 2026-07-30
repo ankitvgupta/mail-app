@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { dirname, join, delimiter as pathDelimiter, posix, win32 } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import type { AssistantMessage, Config, Event } from "@opencode-ai/sdk";
-// Type-only namespace import lets us reference the SDK's function types
-// (typeof OcSdk.createOpencodeServer) without emitting a runtime `require()`,
+// Type-only namespace import lets us reference the SDK's client function type
+// without emitting a runtime `require()`,
 // which is required because @opencode-ai/sdk is ESM-only and the worker
 // bundle is CJS. See loadOpencodeSdk() for the runtime side.
 import type * as OcSdk from "@opencode-ai/sdk";
@@ -22,13 +22,14 @@ import type {
 import { McpBridge } from "./mcp-bridge";
 import { createEventMapper } from "./event-mapper";
 import { createLogger } from "../../../services/logger";
+import { launchOpenCodeServer } from "../../../services/opencode-server";
 import {
+  parseOpenCodeModelSelector,
   resolveOpenCodeRoute,
   type OpenCodeModelOption,
   type OpenCodeRoute,
 } from "../../../../shared/types";
 
-type CreateOpencodeServerFn = typeof OcSdk.createOpencodeServer;
 type CreateOpencodeClientFn = typeof OcSdk.createOpencodeClient;
 
 const log = createLogger("opencode-agent");
@@ -47,15 +48,18 @@ export function buildOpenCodeAgentConfig(bridgeUrl: string): Config {
 
 export function createOpenCodeRunUsageTracker({
   sessionId,
+  requestedModel = "opencode-default",
   accountId,
   emailId,
   recordSessionStart,
 }: {
-  sessionId: string;
+  sessionId?: string;
+  requestedModel?: string;
   accountId?: string;
   emailId?: string;
   recordSessionStart: AgentSessionStartFn;
 }): {
+  setSessionId: (sessionId: string) => void;
   observe: (event: Event) => void;
   record: (args: {
     route?: OpenCodeRoute;
@@ -66,12 +70,16 @@ export function createOpenCodeRunUsageTracker({
 } {
   const messages = new Map<string, AssistantMessage>();
   let recorded = false;
+  let activeSessionId = sessionId;
 
   return {
+    setSessionId: (nextSessionId) => {
+      activeSessionId = nextSessionId;
+    },
     observe: (event) => {
       if (event.type !== "message.updated") return;
       const info = event.properties.info;
-      if (info.role === "assistant" && info.sessionID === sessionId) {
+      if (info.role === "assistant" && info.sessionID === activeSessionId) {
         messages.set(info.id, info);
       }
     },
@@ -86,13 +94,12 @@ export function createOpenCodeRunUsageTracker({
         undefined,
       );
       const actualRoute = last ? { providerID: last.providerID, modelID: last.modelID } : route;
-      if (!actualRoute) return;
 
       const hasUsage = snapshots.length > 0;
       recordSessionStart({
         harness: "opencode",
         provider: "opencode",
-        model: `${actualRoute.providerID}/${actualRoute.modelID}`,
+        model: actualRoute ? `${actualRoute.providerID}/${actualRoute.modelID}` : requestedModel,
         accountId,
         emailId,
         ...(hasUsage
@@ -116,6 +123,15 @@ export function createOpenCodeRunUsageTracker({
       });
     },
   };
+}
+
+export function requestedOpenCodeModelLabel(
+  config: AgentFrameworkConfig,
+  runtimeOverride: string | undefined,
+): string {
+  const selector = runtimeOverride?.trim() || config.opencode?.model?.trim() || "";
+  const exact = parseOpenCodeModelSelector(selector);
+  return exact ? `${exact.providerID}/${exact.modelID}` : "opencode-default";
 }
 
 async function listConnectedModels(client: OpencodeClient): Promise<OpenCodeModelOption[]> {
@@ -147,7 +163,6 @@ async function listConnectedModels(client: OpencodeClient): Promise<OpenCodeMode
  * `import()` into `Promise.resolve(require(...))` during the CJS build.
  */
 type OpencodeSdk = {
-  createOpencodeServer: CreateOpencodeServerFn;
   createOpencodeClient: CreateOpencodeClientFn;
 };
 const importDynamic = new Function("s", "return import(s)") as (
@@ -156,14 +171,10 @@ const importDynamic = new Function("s", "return import(s)") as (
 let sdkCache: OpencodeSdk | null = null;
 async function loadOpencodeSdk(): Promise<OpencodeSdk> {
   if (sdkCache) return sdkCache;
-  const root = (await importDynamic("@opencode-ai/sdk")) as {
-    createOpencodeServer: CreateOpencodeServerFn;
-  };
   const clientMod = (await importDynamic("@opencode-ai/sdk/client")) as {
     createOpencodeClient: CreateOpencodeClientFn;
   };
   sdkCache = {
-    createOpencodeServer: root.createOpencodeServer,
     createOpencodeClient: clientMod.createOpencodeClient,
   };
   return sdkCache;
@@ -251,12 +262,33 @@ export class OpenCodeAgentProvider implements AgentProvider {
       recordSessionStart,
     } = params;
     const runStartedAt = Date.now();
+    let route: OpenCodeRoute | undefined;
+    let sessionId: string | undefined;
+    const usage = createOpenCodeRunUsageTracker({
+      requestedModel: requestedOpenCodeModelLabel(this.frameworkConfig, modelOverride),
+      accountId: context.accountId,
+      emailId: context.currentEmailId,
+      recordSessionStart,
+    });
+    const finish = (state: AgentRunResult["state"], errorMessage?: string): AgentRunResult => {
+      usage.record({
+        route,
+        durationMs: Date.now() - runStartedAt,
+        success: state === "completed",
+        errorMessage,
+      });
+      return {
+        state,
+        ...(sessionId ? { providerTaskId: sessionId } : {}),
+      };
+    };
 
     yield { type: "state", state: "running" };
 
     if (!this.frameworkConfig.opencode?.enabled) {
-      yield { type: "error", message: "OpenCode provider is not enabled in Settings" };
-      return { state: "failed" };
+      const message = "OpenCode provider is not enabled in Settings";
+      yield { type: "error", message };
+      return finish("failed", message);
     }
 
     // Hook our executor into the MCP bridge. Single-flight: this overwrites any
@@ -268,19 +300,19 @@ export class OpenCodeAgentProvider implements AgentProvider {
     try {
       handle = await this.ensureServer(tools);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      yield { type: "error", message: `Failed to start OpenCode server: ${message}` };
-      return { state: "failed" };
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = `Failed to start OpenCode server: ${detail}`;
+      yield { type: "error", message };
+      return finish("failed", message);
     }
     const { client } = handle;
 
-    let route: OpenCodeRoute | undefined;
     try {
       route = resolveRoute(this.frameworkConfig, modelOverride, await listConnectedModels(client));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       yield { type: "error", message };
-      return { state: "failed" };
+      return finish("failed", message);
     }
 
     // Reuse the prior OpenCode session if this is a follow-up — that's how the
@@ -289,7 +321,6 @@ export class OpenCodeAgentProvider implements AgentProvider {
     // Falls back to creating a fresh session if no prior ID is provided OR if
     // the prior session no longer exists on the server (e.g. server restarted
     // between turns and lost in-memory state).
-    let sessionId: string;
     const priorSessionId = context.providerConversationIds?.opencode;
     if (priorSessionId) {
       const exists = await client.session
@@ -316,26 +347,13 @@ export class OpenCodeAgentProvider implements AgentProvider {
         sessionId = id;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        yield { type: "error", message: `Failed to create OpenCode session: ${message}` };
-        return { state: "failed" };
+        const errorMessage = `Failed to create OpenCode session: ${message}`;
+        yield { type: "error", message: errorMessage };
+        return finish("failed", errorMessage);
       }
     }
 
-    const usage = createOpenCodeRunUsageTracker({
-      sessionId,
-      accountId: context.accountId,
-      emailId: context.currentEmailId,
-      recordSessionStart,
-    });
-    const finish = (state: AgentRunResult["state"], errorMessage?: string): AgentRunResult => {
-      usage.record({
-        route,
-        durationMs: Date.now() - runStartedAt,
-        success: state === "completed",
-        errorMessage,
-      });
-      return { state, providerTaskId: sessionId };
-    };
+    usage.setSessionId(sessionId);
 
     const abortController = new AbortController();
     // Pre-aborted signal short-circuit: addEventListener after the event has
@@ -383,8 +401,9 @@ export class OpenCodeAgentProvider implements AgentProvider {
       };
     } catch (err) {
       cleanup();
-      const message = err instanceof Error ? err.message : String(err);
-      yield { type: "error", message: `Failed to open OpenCode event stream: ${message}` };
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = `Failed to open OpenCode event stream: ${detail}`;
+      yield { type: "error", message };
       return finish("failed", message);
     }
 
@@ -422,6 +441,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
       // Consume events until terminal or aborted.
       let finalSummary = "Completed";
+      let reachedIdle = false;
       while (true) {
         if (abortController.signal.aborted) break;
         const step = await streamIter.next();
@@ -445,6 +465,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
             return finish("failed", mapper.lastError() ?? undefined);
           }
           // session.idle — success path
+          reachedIdle = true;
           break;
         }
       }
@@ -461,6 +482,13 @@ export class OpenCodeAgentProvider implements AgentProvider {
         }
         yield { type: "state", state: "cancelled" };
         return finish("cancelled");
+      }
+
+      if (!reachedIdle) {
+        const message = "OpenCode event stream ended before session completion";
+        yield { type: "error", message };
+        cleanup();
+        return finish("failed", message);
       }
 
       // Fetch the final assistant message text to populate the `done` summary.
@@ -588,21 +616,12 @@ export class OpenCodeAgentProvider implements AgentProvider {
       const bridgeUrl = await this.bridge.start(tools);
       const ocConfig = buildOpenCodeAgentConfig(bridgeUrl);
 
-      // Prepend node_modules/.bin to PATH so the SDK's `launch("opencode", …)`
-      // finds the local install without requiring a global install. In a
-      // packaged Electron app, the path resolution is more involved (asar.unpacked);
-      // we cover dev today and TODO packaging.
       const binPath = resolveOpencodeBinary();
-      if (binPath) {
-        const binDir = dirname(binPath);
-        const currentPath = process.env.PATH ?? "";
-        if (!currentPath.split(pathDelimiter).includes(binDir)) {
-          process.env.PATH = `${binDir}${pathDelimiter}${currentPath}`;
-        }
-      }
+      if (!binPath) throw new Error("Bundled OpenCode executable was not found");
 
       const sdk = await loadOpencodeSdk();
-      const server = await sdk.createOpencodeServer({
+      const server = await launchOpenCodeServer({
+        binaryPath: binPath,
         hostname: "127.0.0.1",
         port: 0,
         timeout: 30_000,

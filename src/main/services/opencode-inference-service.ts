@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { dirname, delimiter as pathDelimiter } from "node:path";
 import type * as OpenCodeV2Client from "@opencode-ai/sdk/v2/client";
-import type * as OpenCodeV2Server from "@opencode-ai/sdk/v2/server";
 
 import { resolveOpenCodeRoute, type OpenCodeModelOption } from "../../shared/types";
 import { resolveOpencodeBinary } from "../agents/providers/opencode/opencode-agent-provider";
 import { createLogger } from "./logger";
+import { launchOpenCodeServer } from "./opencode-server";
 
 const log = createLogger("opencode-inference");
 
@@ -53,19 +52,12 @@ export type OpenCodeLauncher = () => Promise<OpenCodeHandle>;
 async function launchOpenCode(): Promise<OpenCodeHandle> {
   const binPath = resolveOpencodeBinary();
   if (!binPath) throw new Error("Bundled OpenCode executable was not found");
-  const binDir = dirname(binPath);
-  const currentPath = process.env.PATH ?? "";
-  if (!currentPath.split(pathDelimiter).includes(binDir)) {
-    process.env.PATH = `${binDir}${pathDelimiter}${currentPath}`;
-  }
 
-  const serverModule = (await importDynamic(
-    "@opencode-ai/sdk/v2/server",
-  )) as typeof OpenCodeV2Server;
   const clientModule = (await importDynamic(
     "@opencode-ai/sdk/v2/client",
   )) as typeof OpenCodeV2Client;
-  const server = await serverModule.createOpencodeServer({
+  const server = await launchOpenCodeServer({
+    binaryPath: binPath,
     hostname: "127.0.0.1",
     port: 0,
     timeout: 30_000,

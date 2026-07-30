@@ -75,6 +75,8 @@ export interface LlmCallRecord {
   success: number;
   error_message: string | null;
   provider: string;
+  usage_available: number;
+  cost_available: number;
 }
 
 export interface UsageStats {
@@ -237,7 +239,9 @@ export function setAnthropicServiceDb(db: DatabaseInstance): void {
       duration_ms INTEGER NOT NULL,
       success INTEGER NOT NULL DEFAULT 1,
       error_message TEXT,
-      provider TEXT DEFAULT 'anthropic'
+      provider TEXT DEFAULT 'anthropic',
+      usage_available INTEGER NOT NULL DEFAULT 1,
+      cost_available INTEGER NOT NULL DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_calls_caller ON llm_calls(caller);
@@ -245,8 +249,9 @@ export function setAnthropicServiceDb(db: DatabaseInstance): void {
   _insertStmt = db.prepare(`
     INSERT INTO llm_calls (id, model, caller, email_id, account_id,
       input_tokens, output_tokens, cache_read_tokens, cache_create_tokens,
-      cost_cents, duration_ms, success, error_message, provider)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      cost_cents, duration_ms, success, error_message, provider,
+      usage_available, cost_available)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 }
 
@@ -281,6 +286,8 @@ function recordCall(
   errorMessage: string | null,
   provider?: LlmProvider,
   costCentsOverride?: number,
+  usageAvailable = true,
+  costAvailable = true,
 ): void {
   if (!_insertStmt) {
     log.warn("LLM service: database not initialized, skipping call recording");
@@ -309,6 +316,8 @@ function recordCall(
       success ? 1 : 0,
       errorMessage,
       provider ?? "anthropic",
+      usageAvailable ? 1 : 0,
+      costAvailable ? 1 : 0,
     );
   } catch (err) {
     // Recording failure must never break the LLM call
@@ -332,6 +341,12 @@ export function recordAgentSessionStart(args: {
   success?: boolean;
   errorMessage?: string;
 }): void {
+  const usageAvailable =
+    args.inputTokens !== undefined &&
+    args.outputTokens !== undefined &&
+    args.cacheReadTokens !== undefined &&
+    args.cacheCreateTokens !== undefined;
+  const costAvailable = args.costDollars !== undefined;
   recordCall(
     args.model,
     `agent-run:${args.harness}`,
@@ -346,6 +361,8 @@ export function recordAgentSessionStart(args: {
     args.errorMessage ?? null,
     args.provider,
     args.costDollars === undefined ? undefined : args.costDollars * 100,
+    usageAvailable,
+    costAvailable,
   );
 }
 
@@ -683,6 +700,8 @@ export async function createMessage(
         null,
         "opencode",
         result.costDollars === undefined ? undefined : result.costDollars * 100,
+        true,
+        result.costDollars !== undefined,
       );
       return response;
     } catch (error) {
@@ -700,6 +719,9 @@ export async function createMessage(
         false,
         errorMessage,
         "opencode",
+        undefined,
+        false,
+        false,
       );
       throw error;
     } finally {

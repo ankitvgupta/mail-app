@@ -15,8 +15,8 @@ import {
 import { deriveTraceProviderIds } from "../../src/shared/agent-types";
 import type { ScopedAgentEvent } from "../../src/shared/agent-types";
 import {
-  resolveAgentChatModelOverride,
-  resolveAgentDrafterModelOverride,
+  resolveAgentChatModelOverrides,
+  resolveAgentDrafterModelOverrides,
 } from "../../src/main/agents/types";
 
 test.describe("ConfigSchema backgroundAgentProvider", () => {
@@ -246,33 +246,39 @@ test.describe("isAgentRuntimeAvailable", () => {
 
 test.describe("agent model overrides", () => {
   test("Agent Drafter defaults to its OpenCode selector for a sole OpenCode run", () => {
-    expect(resolveAgentDrafterModelOverride(["opencode"], undefined, "openai/gpt-5.2")).toBe(
-      "openai/gpt-5.2",
-    );
+    expect(resolveAgentDrafterModelOverrides(["opencode"], undefined, "openai/gpt-5.2")).toEqual({
+      opencode: "openai/gpt-5.2",
+    });
   });
 
   test("an explicit Agent Drafter override wins over its OpenCode selector", () => {
     expect(
-      resolveAgentDrafterModelOverride(
+      resolveAgentDrafterModelOverrides(
         ["opencode"],
-        "anthropic/claude-sonnet-4-5",
+        { opencode: "anthropic/claude-sonnet-4-5" },
         "openai/gpt-5.2",
       ),
-    ).toBe("anthropic/claude-sonnet-4-5");
+    ).toEqual({ opencode: "anthropic/claude-sonnet-4-5" });
   });
 
   test("Agent Drafter does not apply its OpenCode selector to multi-provider runs", () => {
     expect(
-      resolveAgentDrafterModelOverride(["opencode", "claude"], undefined, "openai/gpt-5.2"),
+      resolveAgentDrafterModelOverrides(["opencode", "claude"], undefined, "openai/gpt-5.2"),
     ).toBeUndefined();
   });
 
-  test("Agent Chat uses its OpenCode selector only when OpenCode is selected", () => {
-    expect(resolveAgentChatModelOverride("opencode", "openai/gpt-5.2", "claude-opus-4-6")).toBe(
-      "openai/gpt-5.2",
-    );
-    expect(resolveAgentChatModelOverride("claude", "openai/gpt-5.2", "claude-opus-4-6")).toBe(
-      "claude-opus-4-6",
-    );
+  test("Agent Chat creates provider-specific overrides for multi-provider runs", () => {
+    expect(
+      resolveAgentChatModelOverrides(["opencode", "claude"], "openai/gpt-5.2", "claude-opus-4-6"),
+    ).toEqual({
+      opencode: "openai/gpt-5.2",
+      claude: "claude-opus-4-6",
+    });
+    expect(
+      resolveAgentChatModelOverrides(["claude", "opencode"], "openai/gpt-5.2", "claude-opus-4-6"),
+    ).toEqual({
+      claude: "claude-opus-4-6",
+      opencode: "openai/gpt-5.2",
+    });
   });
 });

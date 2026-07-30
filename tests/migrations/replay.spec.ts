@@ -116,6 +116,10 @@ test.describe("Migration replay + symmetry", () => {
       expect(draftCols.has(col), `drafts should have column ${col}`).toBe(true);
     }
 
+    const llmCallCols = listTableColumns(db, "llm_calls");
+    expect(llmCallCols.has("usage_available")).toBe(true);
+    expect(llmCallCols.has("cost_available")).toBe(true);
+
     // All numbered migrations should be recorded as applied.
     const appliedVersions = (
       db.prepare("SELECT version FROM schema_version ORDER BY version").all() as Array<{

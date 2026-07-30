@@ -3,9 +3,10 @@ import path from "path";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import {
-  resolveAgentDrafterModelOverride,
+  resolveAgentDrafterModelOverrides,
   type AgentContext,
   type AgentFrameworkConfig,
+  type AgentModelOverrides,
   type CoordinatorMessage,
   type ScopedAgentEvent,
   type WorkerMessage,
@@ -236,9 +237,8 @@ export class AgentCoordinator {
       cc?: string[],
       bcc?: string[],
     ) => generateForwardForEmail({ emailId, accountId, instructions, to, cc, bcc }),
-    // Logged once per provider.run(): stamps which harness and LLM backend were
-    // chosen for the session. The only visibility into OpenCode-driven sessions,
-    // since their actual LLM calls happen inside the spawned opencode server.
+    // Claude/Hostler stamp their resolved route at start. OpenCode reports one
+    // terminal record with the usage metadata returned by its child server.
     recordAgentSessionStart: (args: Parameters<typeof recordAgentSessionStart>[0]) =>
       recordAgentSessionStart(args),
   } as const;
@@ -377,7 +377,7 @@ export class AgentCoordinator {
     providerIds: string[],
     prompt: string,
     context: AgentContext,
-    modelOverride?: string,
+    modelOverrides?: AgentModelOverrides,
   ): Promise<void> {
     const worker = this.ensureWorker();
 
@@ -446,9 +446,9 @@ export class AgentCoordinator {
     port1.start();
 
     // Send the run command with port2 to the worker
-    const resolvedModelOverride = resolveAgentDrafterModelOverride(
+    const resolvedModelOverrides = resolveAgentDrafterModelOverrides(
       providerIds,
-      modelOverride,
+      modelOverrides,
       getOpenCodeModelSelector("agentDrafter"),
     );
     worker.postMessage(
@@ -458,7 +458,7 @@ export class AgentCoordinator {
         providerIds,
         prompt,
         context,
-        modelOverride: resolvedModelOverride,
+        modelOverrides: resolvedModelOverrides,
       },
       [port2],
     );

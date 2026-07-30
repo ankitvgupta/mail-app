@@ -6,7 +6,7 @@ import { getConfig, getModelIdForFeature, getOpenCodeModelSelector } from "./set
 import { resolveAgentOllamaConfig } from "../../shared/types";
 import { getAgentTrace } from "../db";
 import {
-  resolveAgentChatModelOverride,
+  resolveAgentChatModelOverrides,
   type AgentContext,
   type ScopedAgentEvent,
 } from "../agents/types";
@@ -58,12 +58,12 @@ export function registerAgentIpc(): void {
         // unless we send an Anthropic name.
         const standardModel =
           resolveAgentOllamaConfig(getConfig())?.model ?? getModelIdForFeature("agentChat");
-        const modelOverride = resolveAgentChatModelOverride(
-          providerIds[0],
+        const modelOverrides = resolveAgentChatModelOverrides(
+          providerIds,
           getOpenCodeModelSelector("agentChat"),
           standardModel,
         );
-        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
+        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverrides);
         return { success: true, data: { taskId } };
       } catch (error) {
         return {

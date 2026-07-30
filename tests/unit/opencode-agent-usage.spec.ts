@@ -5,7 +5,13 @@ import {
   buildOpenCodeAgentConfig,
   createOpenCodeRunUsageTracker,
   OpenCodeAgentProvider,
+  requestedOpenCodeModelLabel,
 } from "../../src/main/agents/providers/opencode/opencode-agent-provider";
+import type {
+  AgentContext,
+  AgentRunParams,
+  AgentSessionStartFn,
+} from "../../src/main/agents/types";
 import {
   recordAgentSessionStart,
   setAnthropicServiceDb,
@@ -70,6 +76,32 @@ function assistantSnapshot(
 
 function messageUpdated(info: AssistantMessage): Event {
   return { type: "message.updated", properties: { info } };
+}
+
+function baseRunParams(recordSessionStart: AgentSessionStartFn): AgentRunParams {
+  return {
+    taskId: "task-1",
+    prompt: "hello",
+    context: { accountId: "account-1" } as AgentContext,
+    tools: [],
+    toolExecutor: async () => undefined,
+    netFetch: async () => ({ status: 200, headers: {}, body: "" }),
+    recordSessionStart,
+    signal: new AbortController().signal,
+  };
+}
+
+async function exhaustRun(
+  provider: OpenCodeAgentProvider,
+  params: AgentRunParams,
+): Promise<{ state: string; events: Array<{ type: string; message?: string }> }> {
+  const events: Array<{ type: string; message?: string }> = [];
+  const run = provider.run(params);
+  while (true) {
+    const next = await run.next();
+    if (next.done) return { state: next.value.state, events };
+    events.push(next.value);
+  }
 }
 
 test("OpenCode agent config preserves the mail bridge and delegates providers to global config", () => {
@@ -169,6 +201,8 @@ test("latest assistant snapshots are deduplicated and successful usage is record
     1,
     null,
     "opencode",
+    1,
+    1,
   ]);
 });
 
@@ -207,5 +241,154 @@ test("failed OpenCode runs include accumulated usage and the exact error", () =>
     0,
     "quota exhausted",
     "opencode",
+    1,
+    1,
   ]);
+});
+
+test("missing OpenCode usage and cost stay distinguishable from observed zero", () => {
+  const inserts = useRecordingDb();
+  const tracker = createOpenCodeRunUsageTracker({
+    requestedModel: "opencode-default",
+    recordSessionStart: recordAgentSessionStart,
+  });
+
+  tracker.record({ durationMs: 12, success: false, errorMessage: "startup failed" });
+  tracker.record({ durationMs: 99, success: true });
+
+  expect(inserts).toHaveLength(1);
+  expect(inserts[0].slice(1)).toEqual([
+    "opencode-default",
+    "agent-run:opencode",
+    null,
+    null,
+    0,
+    0,
+    0,
+    0,
+    0,
+    12,
+    0,
+    "startup failed",
+    "opencode",
+    0,
+    0,
+  ]);
+});
+
+test("early OpenCode startup failure records exactly one terminal failure", async () => {
+  const provider = new OpenCodeAgentProvider({
+    model: "claude-sonnet-4-6",
+    opencode: { enabled: true },
+  });
+  Object.defineProperty(provider, "ensureServer", {
+    value: async () => {
+      throw new Error("server unavailable");
+    },
+  });
+  const records: Parameters<AgentSessionStartFn>[0][] = [];
+
+  const result = await exhaustRun(
+    provider,
+    baseRunParams((record) => {
+      records.push(record);
+    }),
+  );
+
+  expect(result.state).toBe("failed");
+  expect(records).toEqual([
+    expect.objectContaining({
+      model: "opencode-default",
+      success: false,
+      errorMessage: "Failed to start OpenCode server: server unavailable",
+    }),
+  ]);
+});
+
+test("event stream ending without session idle records a failure with partial usage", async () => {
+  const provider = new OpenCodeAgentProvider({
+    model: "claude-sonnet-4-6",
+    opencode: { enabled: true },
+  });
+  const stream = (async function* (): AsyncGenerator<Event> {
+    yield messageUpdated(
+      assistantSnapshot("assistant-1", {
+        input: 8,
+        output: 2,
+        cacheRead: 1,
+        cacheWrite: 0,
+        cost: 0.004,
+      }),
+    );
+  })();
+  Object.defineProperty(provider, "ensureServer", {
+    value: async () => ({
+      client: {
+        provider: {
+          list: async () => ({
+            data: {
+              all: [
+                {
+                  id: "openai",
+                  name: "OpenAI",
+                  models: { "gpt-5.2": { id: "gpt-5.2", name: "GPT-5.2" } },
+                },
+              ],
+              connected: ["openai"],
+              default: {},
+            },
+          }),
+        },
+        session: {
+          create: async () => ({ data: { id: "session-1" } }),
+          promptAsync: async () => ({ data: undefined }),
+          messages: async () => ({ data: [] }),
+          abort: async () => ({ data: true }),
+        },
+        event: {
+          subscribe: async () => ({ stream }),
+        },
+      },
+      close: () => {},
+      bridgeUrl: "http://127.0.0.1:4321/mcp",
+    }),
+  });
+  const records: Parameters<AgentSessionStartFn>[0][] = [];
+
+  const result = await exhaustRun(provider, {
+    ...baseRunParams((record) => {
+      records.push(record);
+    }),
+    modelOverride: "openai/gpt-5.2",
+  });
+
+  expect(result.state).toBe("failed");
+  expect(result.events).toContainEqual(
+    expect.objectContaining({
+      type: "error",
+      message: "OpenCode event stream ended before session completion",
+    }),
+  );
+  expect(records).toEqual([
+    expect.objectContaining({
+      model: "openai/gpt-5.2",
+      inputTokens: 8,
+      outputTokens: 2,
+      success: false,
+      errorMessage: "OpenCode event stream ended before session completion",
+    }),
+  ]);
+});
+
+test("early route labels use exact requests and never invent a default model", () => {
+  const config = {
+    model: "claude-sonnet-4-6",
+    opencode: { enabled: true, model: "anthropic/claude-sonnet-4-5" },
+  };
+
+  expect(requestedOpenCodeModelLabel(config, "openai/gpt-5.2")).toBe("openai/gpt-5.2");
+  expect(requestedOpenCodeModelLabel(config, "bare-model")).toBe("opencode-default");
+  expect(requestedOpenCodeModelLabel({ ...config, opencode: { enabled: true } }, " ")).toBe(
+    "opencode-default",
+  );
 });

@@ -354,6 +354,20 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 8,
+    name: "add_llm_calls_accounting_availability",
+    up: (db) => {
+      const cols = db.prepare("PRAGMA table_info(llm_calls)").all() as Array<{ name: string }>;
+      if (cols.length === 0) return;
+      if (!cols.some((column) => column.name === "usage_available")) {
+        db.exec(`ALTER TABLE llm_calls ADD COLUMN usage_available INTEGER NOT NULL DEFAULT 1`);
+      }
+      if (!cols.some((column) => column.name === "cost_available")) {
+        db.exec(`ALTER TABLE llm_calls ADD COLUMN cost_available INTEGER NOT NULL DEFAULT 1`);
+      }
+    },
+  },
 ];
 
 function runNumberedMigrations(db: DatabaseInstance): void {

@@ -20,6 +20,7 @@ import {
   setAnthropicServiceDb,
   getUsageStats,
   getCallHistory,
+  recordAgentSessionStart,
   type LlmCallRecord,
 } from "../../src/main/services/llm-service";
 import type { OpenCodeInferenceRequest } from "../../src/main/services/opencode-inference-service";
@@ -281,6 +282,25 @@ test.describe("AnthropicService", () => {
     expect(row.success).toBe(1);
     expect(row.error_message).toBeNull();
     expect(row.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(row.usage_available).toBe(1);
+    expect(row.cost_available).toBe(1);
+  });
+
+  test("agent accounting flags distinguish missing usage and cost from observed zero", () => {
+    recordAgentSessionStart({
+      harness: "opencode",
+      provider: "opencode",
+      model: "opencode-default",
+      durationMs: 15,
+      success: false,
+      errorMessage: "startup failed",
+    });
+
+    const row = testDb.prepare("SELECT * FROM llm_calls LIMIT 1").get() as LlmCallRecord;
+    expect(row.input_tokens).toBe(0);
+    expect(row.cost_cents).toBe(0);
+    expect(row.usage_available).toBe(0);
+    expect(row.cost_available).toBe(0);
   });
 
   test("records zero cost when OpenCode does not report cost", async () => {
@@ -304,10 +324,10 @@ test.describe("AnthropicService", () => {
       provider: "opencode",
     });
 
-    const row = testDb.prepare("SELECT cost_cents FROM llm_calls LIMIT 1").get() as {
-      cost_cents: number;
-    };
+    const row = testDb.prepare("SELECT * FROM llm_calls LIMIT 1").get() as LlmCallRecord;
     expect(row.cost_cents).toBe(0);
+    expect(row.usage_available).toBe(1);
+    expect(row.cost_available).toBe(0);
   });
 
   test("records one failed OpenCode call and rethrows the service error", async () => {
@@ -340,6 +360,8 @@ test.describe("AnthropicService", () => {
     expect(rows[0].error_message).toBe("OpenCode unavailable");
     expect(rows[0].input_tokens).toBe(0);
     expect(rows[0].output_tokens).toBe(0);
+    expect(rows[0].usage_available).toBe(0);
+    expect(rows[0].cost_available).toBe(0);
   });
 
   test("rejects OpenCode tools before inference", async () => {
