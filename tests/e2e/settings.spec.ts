@@ -429,11 +429,11 @@ test.describe("Settings Panel - Persistence", () => {
   });
 });
 
-// These tests use ONLY the opencode + backgroundAgentProvider config keys.
-// The electron-store config is shared across parallel e2e workers (only the
-// DB is per-worker), and tests/e2e/hostler-settings.spec.ts owns the hostler
-// key — touching it here would let fullyParallel workers race on it.
-test.describe("Settings Panel - Agent Drafter runtime picker", () => {
+// The electron-store config is shared across parallel e2e workers (only the DB
+// is per-worker). This flow owns the OpenCode, feature-provider, Sender Lookup,
+// and background-agent keys, but never touches the Hostler key owned by
+// tests/e2e/hostler-settings.spec.ts.
+test.describe("Settings Panel - per-feature OpenCode models", () => {
   test.describe.configure({ mode: "serial" });
   let electronApp: ElectronApplication;
   let page: Page;
@@ -442,91 +442,269 @@ test.describe("Settings Panel - Agent Drafter runtime picker", () => {
     const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
     electronApp = result.app;
     page = result.page;
-    // Gate state must exist before Settings first mounts — the General tab
-    // reads it from the general-config query fetched on mount.
+
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("settings:list-opencode-models");
+      ipcMain.handle("settings:list-opencode-models", () => ({
+        success: true,
+        data: [
+          {
+            providerId: "openai",
+            providerName: "OpenAI",
+            modelId: "gpt-5.2",
+            modelName: "GPT-5.2",
+          },
+          {
+            providerId: "anthropic",
+            providerName: "Anthropic",
+            modelId: "claude-sonnet-4-5",
+            modelName: "Claude Sonnet 4.5",
+          },
+        ],
+      }));
+    });
+
     await page.evaluate(() =>
       window.api.settings.set({
+        senderLookupProvider: "exa",
+        featureProviders: {},
         backgroundAgentProvider: "claude",
-        opencode: { enabled: true },
+        opencode: { enabled: true, model: "legacy-model", featureModels: {} },
       }),
     );
   });
 
   test.afterAll(async () => {
-    if (page) {
-      await page.evaluate(() =>
-        window.api.settings.set({
-          backgroundAgentProvider: "claude",
-          opencode: { enabled: false },
-        }),
-      );
-    }
-    if (electronApp) {
-      await closeApp(electronApp);
+    try {
+      if (page && !page.isClosed()) {
+        await page.evaluate(() =>
+          window.api.settings.set({
+            senderLookupProvider: "anthropic",
+            featureProviders: {},
+            backgroundAgentProvider: "claude",
+            opencode: { enabled: false, model: "", featureModels: {} },
+          }),
+        );
+      }
+    } finally {
+      if (electronApp) {
+        await closeApp(electronApp);
+      }
     }
   });
 
-  test("an enabled runtime is selectable in the Agent Drafter row", async () => {
+  test("stages and persists per-feature OpenCode models and Agent Chat defaults", async () => {
     await page.locator("button[title='Settings']").click();
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
 
-    const select = page.getByLabel("Provider for Agent Drafter");
-    await select.scrollIntoViewIfNeeded();
-    await expect(select.locator("option[value='opencode']")).toBeEnabled();
-  });
+    const labels = [
+      "Email Analysis",
+      "Draft Generation",
+      "Draft Refinement",
+      "Scheduling Detection",
+      "Archive-Ready Analysis",
+      "Sender Lookup",
+      "Agent Drafter",
+      "Agent Chat",
+    ];
+    for (const label of labels) {
+      const select = page.getByLabel(`Provider for ${label}`);
+      await select.scrollIntoViewIfNeeded();
+      await expect(select.locator("option[value='opencode']")).toBeEnabled();
+    }
 
-  test("selecting an external runtime persists only after Save Changes", async () => {
-    const select = page.getByLabel("Provider for Agent Drafter");
-    await select.selectOption("opencode");
+    await page.getByLabel("Provider for Email Analysis").selectOption("opencode");
+    const analysisModel = page.getByLabel("OpenCode model for Email Analysis");
+    await expect(analysisModel).toHaveAttribute("role", "combobox");
+    await expect(analysisModel).toHaveAttribute("aria-autocomplete", "list");
+    await analysisModel.click();
+    await expect(page.getByRole("listbox", { name: "OpenCode model suggestions" })).toBeVisible();
+    await analysisModel.press("ArrowDown");
+    await analysisModel.press("Enter");
+    await expect(analysisModel).toHaveValue("openai/gpt-5.2");
 
-    // The model column is replaced by the Extensions hint while an external
-    // runtime is selected.
-    await expect(page.getByRole("button", { name: "Model set in Extensions" })).toBeVisible();
+    await page.getByLabel("Provider for Draft Generation").selectOption("opencode");
+    await page
+      .getByLabel("OpenCode model for Draft Generation")
+      .fill("anthropic/claude-sonnet-4-5");
 
-    // Old UI persisted on change; the consolidated row stages until Save.
+    // Provider and model changes remain staged until the existing Save flow.
     const before = (await page.evaluate(() => window.api.settings.get())) as {
-      data?: { backgroundAgentProvider?: string };
+      data?: {
+        featureProviders?: Record<string, string>;
+        opencode?: { featureModels?: Record<string, string> };
+      };
     };
-    expect(before.data?.backgroundAgentProvider ?? "claude").toBe("claude");
+    expect(before.data?.featureProviders?.analysis).toBeUndefined();
+    expect(before.data?.opencode?.featureModels?.analysis).toBeUndefined();
 
     await page.getByRole("button", { name: "Save Changes" }).click();
     await expect
       .poll(async () => {
         const cfg = (await page.evaluate(() => window.api.settings.get())) as {
-          data?: { backgroundAgentProvider?: string };
+          data?: {
+            opencode?: {
+              enabled?: boolean;
+              model?: string;
+              featureModels?: Record<string, string>;
+            };
+          };
         };
-        return cfg.data?.backgroundAgentProvider;
+        return cfg.data?.opencode;
       })
-      .toBe("opencode");
-  });
+      .toMatchObject({
+        enabled: true,
+        model: "legacy-model",
+        featureModels: {
+          analysis: "openai/gpt-5.2",
+          drafts: "anthropic/claude-sonnet-4-5",
+        },
+      });
 
-  test("selecting an LLM provider returns the runtime to Claude and restores the model select", async () => {
-    const select = page.getByLabel("Provider for Agent Drafter");
-    await select.selectOption("anthropic");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+,");
+    await expect(page.getByLabel("OpenCode model for Email Analysis")).toHaveValue(
+      "openai/gpt-5.2",
+    );
+    await expect(page.getByLabel("OpenCode model for Draft Generation")).toHaveValue(
+      "anthropic/claude-sonnet-4-5",
+    );
 
-    await expect(page.getByLabel("Model tier for Agent Drafter")).toBeVisible();
-
-    await page.getByRole("button", { name: "Save Changes" }).click();
-    await expect
-      .poll(async () => {
-        const cfg = (await page.evaluate(() => window.api.settings.get())) as {
-          data?: { backgroundAgentProvider?: string };
-        };
-        return cfg.data?.backgroundAgentProvider;
-      })
-      .toBe("claude");
-  });
-
-  // Same serial describe (same worker) as the tests above: they all mutate
-  // the shared backgroundAgentProvider/opencode keys.
-  test("shows the fallback warning and keeps the saved runtime selected when gated off", async ({}, testInfo) => {
-    // A saved runtime whose Extensions gates are no longer met — the row must
-    // surface the fallback instead of silently misrepresenting where drafts
-    // run. The state must exist before Settings first mounts, so relaunch.
+    // A selector removed from the live catalog remains visible and explicitly warned.
+    await page.keyboard.press("Escape");
     await page.evaluate(() =>
       window.api.settings.set({
+        opencode: { featureModels: { analysis: "openai/removed-model" } },
+      }),
+    );
+    await page.keyboard.press("ControlOrMeta+,");
+    await expect(page.getByLabel("OpenCode model for Email Analysis")).toHaveValue(
+      "openai/removed-model",
+    );
+    await expect(page.getByText("Saved model is unavailable in OpenCode.")).toBeVisible();
+
+    // Catalog refresh failures stay visible and a later successful refresh recovers.
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("settings:list-opencode-models");
+      ipcMain.handle("settings:list-opencode-models", () => ({
+        success: false,
+        error: "OpenCode model catalog unavailable",
+      }));
+    });
+    await page.getByRole("button", { name: "Refresh models" }).first().click();
+    await expect(page.getByRole("alert").first()).toHaveText("OpenCode model catalog unavailable");
+
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("settings:list-opencode-models");
+      ipcMain.handle("settings:list-opencode-models", () => ({
+        success: true,
+        data: [
+          {
+            providerId: "openai",
+            providerName: "OpenAI",
+            modelId: "gpt-5.2",
+            modelName: "GPT-5.2",
+          },
+          {
+            providerId: "anthropic",
+            providerName: "Anthropic",
+            modelId: "claude-sonnet-4-5",
+            modelName: "Claude Sonnet 4.5",
+          },
+        ],
+      }));
+    });
+    await page.getByRole("button", { name: "Refresh models" }).first().click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
+    // OpenCode parsing is only eligible with Exa. Leaving Exa resets the staged route.
+    await page.getByLabel("Provider for Sender Lookup").selectOption("opencode");
+    await page.getByLabel("OpenCode model for Sender Lookup").fill("openai/gpt-5.2");
+    await page.getByLabel("Backend").selectOption("anthropic");
+    await expect(page.getByLabel("Provider for Sender Lookup")).toHaveValue("anthropic");
+
+    // Agent Drafter owns both the background runtime and per-feature model route.
+    await page.getByLabel("Provider for Agent Drafter").selectOption("opencode");
+    await page.getByLabel("OpenCode model for Agent Drafter").fill("openai/gpt-5.2");
+    await page.getByLabel("Provider for Agent Chat").selectOption("opencode");
+    await page.getByLabel("OpenCode model for Agent Chat").fill("openai/gpt-5.2");
+    await page.getByRole("button", { name: "Save Changes" }).click();
+
+    await expect
+      .poll(async () => {
+        const cfg = (await page.evaluate(() => window.api.settings.get())) as {
+          data?: {
+            senderLookupProvider?: string;
+            backgroundAgentProvider?: string;
+            featureProviders?: Record<string, string>;
+          };
+        };
+        return {
+          senderLookupProvider: cfg.data?.senderLookupProvider,
+          senderLookup: cfg.data?.featureProviders?.senderLookup,
+          backgroundAgentProvider: cfg.data?.backgroundAgentProvider,
+          agentDrafter: cfg.data?.featureProviders?.agentDrafter,
+          agentChat: cfg.data?.featureProviders?.agentChat,
+        };
+      })
+      .toEqual({
+        senderLookupProvider: "anthropic",
+        senderLookup: "anthropic",
         backgroundAgentProvider: "opencode",
-        opencode: { enabled: false },
+        agentDrafter: "opencode",
+        agentChat: "opencode",
+      });
+
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+j");
+    await expect(page.getByPlaceholder("Ask agent anything...")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+            getState: () => { selectedAgentIds: string[] };
+          };
+          return store.getState().selectedAgentIds;
+        }),
+      )
+      .toEqual(["opencode"]);
+
+    await page.getByRole("button", { name: "Claude" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+            getState: () => { selectedAgentIds: string[] };
+          };
+          return store.getState().selectedAgentIds;
+        }),
+      )
+      .toEqual(["claude"]);
+
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+j");
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+            getState: () => { selectedAgentIds: string[] };
+          };
+          return store.getState().selectedAgentIds;
+        }),
+      )
+      .toEqual(["opencode"]);
+    await page.keyboard.press("Escape");
+  });
+
+  test("retains a saved OpenCode selection when the extension is disabled", async ({}, testInfo) => {
+    await page.evaluate(() =>
+      window.api.settings.set({
+        featureProviders: { analysis: "opencode" },
+        backgroundAgentProvider: "claude",
+        opencode: {
+          enabled: false,
+          featureModels: { analysis: "openai/gpt-5.2" },
+        },
       }),
     );
     await closeApp(electronApp);
@@ -535,14 +713,13 @@ test.describe("Settings Panel - Agent Drafter runtime picker", () => {
     page = result.page;
 
     await page.locator("button[title='Settings']").click();
-    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
-
-    const select = page.getByLabel("Provider for Agent Drafter");
+    const select = page.getByLabel("Provider for Email Analysis");
     await select.scrollIntoViewIfNeeded();
     await expect(select).toHaveValue("opencode");
     await expect(select.locator("option[value='opencode']")).toBeDisabled();
-    await expect(
-      page.getByText(/OpenCode is disabled — background drafts fall back to the built-in agent/),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Enable OpenCode in Extensions" })).toBeVisible();
+    await expect(page.getByLabel("OpenCode model for Email Analysis")).toHaveValue(
+      "openai/gpt-5.2",
+    );
   });
 });

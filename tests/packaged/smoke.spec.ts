@@ -221,7 +221,16 @@ test.describe("Packaged app smoke", () => {
     await page.evaluate(async () => {
       await window.api.settings.set({
         anthropicApiKey: "packaged-smoke-placeholder",
-        opencode: { enabled: true },
+        featureProviders: {
+          analysis: "opencode",
+          agentChat: "opencode",
+        },
+        opencode: {
+          enabled: true,
+          featureModels: {
+            analysis: "openai/gpt-5.2",
+          },
+        },
       });
     });
 
@@ -243,6 +252,27 @@ test.describe("Packaged app smoke", () => {
       undefined,
       { timeout: 30_000 },
     );
+
+    await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __ZUSTAND_STORE__: {
+            getState: () => {
+              setShowSettings: (open: boolean) => void;
+            };
+          };
+        }
+      ).__ZUSTAND_STORE__;
+      store.getState().setShowSettings(true);
+    });
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel("Provider for Email Analysis")).toHaveValue("opencode");
+    await expect(page.getByLabel("OpenCode model for Email Analysis")).toHaveValue(
+      "openai/gpt-5.2",
+    );
+    await expect(page.getByLabel("Provider for Agent Chat")).toHaveValue("opencode");
+    await page.keyboard.press("Escape");
+
     await page.evaluate(() => {
       const store = (
         window as unknown as {

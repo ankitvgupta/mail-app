@@ -701,6 +701,7 @@ export default function App() {
   const addSentEmails = useAppStore((s) => s.addSentEmails);
   const setSplits = useAppStore((s) => s.setSplits);
   const setSnippets = useAppStore((s) => s.setSnippets);
+  const setDefaultAgentIds = useAppStore((s) => s.setDefaultAgentIds);
 
   // Initialize keyboard shortcuts
   useKeyboardShortcuts({
@@ -743,9 +744,16 @@ export default function App() {
           keyboardBindings?: "superhuman" | "gmail";
           posthog?: { enabled: boolean; sessionReplay?: boolean };
           lastSelectedAccountId?: string | null;
+          featureProviders?: Record<string, string>;
+          opencode?: { enabled?: boolean };
         };
       }) => {
         if (result.success && result.data) {
+          setDefaultAgentIds([
+            result.data.featureProviders?.agentChat === "opencode" && result.data.opencode?.enabled
+              ? "opencode"
+              : "claude",
+          ]);
           if (result.data.inboxDensity) {
             setInboxDensity(result.data.inboxDensity);
           }
@@ -794,6 +802,7 @@ export default function App() {
     setKeyboardBindings,
     setUndoSendDelay,
     setSendAndArchive,
+    setDefaultAgentIds,
   ]);
 
   // Toggle dark class on document.documentElement when resolvedTheme changes
