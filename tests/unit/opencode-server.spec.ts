@@ -8,7 +8,13 @@ import {
   launchOpenCodeServer,
 } from "../../src/main/services/opencode-server";
 
-function createFakeChild(killError?: Error) {
+function createFakeChild({
+  killError,
+  killResult = killError === undefined,
+}: {
+  killError?: Error;
+  killResult?: boolean;
+} = {}) {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -27,7 +33,7 @@ function createFakeChild(killError?: Error) {
       queueMicrotask(() => child.emit("error", killError));
       return false;
     }
-    return true;
+    return killResult;
   };
 
   return { child, stdout, stderr, getKillCount: () => killCount };
@@ -88,7 +94,7 @@ test("stops the child when startup times out", async () => {
 });
 
 test("timeout cleanup survives an error emitted by kill", async () => {
-  const fake = createFakeChild(new Error("kill denied"));
+  const fake = createFakeChild({ killError: new Error("kill denied") });
 
   await expect(launchWithFakeChild(fake, 5)).rejects.toThrow(
     "Timeout waiting for server to start after 5ms",
@@ -123,13 +129,26 @@ test("close is idempotent", async () => {
 });
 
 test("close remains idempotent when kill emits an error after startup", async () => {
-  const fake = createFakeChild(new Error("kill denied"));
+  const fake = createFakeChild({ killError: new Error("kill denied") });
   const launch = launchWithFakeChild(fake);
   fake.stdout.write("opencode server listening on http://127.0.0.1:4321\n");
   const handle = await launch;
 
   expect(() => handle.close()).not.toThrow();
   expect(() => handle.close()).not.toThrow();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(fake.getKillCount()).toBe(1);
+  expect(fake.child.listenerCount("error")).toBe(0);
+});
+
+test("close releases its kill error guard when kill returns false without an error", async () => {
+  const fake = createFakeChild({ killResult: false });
+  const launch = launchWithFakeChild(fake);
+  fake.stdout.write("opencode server listening on http://127.0.0.1:4321\n");
+  const handle = await launch;
+
+  handle.close();
   await new Promise((resolve) => setImmediate(resolve));
 
   expect(fake.getKillCount()).toBe(1);

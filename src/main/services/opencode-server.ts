@@ -30,6 +30,7 @@ function stopChild(child: ChildProcess): void {
   const onKillError = (): void => {};
   child.once("error", onKillError);
   if (child.kill()) child.off("error", onKillError);
+  else setImmediate(() => child.off("error", onKillError));
 }
 
 export async function launchOpenCodeServer({
