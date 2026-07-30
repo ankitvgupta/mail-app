@@ -424,6 +424,28 @@ test.describe("AnthropicService", () => {
     expect(calls.length).toBe(3);
   });
 
+  test("marks usage and cost unavailable after exhausting retries", async () => {
+    const { client, calls } = createMockClient("server-error-then-success", 99);
+    _setClientForTesting(client);
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, _timeout?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, 0, ...args)) as typeof globalThis.setTimeout;
+
+    try {
+      await expect(
+        createMessage(makeTestParams(), { caller: "test-exhausted-retries" }),
+      ).rejects.toThrow("Server error");
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+
+    expect(calls).toHaveLength(4);
+    const row = testDb.prepare("SELECT * FROM llm_calls LIMIT 1").get() as LlmCallRecord;
+    expect(row.success).toBe(0);
+    expect(row.usage_available).toBe(0);
+    expect(row.cost_available).toBe(0);
+  });
+
   test("does not retry on non-retryable API errors (fails immediately)", async () => {
     const { client, calls } = createMockClient("always-fail");
     _setClientForTesting(client);
@@ -522,6 +544,8 @@ test.describe("AnthropicService", () => {
     expect(row.error_message).toContain("Bad request");
     expect(row.input_tokens).toBe(0);
     expect(row.output_tokens).toBe(0);
+    expect(row.usage_available).toBe(0);
+    expect(row.cost_available).toBe(0);
   });
 
   test("getUsageStats returns correct aggregation", async () => {

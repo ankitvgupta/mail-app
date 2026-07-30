@@ -214,9 +214,8 @@ export class ClaudeAgentProvider implements AgentProvider {
 
     yield { type: "state", state: "running" };
 
-    // Record one row in llm_calls stamping which harness + LLM backend +
-    // model this session uses. Mirrors OpenCodeAgentProvider; gives us a
-    // consistent session-start log across harnesses for cost / usage analysis.
+    // Claude records its resolved route at session start with zero usage.
+    // OpenCode records terminal accounting separately.
     {
       const sessionModel = modelOverride ?? this.frameworkConfig.model;
       const ollamaCloudEnabled = !!this.frameworkConfig.ollamaCloud?.enabled;

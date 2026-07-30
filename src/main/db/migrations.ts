@@ -366,6 +366,16 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
       if (!cols.some((column) => column.name === "cost_available")) {
         db.exec(`ALTER TABLE llm_calls ADD COLUMN cost_available INTEGER NOT NULL DEFAULT 1`);
       }
+      db.exec(`
+        UPDATE llm_calls
+        SET usage_available = 0, cost_available = 0
+        WHERE caller LIKE 'agent-session-start:%'
+          AND input_tokens = 0
+          AND output_tokens = 0
+          AND COALESCE(cache_read_tokens, 0) = 0
+          AND COALESCE(cache_create_tokens, 0) = 0
+          AND cost_cents = 0
+      `);
     },
   },
 ];

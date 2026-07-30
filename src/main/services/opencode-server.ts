@@ -1,9 +1,11 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 
 export type OpenCodeServerHandle = {
   url: string;
   close: () => void;
 };
+
+type SpawnProcess = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 
 export function buildOpenCodeChildEnv(
   parentEnv: NodeJS.ProcessEnv,
@@ -32,12 +34,14 @@ export async function launchOpenCodeServer({
   hostname = "127.0.0.1",
   port = 0,
   timeout = 30_000,
+  spawnProcess = spawn,
 }: {
   binaryPath: string;
   config?: unknown;
   hostname?: string;
   port?: number;
   timeout?: number;
+  spawnProcess?: SpawnProcess;
 }): Promise<OpenCodeServerHandle> {
   const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
   if (typeof config === "object" && config !== null && "logLevel" in config) {
@@ -45,48 +49,80 @@ export async function launchOpenCodeServer({
     if (typeof logLevel === "string" && logLevel) args.push(`--log-level=${logLevel}`);
   }
 
-  const child = spawn(binaryPath, args, {
+  const child = spawnProcess(binaryPath, args, {
     env: buildOpenCodeChildEnv(process.env, config),
     windowsHide: true,
   });
 
-  let output = "";
+  let stdout = "";
+  let stderr = "";
   const url = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      stopChild(child);
-      reject(new Error(`Timeout waiting for server to start after ${timeout}ms`));
-    }, timeout);
+    let settled = false;
 
-    child.stdout?.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      for (const line of output.split("\n")) {
+    const diagnostics = (): string => {
+      const parts: string[] = [];
+      if (stdout.trim()) parts.push(`stdout: ${stdout.trim()}`);
+      if (stderr.trim()) parts.push(`stderr: ${stderr.trim()}`);
+      return parts.length > 0 ? `\nServer output:\n${parts.join("\n")}` : "";
+    };
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      child.stdout?.off("data", onStdout);
+      child.stderr?.off("data", onStderr);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const finish = (action: () => void): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      action();
+    };
+    const onStdout = (chunk: Buffer): void => {
+      stdout += chunk.toString();
+      for (const line of stdout.split("\n")) {
         if (!line.startsWith("opencode server listening")) continue;
         const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-        clearTimeout(timer);
-        if (match) resolve(match[1]);
-        else {
-          stopChild(child);
-          reject(new Error(`Failed to parse server url from output: ${line}`));
+        if (match) {
+          finish(() => resolve(match[1]));
+        } else {
+          finish(() => {
+            stopChild(child);
+            reject(new Error(`Failed to parse server url from output: ${line}`));
+          });
         }
         return;
       }
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(
-        new Error(
-          `Server exited with code ${code}${output.trim() ? `\nServer output: ${output}` : ""}`,
-        ),
-      );
-    });
+    };
+    const onStderr = (chunk: Buffer): void => {
+      stderr += chunk.toString();
+    };
+    const onError = (error: Error): void => {
+      finish(() => reject(error));
+    };
+    const onExit = (code: number | null): void => {
+      finish(() => reject(new Error(`Server exited with code ${code}${diagnostics()}`)));
+    };
+    const timer = setTimeout(() => {
+      finish(() => {
+        stopChild(child);
+        reject(new Error(`Timeout waiting for server to start after ${timeout}ms${diagnostics()}`));
+      });
+    }, timeout);
+
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 
-  return { url, close: () => stopChild(child) };
+  let closed = false;
+  return {
+    url,
+    close: () => {
+      if (closed) return;
+      closed = true;
+      stopChild(child);
+    },
+  };
 }
