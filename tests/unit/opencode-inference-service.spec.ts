@@ -10,9 +10,7 @@ type PromptInput = {
   model?: { providerID: string; modelID: string };
   system?: string;
   tools: Record<string, boolean>;
-  format:
-    | { type: "text" }
-    | { type: "json_schema"; schema: Record<string, unknown> };
+  format: { type: "text" } | { type: "json_schema"; schema: Record<string, unknown> };
   parts: Array<{ type: "text"; text: string }>;
 };
 
@@ -82,9 +80,7 @@ function createFake(options: FakeOptions = {}) {
         cache: { read: 10, write: 4 },
       },
       finish: "stop",
-      ...(options.assistantError === undefined
-        ? {}
-        : { error: options.assistantError }),
+      ...(options.assistantError === undefined ? {} : { error: options.assistantError }),
       ...(options.structured === undefined ? {} : { structured: options.structured }),
     },
     parts: [{ type: "text" as const, text: "hello" }],
@@ -212,6 +208,28 @@ test("close during startup closes and rejects the stale handle", async () => {
   expect(calls.launches).toBe(2);
 });
 
+test("close aborts a launcher that has not finished starting", async () => {
+  let startupSignal: AbortSignal | undefined;
+  const launcher = ((signal?: AbortSignal) => {
+    startupSignal = signal;
+    return new Promise((_resolve, reject) => {
+      signal?.addEventListener(
+        "abort",
+        () => reject(new Error("OpenCode server startup aborted")),
+        { once: true },
+      );
+    });
+  }) as OpenCodeLauncher;
+  const service = new OpenCodeInferenceService(launcher);
+
+  const startup = service.listModels();
+  expect(startupSignal).toBeDefined();
+  service.close();
+
+  expect(startupSignal?.aborted).toBe(true);
+  await expect(startup).rejects.toThrow("OpenCode server startup aborted");
+});
+
 test("startup failure clears the shared promise so the next call retries", async () => {
   const { calls, service } = createFake({ startupFailures: 1 });
 
@@ -281,9 +299,7 @@ test("completion disables every discovered tool and denies every permission", as
   await service.complete({ prompt: "hello" });
 
   expect(calls.creates).toHaveLength(1);
-  expect(calls.creates[0].permission).toEqual([
-    { permission: "*", pattern: "*", action: "deny" },
-  ]);
+  expect(calls.creates[0].permission).toEqual([{ permission: "*", pattern: "*", action: "deny" }]);
   expect(calls.prompts[0].tools).toEqual({
     bash: false,
     read: false,
@@ -365,9 +381,7 @@ test("cleanup failure does not replace the original prompt failure", async () =>
     deleteFailure: new Error("cleanup failure"),
   });
 
-  await expect(service.complete({ prompt: "hello" })).rejects.toThrow(
-    "original prompt failure",
-  );
+  await expect(service.complete({ prompt: "hello" })).rejects.toThrow("original prompt failure");
 });
 
 test("cleanup failure does not replace an assistant message error", async () => {

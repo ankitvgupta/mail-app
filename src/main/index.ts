@@ -639,11 +639,21 @@ const walCheckpointInterval = setInterval(() => {
   checkpointWal();
 }, WAL_CHECKPOINT_INTERVAL_MS);
 
+// Electron's normal quit path emits before-quit, but test runners and service
+// managers commonly stop the app with SIGTERM. Handle those signals explicitly
+// so the long-lived OpenCode child is stopped before the main process exits.
+const quitFromSignal = (): void => {
+  openCodeInferenceService.close();
+  app.quit();
+};
+process.once("SIGTERM", quitFromSignal);
+process.once("SIGINT", quitFromSignal);
+
 // Flush WAL and close DB before the process exits to prevent data loss.
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
-  void openCodeInferenceService.close();
+  openCodeInferenceService.close();
 
   // Stop all interval-based services before closing the DB —
   // otherwise their timers fire after the DB is gone and crash.

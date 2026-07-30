@@ -39,6 +39,7 @@ export async function launchOpenCodeServer({
   hostname = "127.0.0.1",
   port = 0,
   timeout = 30_000,
+  signal,
   spawnProcess = spawn,
 }: {
   binaryPath: string;
@@ -46,6 +47,7 @@ export async function launchOpenCodeServer({
   hostname?: string;
   port?: number;
   timeout?: number;
+  signal?: AbortSignal;
   spawnProcess?: SpawnProcess;
 }): Promise<OpenCodeServerHandle> {
   const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
@@ -76,6 +78,7 @@ export async function launchOpenCodeServer({
       child.stderr?.off("data", onStderr);
       child.off("error", onError);
       child.off("exit", onExit);
+      signal?.removeEventListener("abort", onAbort);
     };
     const finish = (action: () => void): void => {
       if (settled) return;
@@ -83,6 +86,12 @@ export async function launchOpenCodeServer({
       cleanup();
       action();
     };
+    function onAbort(): void {
+      finish(() => {
+        stopChild(child);
+        reject(new Error("OpenCode server startup aborted"));
+      });
+    }
     const onStdout = (chunk: Buffer): void => {
       stdout += chunk.toString();
       for (const line of stdout.split("\n")) {
@@ -119,6 +128,8 @@ export async function launchOpenCodeServer({
     child.stderr?.on("data", onStderr);
     child.once("error", onError);
     child.once("exit", onExit);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 
   let closed = false;

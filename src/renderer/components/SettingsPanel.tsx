@@ -110,6 +110,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [featureProviders, setFeatureProviders] = useState<Record<string, LlmProvider>>({});
   const [ollamaModels, setOllamaModels] = useState<Record<string, string>>({});
   const [openCodeModels, setOpenCodeModels] = useState<Record<string, string>>({});
+  const featureProvidersDirty = useRef(false);
+  const openCodeModelsDirty = useRef(false);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
   // "saved" for transient success feedback, any other string is an error message
   const [generalSaveResult, setGeneralSaveResult] = useState<string | null>(null);
@@ -306,12 +308,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setExaApiKey(generalConfig.exaApiKey ?? "");
       setSyncDraftsToGmail(generalConfig.syncDraftsToGmail ?? false);
       setModelConfig({ ...DEFAULT_MODEL_CONFIG, ...generalConfig.modelConfig });
-      setFeatureProviders(generalConfig.featureProviders ?? {});
+      if (!featureProvidersDirty.current) {
+        setFeatureProviders(generalConfig.featureProviders ?? {});
+      }
       const ollamaFeatureModels = generalConfig.ollamaCloud?.featureModels;
       if (ollamaFeatureModels) {
         setOllamaModels(ollamaFeatureModels);
       }
-      setOpenCodeModels(generalConfig.opencode?.featureModels ?? {});
+      if (!openCodeModelsDirty.current) {
+        setOpenCodeModels(generalConfig.opencode?.featureModels ?? {});
+      }
       setGithubToken(generalConfig.githubToken ?? "");
       setAllowPrereleaseUpdates(generalConfig.allowPrereleaseUpdates ?? false);
       setAnthropicApiKey(generalConfig.anthropicApiKey ?? "");
@@ -1315,6 +1321,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                             (featureProviders.senderLookup === "ollama-cloud" ||
                               featureProviders.senderLookup === "opencode")
                           ) {
+                            featureProvidersDirty.current = true;
                             setFeatureProviders((prev) => ({
                               ...prev,
                               senderLookup: "anthropic",
@@ -1455,11 +1462,13 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                   setBackgroundAgentProvider(sel.backgroundAgentProvider);
                                   const llm = sel.agentDrafterProvider;
                                   if (llm) {
+                                    featureProvidersDirty.current = true;
                                     setFeatureProviders((prev) => ({ ...prev, [key]: llm }));
                                   }
                                   return;
                                 }
                                 if ((LLM_PROVIDERS as readonly string[]).includes(p)) {
+                                  featureProvidersDirty.current = true;
                                   setFeatureProviders((prev) => ({
                                     ...prev,
                                     [key]: p as LlmProvider,
@@ -1543,9 +1552,10 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                             ) : selectedProvider === "opencode" ? (
                               <OpenCodeModelInput
                                 value={openCodeModels[key] ?? ""}
-                                onChange={(value) =>
-                                  setOpenCodeModels((prev) => ({ ...prev, [key]: value }))
-                                }
+                                onChange={(value) => {
+                                  openCodeModelsDirty.current = true;
+                                  setOpenCodeModels((prev) => ({ ...prev, [key]: value }));
+                                }}
                                 models={openCodeCatalog.data ?? []}
                                 loading={openCodeCatalog.isFetching}
                                 error={
@@ -3639,6 +3649,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
               // Mirror the persisted featureProviders reset in the staged copy
               // (hydrated once per session) so Save Changes can't republish
               // ollama-cloud routes whose API key was just cleared.
+              featureProvidersDirty.current = true;
               setFeatureProviders((prev) =>
                 Object.fromEntries(
                   Object.entries(prev).map(([feature, provider]) => [

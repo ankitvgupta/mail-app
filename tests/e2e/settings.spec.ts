@@ -1,4 +1,7 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { launchElectronApp, closeApp } from "./launch-helpers";
 
 /**
@@ -429,17 +432,21 @@ test.describe("Settings Panel - Persistence", () => {
   });
 });
 
-// The electron-store config is shared across parallel e2e workers (only the DB
-// is per-worker). This flow owns the OpenCode, feature-provider, Sender Lookup,
-// and background-agent keys, but never touches the Hostler key owned by
-// tests/e2e/hostler-settings.spec.ts.
+// This flow gets an isolated electron-store directory because other settings
+// suites save complete config snapshots in parallel. Sharing the default test
+// directory would let one suite overwrite this flow's OpenCode enablement.
 test.describe("Settings Panel - per-feature OpenCode models", () => {
   test.describe.configure({ mode: "serial" });
   let electronApp: ElectronApplication;
   let page: Page;
+  let userDataDir: string;
 
   test.beforeAll(async ({}, testInfo) => {
-    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    userDataDir = mkdtempSync(join(tmpdir(), "exo-opencode-settings-"));
+    const result = await launchElectronApp({
+      workerIndex: testInfo.workerIndex,
+      userDataDir,
+    });
     electronApp = result.app;
     page = result.page;
 
@@ -490,6 +497,7 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
       if (electronApp) {
         await closeApp(electronApp);
       }
+      rmSync(userDataDir, { recursive: true, force: true });
     }
   });
 
@@ -747,7 +755,10 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
       }),
     );
     await closeApp(electronApp);
-    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    const result = await launchElectronApp({
+      workerIndex: testInfo.workerIndex,
+      userDataDir,
+    });
     electronApp = result.app;
     page = result.page;
 
@@ -760,5 +771,83 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
     await expect(page.getByLabel("OpenCode model for Email Analysis")).toHaveValue(
       "openai/gpt-5.2",
     );
+  });
+
+  test("keeps staged OpenCode edits when fresh settings resolve late", async () => {
+    const heading = page.locator("h1:has-text('Settings')");
+    if (await heading.isVisible()) {
+      await page.keyboard.press("Escape");
+      await expect(heading).toBeHidden();
+    }
+
+    await page.evaluate(() =>
+      window.api.settings.set({
+        featureProviders: {},
+        backgroundAgentProvider: "claude",
+        opencode: { enabled: true, model: "legacy-model", featureModels: {} },
+      }),
+    );
+
+    // Prime the query cache, then hold the required fresh fetch on the next
+    // panel mount so user interaction deterministically wins the race.
+    await page.locator("button[title='Settings']").click();
+    await expect(page.getByRole("button", { name: "Save Changes" })).toBeEnabled();
+    await page.keyboard.press("Escape");
+    const stored = await page.evaluate(() => window.api.settings.get());
+
+    await electronApp.evaluate(({ ipcMain }, response) => {
+      const state = globalThis as typeof globalThis & {
+        releaseDelayedSettingsGet?: () => void;
+        delayedSettingsGetPending?: boolean;
+      };
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      state.releaseDelayedSettingsGet = release;
+      ipcMain.removeHandler("settings:get");
+      ipcMain.handle("settings:get", async () => {
+        state.delayedSettingsGetPending = true;
+        await gate;
+        state.delayedSettingsGetPending = false;
+        return response;
+      });
+    }, stored);
+
+    await page.locator("button[title='Settings']").click();
+    await expect
+      .poll(() =>
+        electronApp.evaluate(
+          () =>
+            (globalThis as typeof globalThis & { delayedSettingsGetPending?: boolean })
+              .delayedSettingsGetPending,
+        ),
+      )
+      .toBe(true);
+
+    const provider = page.getByLabel("Provider for Email Analysis");
+    await provider.selectOption("opencode");
+    const model = page.getByLabel("OpenCode model for Email Analysis");
+    await model.fill("openai/gpt-5.2");
+
+    await electronApp.evaluate(() => {
+      (
+        globalThis as typeof globalThis & {
+          releaseDelayedSettingsGet?: () => void;
+        }
+      ).releaseDelayedSettingsGet?.();
+    });
+    await expect
+      .poll(() =>
+        electronApp.evaluate(
+          () =>
+            (globalThis as typeof globalThis & { delayedSettingsGetPending?: boolean })
+              .delayedSettingsGetPending,
+        ),
+      )
+      .toBe(false);
+
+    await expect(provider).toHaveValue("opencode");
+    await expect(model).toHaveValue("openai/gpt-5.2");
   });
 });

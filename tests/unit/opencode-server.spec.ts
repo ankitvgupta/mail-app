@@ -93,6 +93,26 @@ test("stops the child when startup times out", async () => {
   expect(fake.child.listenerCount("exit")).toBe(0);
 });
 
+test("stops the child when startup is aborted", async () => {
+  const fake = createFakeChild();
+  const controller = new AbortController();
+  const launch = launchOpenCodeServer({
+    binaryPath: "/fake/opencode",
+    timeout: 100,
+    signal: controller.signal,
+    spawnProcess: () => fake.child,
+  });
+
+  controller.abort();
+
+  await expect(launch).rejects.toThrow("OpenCode server startup aborted");
+  expect(fake.getKillCount()).toBe(1);
+  expect(fake.stdout.listenerCount("data")).toBe(0);
+  expect(fake.stderr.listenerCount("data")).toBe(0);
+  expect(fake.child.listenerCount("error")).toBe(0);
+  expect(fake.child.listenerCount("exit")).toBe(0);
+});
+
 test("timeout cleanup survives an error emitted by kill", async () => {
   const fake = createFakeChild({ killError: new Error("kill denied") });
 

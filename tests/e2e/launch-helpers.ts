@@ -10,6 +10,7 @@ export type LaunchOptions = {
   workerIndex?: number;
   extraEnv?: Record<string, string>;
   waitAfterLoad?: number;
+  userDataDir?: string;
 };
 
 /**
@@ -21,7 +22,7 @@ export type LaunchOptions = {
 export async function launchElectronApp(
   options: LaunchOptions = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  const { workerIndex = 0, extraEnv = {}, waitAfterLoad } = options;
+  const { workerIndex = 0, extraEnv = {}, waitAfterLoad, userDataDir } = options;
 
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -32,9 +33,12 @@ export async function launchElectronApp(
   };
   // A leftover `export EXO_USER_DATA_DIR` (e.g. from a manual packaged run)
   // would make every parallel e2e worker share one data dir — concurrent
-  // electron-store writes and a shared Chromium profile. E2E isolation comes
-  // from .dev-data + per-worker DBs, never from the override.
+  // electron-store writes and a shared Chromium profile. Ignore ambient
+  // overrides; a test may opt into an explicit isolated directory.
   delete env.EXO_USER_DATA_DIR;
+  if (userDataDir) {
+    env.EXO_USER_DATA_DIR = userDataDir;
+  }
 
   const app = await electron.launch({
     args: [path.join(__dirname, "../../out/main/index.js")],

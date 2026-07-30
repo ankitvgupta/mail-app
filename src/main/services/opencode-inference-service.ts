@@ -47,9 +47,9 @@ type OpenCodeHandle = {
   close: () => void;
 };
 
-export type OpenCodeLauncher = () => Promise<OpenCodeHandle>;
+export type OpenCodeLauncher = (signal?: AbortSignal) => Promise<OpenCodeHandle>;
 
-async function launchOpenCode(): Promise<OpenCodeHandle> {
+async function launchOpenCode(signal?: AbortSignal): Promise<OpenCodeHandle> {
   const binPath = resolveOpencodeBinary();
   if (!binPath) throw new Error("Bundled OpenCode executable was not found");
 
@@ -62,6 +62,7 @@ async function launchOpenCode(): Promise<OpenCodeHandle> {
     port: 0,
     timeout: 30_000,
     config: { logLevel: "WARN" },
+    signal,
   });
   const client = clientModule.createOpencodeClient({ baseUrl: server.url });
   return { client, close: () => server.close() };
@@ -70,6 +71,7 @@ async function launchOpenCode(): Promise<OpenCodeHandle> {
 export class OpenCodeInferenceService {
   private handle: OpenCodeHandle | null = null;
   private startupPromise: Promise<OpenCodeHandle> | null = null;
+  private startupAbortController: AbortController | null = null;
   private configGeneration = 0;
 
   constructor(private readonly launcher: OpenCodeLauncher = launchOpenCode) {}
@@ -152,6 +154,8 @@ export class OpenCodeInferenceService {
 
   close(): void {
     this.configGeneration += 1;
+    this.startupAbortController?.abort();
+    this.startupAbortController = null;
     const handle = this.handle;
     this.handle = null;
     this.startupPromise = null;
@@ -185,8 +189,13 @@ export class OpenCodeInferenceService {
     if (this.startupPromise) return this.startupPromise;
 
     const startGeneration = this.configGeneration;
-    const startup = this.launcher()
+    const startupAbortController = new AbortController();
+    this.startupAbortController = startupAbortController;
+    const startup = this.launcher(startupAbortController.signal)
       .then((handle) => {
+        if (this.startupAbortController === startupAbortController) {
+          this.startupAbortController = null;
+        }
         if (this.configGeneration !== startGeneration) {
           try {
             handle.close();
@@ -204,6 +213,9 @@ export class OpenCodeInferenceService {
         return handle;
       })
       .catch((error) => {
+        if (this.startupAbortController === startupAbortController) {
+          this.startupAbortController = null;
+        }
         if (this.startupPromise === startup) this.startupPromise = null;
         throw error;
       });
