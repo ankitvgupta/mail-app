@@ -229,6 +229,7 @@ const api = {
     get: (): Promise<unknown> => ipcRenderer.invoke("settings:get"),
     set: (config: Record<string, unknown>): Promise<unknown> =>
       ipcRenderer.invoke("settings:set", config),
+    listOpenCodeModels: (): Promise<unknown> => ipcRenderer.invoke("settings:list-opencode-models"),
     validateApiKey: (apiKey: string): Promise<unknown> =>
       ipcRenderer.invoke("settings:validate-api-key", { apiKey }),
     validateOllamaKey: (apiKey: string): Promise<unknown> =>

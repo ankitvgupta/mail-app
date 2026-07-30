@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   ConfigSchema,
   LlmProviderSchema,
@@ -21,6 +23,16 @@ const models: OpenCodeModelOption[] = [
     modelName: "GPT-5.2",
   },
 ];
+
+test("preload exposes the OpenCode model catalog through the typed settings channel", () => {
+  const preload = readFileSync(resolve(import.meta.dirname, "../../src/preload/index.ts"), "utf8");
+  const types = readFileSync(resolve(import.meta.dirname, "../../src/shared/types.ts"), "utf8");
+
+  expect(preload).toContain(
+    'listOpenCodeModels: (): Promise<unknown> => ipcRenderer.invoke("settings:list-opencode-models"),',
+  );
+  expect(types).toContain('"settings:list-opencode-models": void');
+});
 
 test("opencode is a valid LLM provider", () => {
   expect(LlmProviderSchema.parse("opencode")).toBe("opencode");

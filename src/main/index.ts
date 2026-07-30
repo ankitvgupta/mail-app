@@ -51,6 +51,7 @@ import { scheduledSendService } from "./services/scheduled-send-service";
 import { snoozeService } from "./services/snooze-service";
 import { calendarSyncService } from "./services/calendar-sync";
 import { emailSyncService } from "./services/email-sync";
+import { openCodeInferenceService } from "./services/opencode-inference-service";
 import * as webSearchExtension from "../extensions/mail-ext-web-search/src/index";
 import * as calendarExtension from "../extensions/mail-ext-calendar/src/index";
 
@@ -642,6 +643,8 @@ const walCheckpointInterval = setInterval(() => {
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
+  void openCodeInferenceService.close();
+
   // Stop all interval-based services before closing the DB —
   // otherwise their timers fire after the DB is gone and crash.
   clearInterval(walCheckpointInterval);

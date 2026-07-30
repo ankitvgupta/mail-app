@@ -1031,6 +1031,7 @@ export type IpcChannels = {
   // Settings operations
   "settings:get": void;
   "settings:set": Partial<Config>;
+  "settings:list-opencode-models": void;
   "settings:get-prompts": void;
   "settings:set-prompts": { analysisPrompt?: string; draftPrompt?: string; stylePrompt?: string };
   "settings:get-ea": void;

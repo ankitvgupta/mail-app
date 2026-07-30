@@ -8,6 +8,7 @@ import {
   type ModelConfig,
   type ModelTier,
   type LlmProvider,
+  type OpenCodeModelOption,
   type SenderLookupProvider,
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_DRAFT_PROMPT,
@@ -41,6 +42,7 @@ import {
 } from "../db";
 import { getEnrichmentBySender } from "../extensions/enrichment-store";
 import { autoUpdateService } from "../services/auto-updater";
+import { openCodeInferenceService } from "../services/opencode-inference-service";
 
 import { existsSync } from "fs";
 import { getDataDir } from "../data-dir";
@@ -341,6 +343,24 @@ export function registerSettingsIpc(): void {
     }
   });
 
+  ipcMain.handle(
+    "settings:list-opencode-models",
+    async (): Promise<IpcResponse<OpenCodeModelOption[]>> => {
+      try {
+        const config = getConfig();
+        if (!config.opencode?.enabled) {
+          return { success: false, error: "Enable OpenCode in Settings → Extensions first" };
+        }
+        return { success: true, data: await openCodeInferenceService.listModels() };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Could not load OpenCode models",
+        };
+      }
+    },
+  );
+
   // Update config
   ipcMain.handle("settings:set", async (_, config: Partial<Config>): Promise<IpcResponse<void>> => {
     try {
@@ -425,6 +445,10 @@ export function registerSettingsIpc(): void {
         };
       }
       getStore().set("config", newConfig);
+
+      if ((currentConfig.opencode?.enabled ?? false) !== (newConfig.opencode?.enabled ?? false)) {
+        openCodeInferenceService.close();
+      }
 
       // If githubToken changed, propagate to auto-updater immediately
       if ("githubToken" in config) {
