@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join, delimiter as pathDelimiter, posix, win32 } from "node:path";
-import type { Config, Event } from "@opencode-ai/sdk";
+import type { AssistantMessage, Config, Event } from "@opencode-ai/sdk";
 // Type-only namespace import lets us reference the SDK's function types
 // (typeof OcSdk.createOpencodeServer) without emitting a runtime `require()`,
 // which is required because @opencode-ai/sdk is ESM-only and the worker
@@ -15,12 +15,18 @@ import type {
   AgentRunResult,
   AgentEvent,
   AgentFrameworkConfig,
+  AgentSessionStartFn,
   AgentToolSpec,
   AgentContext,
 } from "../../types";
 import { McpBridge } from "./mcp-bridge";
 import { createEventMapper } from "./event-mapper";
 import { createLogger } from "../../../services/logger";
+import {
+  resolveOpenCodeRoute,
+  type OpenCodeModelOption,
+  type OpenCodeRoute,
+} from "../../../../shared/types";
 
 type CreateOpencodeServerFn = typeof OcSdk.createOpencodeServer;
 type CreateOpencodeClientFn = typeof OcSdk.createOpencodeClient;
@@ -28,6 +34,105 @@ type CreateOpencodeClientFn = typeof OcSdk.createOpencodeClient;
 const log = createLogger("opencode-agent");
 
 type OpencodeClient = ReturnType<CreateOpencodeClientFn>;
+
+export function buildOpenCodeAgentConfig(bridgeUrl: string): Config {
+  return {
+    logLevel: "WARN",
+    mcp: {
+      "mail-app-tools": { type: "remote", url: bridgeUrl, enabled: true },
+    },
+    permission: { edit: "allow", bash: "allow", webfetch: "allow" },
+  };
+}
+
+export function createOpenCodeRunUsageTracker({
+  sessionId,
+  accountId,
+  emailId,
+  recordSessionStart,
+}: {
+  sessionId: string;
+  accountId?: string;
+  emailId?: string;
+  recordSessionStart: AgentSessionStartFn;
+}): {
+  observe: (event: Event) => void;
+  record: (args: {
+    route?: OpenCodeRoute;
+    durationMs: number;
+    success: boolean;
+    errorMessage?: string;
+  }) => void;
+} {
+  const messages = new Map<string, AssistantMessage>();
+  let recorded = false;
+
+  return {
+    observe: (event) => {
+      if (event.type !== "message.updated") return;
+      const info = event.properties.info;
+      if (info.role === "assistant" && info.sessionID === sessionId) {
+        messages.set(info.id, info);
+      }
+    },
+    record: ({ route, durationMs, success, errorMessage }) => {
+      if (recorded) return;
+      recorded = true;
+
+      const snapshots = [...messages.values()];
+      const last = snapshots.reduce<AssistantMessage | undefined>(
+        (latest, message) =>
+          !latest || message.time.created >= latest.time.created ? message : latest,
+        undefined,
+      );
+      const actualRoute = last ? { providerID: last.providerID, modelID: last.modelID } : route;
+      if (!actualRoute) return;
+
+      const hasUsage = snapshots.length > 0;
+      recordSessionStart({
+        harness: "opencode",
+        provider: "opencode",
+        model: `${actualRoute.providerID}/${actualRoute.modelID}`,
+        accountId,
+        emailId,
+        ...(hasUsage
+          ? {
+              inputTokens: snapshots.reduce((total, message) => total + message.tokens.input, 0),
+              outputTokens: snapshots.reduce((total, message) => total + message.tokens.output, 0),
+              cacheReadTokens: snapshots.reduce(
+                (total, message) => total + message.tokens.cache.read,
+                0,
+              ),
+              cacheCreateTokens: snapshots.reduce(
+                (total, message) => total + message.tokens.cache.write,
+                0,
+              ),
+              costDollars: snapshots.reduce((total, message) => total + message.cost, 0),
+            }
+          : {}),
+        durationMs,
+        success,
+        errorMessage,
+      });
+    },
+  };
+}
+
+async function listConnectedModels(client: OpencodeClient): Promise<OpenCodeModelOption[]> {
+  const response = await client.provider.list();
+  if (!response.data) throw new Error("OpenCode provider catalog could not be loaded");
+  const connected = new Set(response.data.connected);
+  return response.data.all
+    .filter((provider) => connected.has(provider.id))
+    .flatMap((provider) =>
+      Object.values(provider.models).map((model) => ({
+        providerId: provider.id,
+        providerName: provider.name,
+        modelId: model.id,
+        modelName: model.name,
+      })),
+    );
+}
 
 /**
  * Dynamic-import the OpenCode SDK. Required because:
@@ -110,7 +215,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
     id: "opencode",
     name: "OpenCode",
     description: "Multi-provider open-source agent harness",
-    auth: { type: "api_key", configKey: "ANTHROPIC_API_KEY" },
+    auth: { type: "none" },
   };
 
   private frameworkConfig: AgentFrameworkConfig;
@@ -145,36 +250,13 @@ export class OpenCodeAgentProvider implements AgentProvider {
       modelOverride,
       recordSessionStart,
     } = params;
+    const runStartedAt = Date.now();
 
     yield { type: "state", state: "running" };
 
     if (!this.frameworkConfig.opencode?.enabled) {
       yield { type: "error", message: "OpenCode provider is not enabled in Settings" };
       return { state: "failed" };
-    }
-
-    // Resolve the model honoring (in priority order):
-    //   1. per-task `modelOverride` from AgentRunParams (sub-agent + orchestrator overrides)
-    //   2. `opencode.model` from Settings ("Model override" textbox)
-    //   3. framework default (Ollama Cloud / Anthropic config)
-    // Caveat: runtime overrides only work for models registered in the
-    // OpenCode server's provider config, which is fixed at server-start
-    // time from settings. A runtime override that selects a model NOT in
-    // the server's registry surfaces OpenCode's reject error to the user.
-    const route = this.resolveRoute(modelOverride);
-
-    // Record one row in llm_calls stamping which harness + LLM backend +
-    // model this session uses. The OpenCode server's own LLM calls bypass
-    // our AnthropicService wrapper, so without this we'd have no record
-    // that the user ran an OpenCode-harness session at all.
-    if (route) {
-      recordSessionStart({
-        harness: "opencode",
-        provider: route.providerID === "ollama-cloud" ? "ollama-cloud" : "anthropic",
-        model: route.modelID,
-        accountId: context.accountId,
-        emailId: context.currentEmailId,
-      });
     }
 
     // Hook our executor into the MCP bridge. Single-flight: this overwrites any
@@ -191,6 +273,15 @@ export class OpenCodeAgentProvider implements AgentProvider {
       return { state: "failed" };
     }
     const { client } = handle;
+
+    let route: OpenCodeRoute | undefined;
+    try {
+      route = resolveRoute(this.frameworkConfig, modelOverride, await listConnectedModels(client));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      yield { type: "error", message };
+      return { state: "failed" };
+    }
 
     // Reuse the prior OpenCode session if this is a follow-up — that's how the
     // model retains conversation context across turns. AgentPanel's follow-up
@@ -230,6 +321,22 @@ export class OpenCodeAgentProvider implements AgentProvider {
       }
     }
 
+    const usage = createOpenCodeRunUsageTracker({
+      sessionId,
+      accountId: context.accountId,
+      emailId: context.currentEmailId,
+      recordSessionStart,
+    });
+    const finish = (state: AgentRunResult["state"], errorMessage?: string): AgentRunResult => {
+      usage.record({
+        route,
+        durationMs: Date.now() - runStartedAt,
+        success: state === "completed",
+        errorMessage,
+      });
+      return { state, providerTaskId: sessionId };
+    };
+
     const abortController = new AbortController();
     // Pre-aborted signal short-circuit: addEventListener after the event has
     // already fired is a no-op, so without this guard a run started with an
@@ -240,7 +347,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
     // the listener is wired. So there's nothing to delete here.
     if (signal.aborted) {
       yield { type: "state", state: "cancelled" };
-      return { state: "cancelled", providerTaskId: sessionId };
+      return finish("cancelled");
     }
     const onParentAbort = () => abortController.abort();
     signal.addEventListener("abort", onParentAbort, { once: true });
@@ -278,7 +385,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
       cleanup();
       const message = err instanceof Error ? err.message : String(err);
       yield { type: "error", message: `Failed to open OpenCode event stream: ${message}` };
-      return { state: "failed" };
+      return finish("failed", message);
     }
 
     // Declared here (outside the try) so the catch can also distinguish
@@ -292,7 +399,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
       const promptPromise = client.session.promptAsync({
         path: { id: sessionId },
         body: {
-          model: route,
+          ...(route ? { model: route } : {}),
           system: buildSystemPrompt(context),
           tools: buildDisabledBuiltins(),
           parts: [{ type: "text", text: prompt }],
@@ -320,6 +427,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
         const step = await streamIter.next();
         if (step.done) break;
         const ev = step.value;
+        usage.observe(ev);
 
         for (const mapped of mapper.next(ev)) {
           yield mapped;
@@ -334,7 +442,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
             // value alone (matches the Claude provider's pattern).
             cleanup();
             streamClose?.();
-            return { state: "failed", providerTaskId: sessionId };
+            return finish("failed", mapper.lastError() ?? undefined);
           }
           // session.idle — success path
           break;
@@ -349,10 +457,10 @@ export class OpenCodeAgentProvider implements AgentProvider {
         // the controller, but only the former should surface as `error`.
         if (promptError) {
           yield { type: "error", message: `OpenCode prompt failed: ${promptError}` };
-          return { state: "failed", providerTaskId: sessionId };
+          return finish("failed", promptError);
         }
         yield { type: "state", state: "cancelled" };
-        return { state: "cancelled", providerTaskId: sessionId };
+        return finish("cancelled");
       }
 
       // Fetch the final assistant message text to populate the `done` summary.
@@ -381,7 +489,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
       yield { type: "done", summary: finalSummary };
       cleanup();
-      return { state: "completed", providerTaskId: sessionId };
+      return finish("completed");
     } catch (err) {
       cleanup();
       streamClose?.();
@@ -390,14 +498,14 @@ export class OpenCodeAgentProvider implements AgentProvider {
         // promptAsync failures as errors, never as cancellations.
         if (promptError) {
           yield { type: "error", message: `OpenCode prompt failed: ${promptError}` };
-          return { state: "failed", providerTaskId: sessionId };
+          return finish("failed", promptError);
         }
         yield { type: "state", state: "cancelled" };
-        return { state: "cancelled", providerTaskId: sessionId };
+        return finish("cancelled");
       }
       const message = err instanceof Error ? err.message : String(err);
       yield { type: "error", message };
-      return { state: "failed", providerTaskId: sessionId };
+      return finish("failed", message);
     }
   }
 
@@ -420,35 +528,18 @@ export class OpenCodeAgentProvider implements AgentProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    if (!this.frameworkConfig.opencode?.enabled) return false;
-    // Binary discovery: the opencode-ai npm package puts the executable at
-    // node_modules/.bin/opencode in dev; in a packaged app the same package
-    // lives inside app.asar.unpacked. We don't actually run it here — just
-    // check it can be found — to keep isAvailable() cheap.
-    if (resolveOpencodeBinary() === null) return false;
-    // Credential gate: also require at least one LLM provider to be
-    // configured. Without this, a user who enabled OpenCode but hasn't set
-    // up an Anthropic key or Ollama Cloud would see the provider in the
-    // picker, submit a run, and get an opaque "no model available" error
-    // from the spawned OpenCode binary. Matching resolveRoute's notion of
-    // "active provider": Ollama (enabled + apiKey) OR Anthropic key.
-    const ollama = this.frameworkConfig.ollamaCloud;
-    const hasOllama = !!(ollama?.enabled && ollama.apiKey);
-    const hasAnthropic = !!this.frameworkConfig.anthropicApiKey;
-    return hasOllama || hasAnthropic;
+    return !!this.frameworkConfig.opencode?.enabled && resolveOpencodeBinary() !== null;
   }
 
   updateConfig(config: Partial<AgentFrameworkConfig>): void {
     this.frameworkConfig = { ...this.frameworkConfig, ...config };
     // Only restart the server if a field that actually feeds into
-    // buildOpencodeConfig() / resolveRoute() changed. The orchestrator
+    // the OpenCode server changed. The orchestrator
     // broadcasts updateConfig() to every provider on ANY config change
     // (browser config, mcpServers, cliTools, openclaw settings, etc.), and
     // killing the server on unrelated changes wastes startup work and
     // crashes any in-flight OpenCode runs.
-    const opencodeRelevant = ["opencode", "ollamaCloud", "anthropicApiKey"] as const;
-    const touched = opencodeRelevant.some((k) => k in config);
-    if (!touched) return;
+    if (!("opencode" in config)) return;
 
     // Bump first so any in-flight ensureServer() IIFE sees the new generation
     // before it would otherwise commit its stale handle. Dropping the promise
@@ -495,7 +586,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
     this.serverStartPromise = (async () => {
       const bridgeUrl = await this.bridge.start(tools);
-      const ocConfig = this.buildOpencodeConfig(bridgeUrl);
+      const ocConfig = buildOpenCodeAgentConfig(bridgeUrl);
 
       // Prepend node_modules/.bin to PATH so the SDK's `launch("opencode", …)`
       // finds the local install without requiring a global install. In a
@@ -548,185 +639,15 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
     return this.serverStartPromise;
   }
-
-  /**
-   * Translate AgentFrameworkConfig → OpenCode Config.
-   *
-   * Routing precedence mirrors the Claude provider in claude-agent-provider.ts:
-   *   1. Ollama Cloud (if `ollamaCloud.enabled && apiKey`) — register a custom
-   *      "ollama-cloud" provider via the OpenAI-compatible adapter.
-   *   2. Anthropic (if `anthropicApiKey` is set).
-   *   3. Neither configured — the server starts but run() will fail when it
-   *      can't resolve a model. isAvailable() guards this for the UI.
-   */
-  private buildOpencodeConfig(bridgeUrl: string): Config {
-    const cfg: Config = {
-      logLevel: "WARN",
-      mcp: {
-        "mail-app-tools": {
-          type: "remote",
-          url: bridgeUrl,
-          enabled: true,
-        },
-      },
-      // Permission handling: allow tools through by default; the orchestrator's
-      // PermissionGate (around toolExecutor) is the real gate. OpenCode's own
-      // permission system would double-prompt the user.
-      permission: { edit: "allow", bash: "allow", webfetch: "allow" },
-      // Disable any provider OpenCode would auto-load that we don't have keys
-      // for, to keep startup quiet. We also disable the *inactive* of the two
-      // providers we support (anthropic / ollama-cloud) — whichever isn't
-      // configured for this session — so OpenCode doesn't emit credential
-      // warnings for it. The list is built dynamically below.
-      disabled_providers: this.computeDisabledProviders(),
-    };
-
-    const ollama = this.frameworkConfig.ollamaCloud;
-    if (ollama?.enabled && ollama.apiKey) {
-      // Register the base Ollama default plus any settings-level override
-      // model so OpenCode accepts session.prompt requests that ask for it.
-      // Per-run modelOverride that picks a model NOT in this list will surface
-      // OpenCode's "model not found" error — that's the documented v1 limit.
-      const settingsOverride = parseModelSelector(this.frameworkConfig.opencode?.model);
-      const registeredModels: Record<string, { id: string; name: string; tool_call: boolean }> = {
-        [ollama.model]: { id: ollama.model, name: ollama.model, tool_call: true },
-      };
-      if (settingsOverride && settingsOverride.providerID === "ollama-cloud") {
-        registeredModels[settingsOverride.modelID] = {
-          id: settingsOverride.modelID,
-          name: settingsOverride.modelID,
-          tool_call: true,
-        };
-      }
-      cfg.provider = {
-        "ollama-cloud": {
-          name: "Ollama Cloud",
-          npm: "@ai-sdk/openai-compatible",
-          options: {
-            baseURL: "https://ollama.com/v1",
-            apiKey: ollama.apiKey,
-          },
-          models: registeredModels,
-        },
-      };
-    } else if (this.frameworkConfig.anthropicApiKey) {
-      // OpenCode's bundled Anthropic provider catalog handles known Claude
-      // model IDs — we just need to supply the credential. Settings-level
-      // model override is honored by resolveRoute() per-call.
-      cfg.provider = {
-        anthropic: {
-          options: {
-            apiKey: this.frameworkConfig.anthropicApiKey,
-          },
-        },
-      };
-    }
-
-    return cfg;
-  }
-
-  /**
-   * Build the `disabled_providers` list for OpenCode's startup. Includes
-   * everything we never use plus the inactive of the two we do — whichever
-   * isn't configured for this session — so OpenCode doesn't emit credential
-   * warnings for the unused one.
-   */
-  private computeDisabledProviders(): string[] {
-    const base = ["github-copilot", "openrouter", "google", "groq", "deepseek"];
-    const ollama = this.frameworkConfig.ollamaCloud;
-    const ollamaActive = !!(ollama?.enabled && ollama.apiKey);
-    const anthropicActive = !!this.frameworkConfig.anthropicApiKey;
-    if (ollamaActive && !anthropicActive) base.push("anthropic");
-    if (anthropicActive && !ollamaActive) base.push("ollama");
-    return base;
-  }
-
-  /**
-   * Resolve the route for a single run, honoring (in priority order):
-   *   1. per-task `modelOverride` from AgentRunParams
-   *   2. `opencode.model` from Settings ("Model override" textbox)
-   *   3. framework default (Ollama Cloud / Anthropic config)
-   *
-   * Accepts either a bare model ID (paired with the active provider) or
-   * the explicit `provider/model` form (e.g. `ollama-cloud/qwen3:32b`).
-   *
-   * Returns the `{providerID, modelID}` shape required by SessionPromptData.body.model.
-   */
-  private resolveRoute(
-    runtimeOverride: string | undefined,
-  ): { providerID: string; modelID: string } | undefined {
-    return resolveRoute(this.frameworkConfig, runtimeOverride);
-  }
 }
 
-/**
- * Pure-function version of OpenCodeAgentProvider.resolveRoute so the priority
- * logic (runtime > settings > framework default, with bare-name and parsed
- * `provider/model` forms supported at each tier) can be unit tested without
- * spinning up an instance. Exported for tests only.
- *
- * The previous implementation collapsed both inputs into a single ?? chain on
- * the parsed form first, which broke priority when runtime was bare and
- * settings was parsed — settings would win even though runtime should have.
- * This version resolves each source end-to-end (parsed OR bare → route)
- * before falling to the next.
- */
 export function resolveRoute(
   config: AgentFrameworkConfig,
   runtimeOverride: string | undefined,
-): { providerID: string; modelID: string } | undefined {
-  const ollama = config.ollamaCloud;
-  const activeProvider: "ollama-cloud" | "anthropic" | null =
-    ollama?.enabled && ollama.apiKey ? "ollama-cloud" : config.anthropicApiKey ? "anthropic" : null;
-
-  const resolveSelector = (
-    s: string | undefined,
-  ): { providerID: string; modelID: string } | undefined => {
-    const trimmed = s?.trim();
-    if (!trimmed) return undefined;
-    const parsed = parseModelSelector(trimmed);
-    if (parsed) return parsed;
-    // Bare-name selector (no slash) — pair with the active provider.
-    if (activeProvider) return { providerID: activeProvider, modelID: trimmed };
-    return undefined;
-  };
-
-  const runtimeRoute = resolveSelector(runtimeOverride);
-  if (runtimeRoute) return runtimeRoute;
-
-  const settingsRoute = resolveSelector(config.opencode?.model);
-  if (settingsRoute) return settingsRoute;
-
-  // Fall through to framework default.
-  if (activeProvider === "ollama-cloud" && ollama) {
-    return { providerID: "ollama-cloud", modelID: ollama.model };
-  }
-  if (activeProvider === "anthropic") {
-    return {
-      providerID: "anthropic",
-      modelID: config.model || "claude-sonnet-4-6",
-    };
-  }
-  return undefined;
-}
-
-/**
- * Parse a "provider/model" selector string (e.g. "ollama-cloud/qwen3:32b").
- * Returns undefined for bare model names (no slash), empty/undefined input,
- * or malformed strings — callers handle bare names by pairing with the
- * active provider separately.
- */
-function parseModelSelector(
-  s: string | undefined,
-): { providerID: string; modelID: string } | undefined {
-  if (!s) return undefined;
-  const trimmed = s.trim();
-  const slash = trimmed.indexOf("/");
-  if (slash <= 0 || slash === trimmed.length - 1) return undefined;
-  return {
-    providerID: trimmed.slice(0, slash),
-    modelID: trimmed.slice(slash + 1),
-  };
+  connectedModels: OpenCodeModelOption[],
+): OpenCodeRoute | undefined {
+  const selector = runtimeOverride?.trim() || config.opencode?.model || "";
+  return resolveOpenCodeRoute(selector, connectedModels);
 }
 
 type ResolveOpencodePlatformBinaryOptions = {

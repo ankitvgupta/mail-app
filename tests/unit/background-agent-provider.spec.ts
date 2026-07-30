@@ -14,6 +14,10 @@ import {
 } from "../../src/shared/types";
 import { deriveTraceProviderIds } from "../../src/shared/agent-types";
 import type { ScopedAgentEvent } from "../../src/shared/agent-types";
+import {
+  resolveAgentChatModelOverride,
+  resolveAgentDrafterModelOverride,
+} from "../../src/main/agents/types";
 
 test.describe("ConfigSchema backgroundAgentProvider", () => {
   test("parses config with backgroundAgentProvider set", () => {
@@ -237,5 +241,38 @@ test.describe("isAgentRuntimeAvailable", () => {
 
   test("the built-in Claude runtime is always available", () => {
     expect(isAgentRuntimeAvailable(DEFAULT_BACKGROUND_AGENT_PROVIDER, {})).toBe(true);
+  });
+});
+
+test.describe("agent model overrides", () => {
+  test("Agent Drafter defaults to its OpenCode selector for a sole OpenCode run", () => {
+    expect(resolveAgentDrafterModelOverride(["opencode"], undefined, "openai/gpt-5.2")).toBe(
+      "openai/gpt-5.2",
+    );
+  });
+
+  test("an explicit Agent Drafter override wins over its OpenCode selector", () => {
+    expect(
+      resolveAgentDrafterModelOverride(
+        ["opencode"],
+        "anthropic/claude-sonnet-4-5",
+        "openai/gpt-5.2",
+      ),
+    ).toBe("anthropic/claude-sonnet-4-5");
+  });
+
+  test("Agent Drafter does not apply its OpenCode selector to multi-provider runs", () => {
+    expect(
+      resolveAgentDrafterModelOverride(["opencode", "claude"], undefined, "openai/gpt-5.2"),
+    ).toBeUndefined();
+  });
+
+  test("Agent Chat uses its OpenCode selector only when OpenCode is selected", () => {
+    expect(resolveAgentChatModelOverride("opencode", "openai/gpt-5.2", "claude-opus-4-6")).toBe(
+      "openai/gpt-5.2",
+    );
+    expect(resolveAgentChatModelOverride("claude", "openai/gpt-5.2", "claude-opus-4-6")).toBe(
+      "claude-opus-4-6",
+    );
   });
 });

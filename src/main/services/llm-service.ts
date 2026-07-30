@@ -316,46 +316,43 @@ function recordCall(
   }
 }
 
-/**
- * Record a streaming call's cost after it completes.
- * Use this for calls that bypass createMessage() (e.g., anthropic.messages.stream()).
- */
-/**
- * Record the start of an agent session: a single zero-token, zero-cost row
- * stamping which harness was selected and which LLM backend it routes to.
- *
- * This is the only signal we have for OpenCode-driven sessions — their
- * actual LLM calls happen inside the spawned `opencode` server (via its
- * bundled AI SDK adapter) and bypass createMessage()'s recording path.
- *
- * Caller convention: `agent-session-start:<harnessId>` (e.g. "agent-session-start:opencode")
- * so a `SELECT ... WHERE caller LIKE 'agent-session-start:%'` returns the
- * session log; harness, provider, and model live in dedicated columns so
- * filtering by any of them is trivial.
- */
+/** Record an agent session through the existing llm_calls ledger. */
 export function recordAgentSessionStart(args: {
   harness: string;
   provider: LlmProvider;
   model: string;
   accountId?: string;
   emailId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreateTokens?: number;
+  costDollars?: number;
+  durationMs?: number;
+  success?: boolean;
+  errorMessage?: string;
 }): void {
   recordCall(
     args.model,
-    `agent-session-start:${args.harness}`,
+    `agent-run:${args.harness}`,
     args.emailId ?? null,
     args.accountId ?? null,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-    null,
+    args.inputTokens ?? 0,
+    args.outputTokens ?? 0,
+    args.cacheReadTokens ?? 0,
+    args.cacheCreateTokens ?? 0,
+    args.durationMs ?? 0,
+    args.success ?? true,
+    args.errorMessage ?? null,
     args.provider,
+    args.costDollars === undefined ? undefined : args.costDollars * 100,
   );
 }
 
+/**
+ * Record a streaming call's cost after it completes.
+ * Use this for calls that bypass createMessage() (e.g., anthropic.messages.stream()).
+ */
 export function recordStreamingCall(
   model: string,
   caller: string,

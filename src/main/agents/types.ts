@@ -59,10 +59,9 @@ export interface AgentRunParams {
   toolExecutor: ToolExecutorFn;
   /** Fetch a URL through the main process's Chromium networking stack (shared session/cookies). */
   netFetch: NetFetchProxyFn;
-  /** Record one row in llm_calls stamping the harness + LLM backend + model
-   *  chosen for this session. Providers should call this exactly once near
-   *  the start of run(), after they've resolved the actual model they will
-   *  use. The call is fire-and-forget; failures are logged, not thrown. */
+  /** Record one row in llm_calls for this provider run. Claude/Hostler record
+   *  their resolved route at start; OpenCode records completed usage at the
+   *  terminal return. The call is fire-and-forget. */
   recordSessionStart: AgentSessionStartFn;
   signal: AbortSignal;
   /** Per-task model override. When set, takes precedence over the framework config model. */
@@ -75,7 +74,32 @@ export type AgentSessionStartFn = (args: {
   model: string;
   accountId?: string;
   emailId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreateTokens?: number;
+  costDollars?: number;
+  durationMs?: number;
+  success?: boolean;
+  errorMessage?: string;
 }) => void;
+
+export function resolveAgentDrafterModelOverride(
+  providerIds: string[],
+  explicitOverride: string | undefined,
+  openCodeSelector: string,
+): string | undefined {
+  if (explicitOverride !== undefined) return explicitOverride;
+  return providerIds.length === 1 && providerIds[0] === "opencode" ? openCodeSelector : undefined;
+}
+
+export function resolveAgentChatModelOverride(
+  selectedProvider: string | undefined,
+  openCodeSelector: string,
+  standardModel: string,
+): string {
+  return selectedProvider === "opencode" ? openCodeSelector : standardModel;
+}
 
 export interface AgentResumeParams {
   taskId: string;

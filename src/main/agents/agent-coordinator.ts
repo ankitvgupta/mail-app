@@ -2,15 +2,21 @@ import { utilityProcess, MessageChannelMain, type BrowserWindow, net } from "ele
 import path from "path";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
-import type {
-  AgentContext,
-  AgentFrameworkConfig,
-  CoordinatorMessage,
-  ScopedAgentEvent,
-  WorkerMessage,
+import {
+  resolveAgentDrafterModelOverride,
+  type AgentContext,
+  type AgentFrameworkConfig,
+  type CoordinatorMessage,
+  type ScopedAgentEvent,
+  type WorkerMessage,
 } from "./types";
 import { getEmailSyncService } from "../ipc/sync.ipc";
-import { getConfig, getFeatureModelConfig, getModelIdForFeature } from "../ipc/settings.ipc";
+import {
+  getConfig,
+  getFeatureModelConfig,
+  getModelIdForFeature,
+  getOpenCodeModelSelector,
+} from "../ipc/settings.ipc";
 import { resolveAgentOllamaConfig } from "../../shared/types";
 import * as db from "../db";
 import { buildStyleContext } from "../services/style-profiler";
@@ -440,9 +446,22 @@ export class AgentCoordinator {
     port1.start();
 
     // Send the run command with port2 to the worker
-    worker.postMessage({ type: "run", taskId, providerIds, prompt, context, modelOverride }, [
-      port2,
-    ]);
+    const resolvedModelOverride = resolveAgentDrafterModelOverride(
+      providerIds,
+      modelOverride,
+      getOpenCodeModelSelector("agentDrafter"),
+    );
+    worker.postMessage(
+      {
+        type: "run",
+        taskId,
+        providerIds,
+        prompt,
+        context,
+        modelOverride: resolvedModelOverride,
+      },
+      [port2],
+    );
   }
 
   /**
