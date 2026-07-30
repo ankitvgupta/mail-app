@@ -46,6 +46,9 @@ export function OpenCodeModelInput({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
+      if (!listOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
       setSuggestionsOpen(false);
       setActiveIndex(-1);
       return;
@@ -127,6 +130,7 @@ export function OpenCodeModelInput({
                     type="button"
                     role="option"
                     aria-selected={index === activeIndex}
+                    tabIndex={-1}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectModel(model)}
                     className={`block w-full px-3 py-2 text-left text-sm ${

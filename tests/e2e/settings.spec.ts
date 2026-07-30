@@ -493,6 +493,45 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
     }
   });
 
+  test("Escape dismisses OpenCode suggestions before closing Settings", async () => {
+    await page.locator("button[title='Settings']").click();
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
+
+    await page.getByLabel("Provider for Email Analysis").selectOption("opencode");
+    const modelInput = page.getByLabel("OpenCode model for Email Analysis");
+    await modelInput.fill("openai/gpt-5.2");
+    await expect(page.getByRole("listbox", { name: "OpenCode model suggestions" })).toBeVisible();
+
+    await modelInput.press("Escape");
+    await expect(page.getByRole("listbox", { name: "OpenCode model suggestions" })).toBeHidden();
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible();
+    await expect(modelInput).toHaveValue("openai/gpt-5.2");
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("h1:has-text('Settings')")).toBeHidden();
+  });
+
+  test("Tab leaves the OpenCode combobox without traversing suggestions", async () => {
+    await page.locator("button[title='Settings']").click();
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
+
+    await page.getByLabel("Provider for Email Analysis").selectOption("opencode");
+    const modelInput = page.getByLabel("OpenCode model for Email Analysis");
+    await modelInput.click();
+    const firstOption = page
+      .getByRole("listbox", { name: "OpenCode model suggestions" })
+      .getByRole("option")
+      .first();
+    await expect(firstOption).toBeVisible();
+
+    await modelInput.press("Tab");
+    await expect(firstOption).not.toBeFocused();
+    await expect(page.getByRole("button", { name: "Refresh models" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("h1:has-text('Settings')")).toBeHidden();
+  });
+
   test("stages and persists per-feature OpenCode models and Agent Chat defaults", async () => {
     await page.locator("button[title='Settings']").click();
     await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
