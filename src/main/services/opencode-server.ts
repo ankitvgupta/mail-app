@@ -25,7 +25,11 @@ function stopChild(child: ChildProcess): void {
     });
     if (!stopped.error && stopped.status === 0) return;
   }
-  child.kill();
+  // Failed kills emit "error". Startup errors have already been handled
+  // before shutdown reaches this path, so keep cleanup from becoming fatal.
+  const onKillError = (): void => {};
+  child.once("error", onKillError);
+  if (child.kill()) child.off("error", onKillError);
 }
 
 export async function launchOpenCodeServer({

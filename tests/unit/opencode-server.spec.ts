@@ -8,7 +8,7 @@ import {
   launchOpenCodeServer,
 } from "../../src/main/services/opencode-server";
 
-function createFakeChild() {
+function createFakeChild(killError?: Error) {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -23,6 +23,10 @@ function createFakeChild() {
   });
   child.kill = () => {
     killCount += 1;
+    if (killError) {
+      queueMicrotask(() => child.emit("error", killError));
+      return false;
+    }
     return true;
   };
 
@@ -83,6 +87,16 @@ test("stops the child when startup times out", async () => {
   expect(fake.child.listenerCount("exit")).toBe(0);
 });
 
+test("timeout cleanup survives an error emitted by kill", async () => {
+  const fake = createFakeChild(new Error("kill denied"));
+
+  await expect(launchWithFakeChild(fake, 5)).rejects.toThrow(
+    "Timeout waiting for server to start after 5ms",
+  );
+  expect(fake.getKillCount()).toBe(1);
+  expect(fake.child.listenerCount("error")).toBe(0);
+});
+
 test("reports exit-before-ready with separate stdout and stderr diagnostics", async () => {
   const fake = createFakeChild();
   const launch = launchWithFakeChild(fake);
@@ -106,4 +120,18 @@ test("close is idempotent", async () => {
   handle.close();
 
   expect(fake.getKillCount()).toBe(1);
+});
+
+test("close remains idempotent when kill emits an error after startup", async () => {
+  const fake = createFakeChild(new Error("kill denied"));
+  const launch = launchWithFakeChild(fake);
+  fake.stdout.write("opencode server listening on http://127.0.0.1:4321\n");
+  const handle = await launch;
+
+  expect(() => handle.close()).not.toThrow();
+  expect(() => handle.close()).not.toThrow();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(fake.getKillCount()).toBe(1);
+  expect(fake.child.listenerCount("error")).toBe(0);
 });
