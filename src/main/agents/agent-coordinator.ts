@@ -2,15 +2,22 @@ import { utilityProcess, MessageChannelMain, type BrowserWindow, net } from "ele
 import path from "path";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
-import type {
-  AgentContext,
-  AgentFrameworkConfig,
-  CoordinatorMessage,
-  ScopedAgentEvent,
-  WorkerMessage,
+import {
+  resolveAgentDrafterModelOverrides,
+  type AgentContext,
+  type AgentFrameworkConfig,
+  type AgentModelOverrides,
+  type CoordinatorMessage,
+  type ScopedAgentEvent,
+  type WorkerMessage,
 } from "./types";
 import { getEmailSyncService } from "../ipc/sync.ipc";
-import { getConfig, getFeatureModelConfig, getModelIdForFeature } from "../ipc/settings.ipc";
+import {
+  getConfig,
+  getFeatureModelConfig,
+  getModelIdForFeature,
+  getOpenCodeModelSelector,
+} from "../ipc/settings.ipc";
 import { resolveAgentOllamaConfig } from "../../shared/types";
 import * as db from "../db";
 import { buildStyleContext } from "../services/style-profiler";
@@ -91,7 +98,11 @@ export class AgentCoordinator {
         },
       },
       opencode: appConfig.opencode
-        ? { enabled: appConfig.opencode.enabled, model: appConfig.opencode.model }
+        ? {
+            enabled: appConfig.opencode.enabled,
+            model: appConfig.opencode.model,
+            featureModels: appConfig.opencode.featureModels,
+          }
         : { enabled: false },
       hostler: appConfig.hostler
         ? {
@@ -226,9 +237,8 @@ export class AgentCoordinator {
       cc?: string[],
       bcc?: string[],
     ) => generateForwardForEmail({ emailId, accountId, instructions, to, cc, bcc }),
-    // Logged once per provider.run(): stamps which harness and LLM backend were
-    // chosen for the session. The only visibility into OpenCode-driven sessions,
-    // since their actual LLM calls happen inside the spawned opencode server.
+    // Claude/Hostler stamp their resolved route at start. OpenCode reports one
+    // terminal record with the usage metadata returned by its child server.
     recordAgentSessionStart: (args: Parameters<typeof recordAgentSessionStart>[0]) =>
       recordAgentSessionStart(args),
   } as const;
@@ -367,7 +377,7 @@ export class AgentCoordinator {
     providerIds: string[],
     prompt: string,
     context: AgentContext,
-    modelOverride?: string,
+    modelOverrides?: AgentModelOverrides,
   ): Promise<void> {
     const worker = this.ensureWorker();
 
@@ -436,9 +446,22 @@ export class AgentCoordinator {
     port1.start();
 
     // Send the run command with port2 to the worker
-    worker.postMessage({ type: "run", taskId, providerIds, prompt, context, modelOverride }, [
-      port2,
-    ]);
+    const resolvedModelOverrides = resolveAgentDrafterModelOverrides(
+      providerIds,
+      modelOverrides,
+      getOpenCodeModelSelector("agentDrafter"),
+    );
+    worker.postMessage(
+      {
+        type: "run",
+        taskId,
+        providerIds,
+        prompt,
+        context,
+        modelOverrides: resolvedModelOverrides,
+      },
+      [port2],
+    );
   }
 
   /**

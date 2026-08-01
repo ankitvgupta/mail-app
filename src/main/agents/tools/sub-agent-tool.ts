@@ -103,11 +103,9 @@ export function createSubAgentTool(
           throw new Error("Sub-agent tools do not support nested tool execution");
         },
         netFetch,
-        // Intentional no-op for nested invocations: the parent run's own
-        // session-start row already covers the orchestration session, and
-        // adding per-subagent rows would muddy session counts in queries
-        // like `caller='agent-session-start:opencode'`. Swap this for the
-        // real callback if per-subagent records become useful later.
+        // Intentional no-op for nested invocations: the parent run owns
+        // top-level accounting, and per-subagent rows would muddy run counts.
+        // Swap this for the real callback if nested accounting becomes useful.
         recordSessionStart: () => {},
         signal,
       });

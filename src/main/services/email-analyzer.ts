@@ -193,7 +193,13 @@ ${userIdentityLine}${wrapUntrustedEmail(`From: ${email.from}\nTo: ${email.to}\nS
           },
         ],
       },
-      { caller: "email-analyzer", emailId: email.id, accountId, provider: this.provider },
+      {
+        caller: "email-analyzer",
+        emailId: email.id,
+        accountId,
+        provider: this.provider,
+        outputSchema: AnalysisResultSchema,
+      },
     );
 
     // Log cache performance

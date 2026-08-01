@@ -51,6 +51,7 @@ import { scheduledSendService } from "./services/scheduled-send-service";
 import { snoozeService } from "./services/snooze-service";
 import { calendarSyncService } from "./services/calendar-sync";
 import { emailSyncService } from "./services/email-sync";
+import { openCodeInferenceService } from "./services/opencode-inference-service";
 import * as webSearchExtension from "../extensions/mail-ext-web-search/src/index";
 import * as calendarExtension from "../extensions/mail-ext-calendar/src/index";
 
@@ -638,10 +639,22 @@ const walCheckpointInterval = setInterval(() => {
   checkpointWal();
 }, WAL_CHECKPOINT_INTERVAL_MS);
 
+// Electron's normal quit path emits before-quit, but test runners and service
+// managers commonly stop the app with SIGTERM. Handle those signals explicitly
+// so the long-lived OpenCode child is stopped before the main process exits.
+const quitFromSignal = (): void => {
+  openCodeInferenceService.close();
+  app.quit();
+};
+process.once("SIGTERM", quitFromSignal);
+process.once("SIGINT", quitFromSignal);
+
 // Flush WAL and close DB before the process exits to prevent data loss.
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
+  openCodeInferenceService.close();
+
   // Stop all interval-based services before closing the DB —
   // otherwise their timers fire after the DB is gone and crash.
   clearInterval(walCheckpointInterval);

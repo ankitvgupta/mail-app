@@ -161,9 +161,9 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
 
   const {
     selectedAgentIds,
+    defaultAgentIds,
     availableProviders,
     setSelectedAgentIds,
-    setAvailableProviders,
     selectedEmailId,
     selectedThreadId,
     selectedDraftId,
@@ -212,27 +212,22 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
     return allActions.filter((a) => fuzzyMatch(a.label, query));
   }, [query, suggestedActions, quickActions]);
 
-  // When the palette opens, fetch real provider list from the backend if we don't have one yet.
-  // Also auto-select "claude" when nothing is selected.
+  // Every conversation starts from the configured default. Users can still
+  // override it for the current palette session.
   useEffect(() => {
     if (!isOpen) return;
+    setSelectedAgentIds(defaultAgentIds.length ? defaultAgentIds : ["claude"]);
+  }, [isOpen, defaultAgentIds, setSelectedAgentIds]);
 
-    if (selectedAgentIds.length === 0) {
-      setSelectedAgentIds(["claude"]);
-    }
-
+  // Fetch the real provider list from the backend if we don't have one yet.
+  useEffect(() => {
+    if (!isOpen) return;
     if (availableProviders.length === 0) {
       // Request provider list from backend; the onProviders listener in App.tsx
       // will update the store when the response arrives.
       window.api?.agent?.providers?.();
     }
-  }, [
-    isOpen,
-    selectedAgentIds.length,
-    availableProviders.length,
-    setSelectedAgentIds,
-    setAvailableProviders,
-  ]);
+  }, [isOpen, availableProviders.length]);
 
   // Reset state when opened/closed
   useEffect(() => {

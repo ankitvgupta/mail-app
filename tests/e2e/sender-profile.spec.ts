@@ -1,5 +1,8 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, pressKeyUntilVisible , closeApp } from "./launch-helpers";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { launchElectronApp, closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the sender profile panel.
@@ -15,9 +18,18 @@ test.describe("Sender Profile - Display", () => {
   test.describe.configure({ mode: "serial" });
   let electronApp: ElectronApplication;
   let page: Page;
+  let userDataDir: string;
 
   test.beforeAll(async ({}, testInfo) => {
-    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    // The full E2E matrix reuses one demo database per Playwright worker.
+    // Earlier archive/trash/snooze suites can therefore change the inbox after
+    // this serial describe starts. Give this stateful flow its own data dir so
+    // every assertion observes the same deterministic demo inbox.
+    userDataDir = mkdtempSync(join(tmpdir(), "exo-sender-profile-"));
+    const result = await launchElectronApp({
+      workerIndex: testInfo.workerIndex,
+      userDataDir,
+    });
     electronApp = result.app;
     page = result.page;
 
@@ -31,6 +43,9 @@ test.describe("Sender Profile - Display", () => {
   test.afterAll(async () => {
     if (electronApp) {
       await closeApp(electronApp);
+    }
+    if (userDataDir) {
+      rmSync(userDataDir, { recursive: true, force: true });
     }
   });
 
@@ -92,16 +107,73 @@ test.describe("Sender Profile - Display", () => {
 
     // Return to split view
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(500);
+    await expect(replyButton).toBeHidden({ timeout: 5000 });
+    await expect(page.locator("div[data-thread-id] > button").first()).toBeVisible({
+      timeout: 15000,
+    });
   });
 
   test("leaving full view preserves row selection and sender sidebar", async () => {
+    const firstThreadButton = page.locator("div[data-thread-id] > button").first();
+    await expect(firstThreadButton).toBeVisible({ timeout: 15000 });
+    const firstThreadId = await firstThreadButton.evaluate(
+      (button) => button.parentElement?.dataset.threadId ?? null,
+    );
+    expect(firstThreadId).toBeTruthy();
+
+    // Establish this test's own selection directly. Keyboard navigation has
+    // separate coverage, and synthetic key events can precede its global
+    // listener registration when the full E2E matrix is under load.
+    await page.evaluate((threadId) => {
+      const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+        getState: () => {
+          emails: Array<{ id: string; threadId: string; date: string }>;
+          setSelectedEmailId: (id: string | null) => void;
+          setSelectedThreadId: (id: string | null) => void;
+          setViewMode: (mode: "split" | "full") => void;
+        };
+      };
+      const state = store.getState();
+      const latestEmail = state.emails
+        .filter((email) => email.threadId === threadId)
+        .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0];
+      if (!latestEmail) throw new Error(`No email found for thread ${threadId}`);
+      state.setSelectedThreadId(threadId);
+      state.setSelectedEmailId(latestEmail.id);
+      state.setViewMode("split");
+    }, firstThreadId);
+
     const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
-    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
+    await expect(selectedRow).toBeVisible({ timeout: 15000 });
     const selectedThreadIdBefore = await selectedRow.getAttribute("data-thread-id");
+    const selectedEmailIdBefore = await page.evaluate(() => {
+      const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+        getState: () => { selectedEmailId: string | null };
+      };
+      return store.getState().selectedEmailId;
+    });
+    expect(selectedEmailIdBefore).toBeTruthy();
+
+    const readSelectionState = () =>
+      page.evaluate(() => {
+        const store = (window as unknown as Record<string, unknown>).__ZUSTAND_STORE__ as {
+          getState: () => {
+            selectedEmailId: string | null;
+            selectedThreadId: string | null;
+            viewMode: "split" | "full";
+          };
+        };
+        const state = store.getState();
+        return {
+          selectedEmailId: state.selectedEmailId,
+          selectedThreadId: state.selectedThreadId,
+          viewMode: state.viewMode,
+        };
+      });
 
     const replyButton = page.locator("button[title='Reply All']").first();
-    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 10000 });
+    await selectedRow.locator("> button").click();
+    await expect(replyButton).toBeVisible({ timeout: 10000 });
 
     const senderName = page.locator("[data-testid='sidebar-sender-name']");
     await expect(senderName).toBeVisible({ timeout: 5000 });
@@ -113,6 +185,20 @@ test.describe("Sender Profile - Display", () => {
     // just viewing so j/k resume from there. The preview sidebar keeps showing
     // that email's sender.
     await expect(replyButton).toBeHidden({ timeout: 5000 });
+    await expect
+      .poll(readSelectionState, {
+        message: "Escape should preserve the selected email and thread in split view",
+      })
+      .toEqual({
+        selectedEmailId: selectedEmailIdBefore,
+        selectedThreadId: selectedThreadIdBefore,
+        viewMode: "split",
+      });
+
+    // The email list unmounts in full view and remounts on return to split
+    // view. Wait on that lifecycle condition before checking the virtualized
+    // row, so an empty transitional DOM cannot be mistaken for lost state.
+    await expect(page.locator("div[data-thread-id]").first()).toBeVisible();
     await expect(selectedRow).toHaveCount(1);
     expect(await selectedRow.getAttribute("data-thread-id")).toBe(selectedThreadIdBefore);
     await expect(senderName).toBeVisible({ timeout: 5000 });
@@ -258,13 +344,15 @@ test.describe("Sender Profile - Full View", () => {
   test("full view shows sender name for the selected email", async () => {
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    // Navigate to first email and enter full view
-    const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
-    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
+    // Open the first email directly; this test covers full-view rendering,
+    // not keyboard navigation.
+    const firstThread = page.locator("div[data-thread-id] > button").first();
+    await expect(firstThread).toBeVisible({ timeout: 15000 });
+    await firstThread.click();
 
     // Should be in full view
     const replyButton = page.locator("button[title='Reply All']").first();
-    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 10000 });
+    await expect(replyButton).toBeVisible({ timeout: 10000 });
 
     // The email header area should show sender name
     const bodyText = await page.textContent("body");

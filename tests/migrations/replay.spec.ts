@@ -27,9 +27,8 @@ import { SCHEMA } from "../../src/main/db/schema";
 const require = createRequire(import.meta.url);
 
 type DB = BetterSqlite3.Database;
-let DatabaseCtor:
-  | (new (filename: string | Buffer, options?: BetterSqlite3.Options) => DB)
-  | null = null;
+let DatabaseCtor: (new (filename: string | Buffer, options?: BetterSqlite3.Options) => DB) | null =
+  null;
 let nativeModuleError: string | null = null;
 try {
   DatabaseCtor = require("better-sqlite3");
@@ -106,15 +105,13 @@ test.describe("Migration replay + symmetry", () => {
     }
 
     const draftCols = listTableColumns(db, "drafts");
-    for (const col of [
-      "agent_task_id",
-      "cc",
-      "bcc",
-      "compose_mode",
-      "to_recipients",
-    ]) {
+    for (const col of ["agent_task_id", "cc", "bcc", "compose_mode", "to_recipients"]) {
       expect(draftCols.has(col), `drafts should have column ${col}`).toBe(true);
     }
+
+    const llmCallCols = listTableColumns(db, "llm_calls");
+    expect(llmCallCols.has("usage_available")).toBe(true);
+    expect(llmCallCols.has("cost_available")).toBe(true);
 
     // All numbered migrations should be recorded as applied.
     const appliedVersions = (
@@ -181,9 +178,8 @@ test.describe("Migration replay + symmetry", () => {
     expect(tables.has("schema_version")).toBe(true);
 
     // Original data should still be present and intact.
-    const accountCount = (
-      db.prepare("SELECT COUNT(*) as c FROM accounts").get() as { c: number }
-    ).c;
+    const accountCount = (db.prepare("SELECT COUNT(*) as c FROM accounts").get() as { c: number })
+      .c;
     expect(accountCount).toBe(1);
 
     // All numbered migrations should be applied.
@@ -195,6 +191,104 @@ test.describe("Migration replay + symmetry", () => {
     for (const m of NUMBERED_MIGRATIONS) {
       expect(appliedVersions).toContain(m.version);
     }
+
+    db.close();
+  });
+
+  test("replay: v8 marks only zero-valued legacy agent approximations unavailable", () => {
+    const db = freshDb();
+    const v1 = NUMBERED_MIGRATIONS.find((migration) => migration.version === 1);
+    const v7 = NUMBERED_MIGRATIONS.find((migration) => migration.version === 7);
+    const v8 = NUMBERED_MIGRATIONS.find((migration) => migration.version === 8);
+    if (!v1 || !v7 || !v8) throw new Error("Expected migrations v1, v7, and v8");
+
+    v1.up(db);
+    v7.up(db);
+    db.exec(`
+      CREATE TABLE schema_version (
+        version INTEGER NOT NULL UNIQUE,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_version (version) VALUES (7);
+    `);
+
+    const insertLegacyCall = db.prepare(`
+      INSERT INTO llm_calls (
+        id, model, caller, input_tokens, output_tokens,
+        cache_read_tokens, cache_create_tokens, cost_cents,
+        duration_ms, success, provider
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertLegacyCall.run(
+      "approximation",
+      "openai/gpt-5.2",
+      "agent-session-start:opencode",
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      "opencode",
+    );
+    insertLegacyCall.run(
+      "measured-agent",
+      "claude-sonnet-4",
+      "agent-session-start:claude",
+      120,
+      40,
+      10,
+      5,
+      0.25,
+      800,
+      1,
+      "anthropic",
+    );
+    insertLegacyCall.run(
+      "ordinary-zero",
+      "claude-sonnet-4",
+      "email-analyzer",
+      0,
+      0,
+      0,
+      0,
+      0,
+      25,
+      0,
+      "anthropic",
+    );
+
+    runMigrations(db);
+
+    const availability = () =>
+      db
+        .prepare(
+          `SELECT id, usage_available, cost_available
+           FROM llm_calls
+           ORDER BY id`,
+        )
+        .all();
+    expect(availability()).toEqual([
+      { id: "approximation", usage_available: 0, cost_available: 0 },
+      { id: "measured-agent", usage_available: 1, cost_available: 1 },
+      { id: "ordinary-zero", usage_available: 1, cost_available: 1 },
+    ]);
+
+    // The migration body is safe to replay independently, and the runner
+    // remains a no-op once v8 is recorded.
+    v8.up(db);
+    v8.up(db);
+    runMigrations(db);
+    expect(availability()).toEqual([
+      { id: "approximation", usage_available: 0, cost_available: 0 },
+      { id: "measured-agent", usage_available: 1, cost_available: 1 },
+      { id: "ordinary-zero", usage_available: 1, cost_available: 1 },
+    ]);
+    const v8Count = db
+      .prepare("SELECT COUNT(*) AS count FROM schema_version WHERE version = 8")
+      .get() as { count: number };
+    expect(v8Count.count).toBe(1);
 
     db.close();
   });

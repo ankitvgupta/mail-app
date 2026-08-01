@@ -17,6 +17,7 @@
  * Analysis memories are injected into the analysis prompt (not the draft prompt).
  */
 import { randomUUID } from "crypto";
+import { z } from "zod";
 import { createMessage } from "./llm-service";
 import { getFeatureModelConfig } from "../ipc/settings.ipc";
 import {
@@ -58,6 +59,27 @@ interface AnalysisObservation {
   content: string;
   emailContext: string | null;
 }
+
+const AnalysisObservationResponseSchema = z.array(
+  z.object({
+    scope: z.string(),
+    scopeValue: z.string().nullable(),
+    content: z.string(),
+    emailContext: z.string().optional(),
+  }),
+);
+
+const AnalysisMatchResponseSchema = z.array(
+  z.object({
+    observationIndex: z.number().int().nonnegative(),
+    matchedDraftMemoryId: z.string().nullable(),
+  }),
+);
+
+const AnalysisScopeResponseSchema = z.object({
+  scope: z.string(),
+  scopeValue: z.string().nullable(),
+});
 
 export interface AnalysisLearnResult {
   promoted: Memory[];
@@ -290,17 +312,14 @@ async function analyzeOverride(override: AnalysisOverride): Promise<AnalysisObse
     return null;
   }
 
-  // Honor the user's provider choice for analysis. When routed to Ollama, we
-  // use the configured Ollama model — the hardcoded Claude model below would
-  // be invalid there. (For Anthropic the hardcoded model wins as before.)
-  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
-  const isOllama = provider === "ollama-cloud";
+  const { provider, model: configuredModel } = getFeatureModelConfig("analysis");
+  const model = provider === "anthropic" ? "claude-sonnet-4-20250514" : configuredModel;
 
   const overrideDesc = formatOverrideDescription(override);
 
   const response = await createMessage(
     {
-      model: isOllama ? ollamaModel : "claude-sonnet-4-20250514",
+      model,
       max_tokens: 2048,
       messages: [
         {
@@ -348,6 +367,7 @@ Respond with ONLY the JSON array.`,
       provider,
       emailId: override.emailId,
       accountId: override.accountId,
+      outputSchema: AnalysisObservationResponseSchema,
     },
   );
 
@@ -395,12 +415,12 @@ async function matchAnalysisDraftMemories(
     return observations.map((_, i) => ({ observationIndex: i, matchedDraftMemoryId: null }));
   }
 
-  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
-  const isOllama = provider === "ollama-cloud";
+  const { provider, model: configuredModel } = getFeatureModelConfig("analysis");
+  const model = provider === "anthropic" ? "claude-sonnet-4-5-20250929" : configuredModel;
 
   const response = await createMessage(
     {
-      model: isOllama ? ollamaModel : "claude-sonnet-4-5-20250929",
+      model,
       max_tokens: 1024,
       messages: [
         {
@@ -418,7 +438,11 @@ Respond with ONLY a JSON array: [{"observationIndex": 0, "matchedDraftMemoryId":
         },
       ],
     },
-    { caller: "analysis-edit-learner-match", provider },
+    {
+      caller: "analysis-edit-learner-match",
+      provider,
+      outputSchema: AnalysisMatchResponseSchema,
+    },
   );
 
   // Find the first text block — Ollama-routed thinking models emit a
@@ -458,12 +482,12 @@ async function classifyScope(
     return { scope: "person", scopeValue: senderEmail.toLowerCase() };
   }
 
-  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
-  const isOllama = provider === "ollama-cloud";
+  const { provider, model: configuredModel } = getFeatureModelConfig("analysis");
+  const model = provider === "anthropic" ? "claude-haiku-4-5-20251001" : configuredModel;
 
   const response = await createMessage(
     {
-      model: isOllama ? ollamaModel : "claude-haiku-4-5-20251001",
+      model,
       max_tokens: 256,
       messages: [
         {
@@ -487,7 +511,11 @@ For global: scopeValue = null`,
         },
       ],
     },
-    { caller: "analysis-edit-learner-classify-scope", provider },
+    {
+      caller: "analysis-edit-learner-classify-scope",
+      provider,
+      outputSchema: AnalysisScopeResponseSchema,
+    },
   );
 
   // Find the first text block — Ollama-routed thinking models emit a

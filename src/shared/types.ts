@@ -352,9 +352,58 @@ export function resolveModelId(tier: ModelTier): string {
 }
 
 // LLM Provider types — supports routing features to different backends
-export const LLM_PROVIDERS = ["anthropic", "ollama-cloud"] as const;
-export const LlmProviderSchema = z.enum(["anthropic", "ollama-cloud"]);
+export const LLM_PROVIDERS = ["anthropic", "ollama-cloud", "opencode"] as const;
+export const LlmProviderSchema = z.enum(LLM_PROVIDERS);
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
+
+export type OpenCodeModelOption = {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+};
+
+export type OpenCodeRoute = {
+  providerID: string;
+  modelID: string;
+};
+
+export function parseOpenCodeModelSelector(
+  selector: string | undefined,
+): OpenCodeRoute | undefined {
+  const value = selector?.trim();
+  if (!value) return undefined;
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) return undefined;
+  return {
+    providerID: value.slice(0, slash),
+    modelID: value.slice(slash + 1),
+  };
+}
+
+export function resolveOpenCodeRoute(
+  selector: string | undefined,
+  models: OpenCodeModelOption[],
+): OpenCodeRoute | undefined {
+  const value = selector?.trim();
+  if (!value) return undefined;
+  const exact = parseOpenCodeModelSelector(value);
+  if (exact) {
+    const available = models.some(
+      (model) => model.providerId === exact.providerID && model.modelId === exact.modelID,
+    );
+    if (available) return exact;
+    throw new Error(`OpenCode model "${value}" is not available from a connected provider`);
+  }
+  const matches = models.filter((model) => model.modelId === value);
+  if (matches.length === 1) {
+    return { providerID: matches[0].providerId, modelID: matches[0].modelId };
+  }
+  if (matches.length === 0) {
+    throw new Error(`OpenCode model "${value}" is not available from a connected provider`);
+  }
+  throw new Error(`OpenCode model "${value}" is ambiguous; select an exact provider/model`);
+}
 
 // Search backends for sender lookup. "anthropic" uses Claude's built-in
 // web_search tool (search + extraction in one LLM call). "exa" hits Exa's
@@ -493,6 +542,7 @@ export const ConfigSchema = z.object({
       // Anthropic resolution produces. Stored as "provider/model" or just the
       // model name — see OpenCodeAgentProvider.resolveModel().
       model: z.string().optional(),
+      featureModels: z.record(z.string(), z.string()).optional(),
     })
     .optional(),
   // Hostler provider settings — hosted cloud agent backend (hostler.dev).
@@ -654,7 +704,9 @@ export function applyAgentDrafterSelection(
   selected: string,
 ): { backgroundAgentProvider: string; agentDrafterProvider?: LlmProvider } | null {
   if ((EXTERNAL_AGENT_RUNTIMES as readonly string[]).includes(selected)) {
-    return { backgroundAgentProvider: selected };
+    return selected === "opencode"
+      ? { backgroundAgentProvider: selected, agentDrafterProvider: "opencode" }
+      : { backgroundAgentProvider: selected };
   }
   const llmParse = LlmProviderSchema.safeParse(selected);
   if (llmParse.success) {
@@ -979,6 +1031,7 @@ export type IpcChannels = {
   // Settings operations
   "settings:get": void;
   "settings:set": Partial<Config>;
+  "settings:list-opencode-models": void;
   "settings:get-prompts": void;
   "settings:set-prompts": { analysisPrompt?: string; draftPrompt?: string; stylePrompt?: string };
   "settings:get-ea": void;

@@ -16,8 +16,13 @@ import type {
   MessageCreateParamsNonStreaming,
   Message,
 } from "@anthropic-ai/sdk/resources/messages";
+import { z } from "zod";
 import type { LlmProvider } from "../../shared/types";
 import { createLogger } from "./logger";
+import {
+  openCodeInferenceService,
+  type OpenCodeInferenceService,
+} from "./opencode-inference-service";
 import { randomUUID } from "crypto";
 
 const log = createLogger("llm");
@@ -69,6 +74,9 @@ export interface LlmCallRecord {
   duration_ms: number;
   success: number;
   error_message: string | null;
+  provider: string;
+  usage_available: number;
+  cost_available: number;
 }
 
 export interface UsageStats {
@@ -105,6 +113,14 @@ export interface CreateOptions {
    * Ignored for Anthropic.
    */
   think?: boolean | "low" | "medium" | "high" | "max";
+  outputSchema?: z.ZodType;
+}
+
+type OpenCodeServiceLike = Pick<OpenCodeInferenceService, "complete">;
+let openCodeService: OpenCodeServiceLike = openCodeInferenceService;
+
+export function _setOpenCodeServiceForTesting(service?: OpenCodeServiceLike): void {
+  openCodeService = service ?? openCodeInferenceService;
 }
 
 // --- Anthropic client (api.anthropic.com) ---
@@ -223,7 +239,9 @@ export function setAnthropicServiceDb(db: DatabaseInstance): void {
       duration_ms INTEGER NOT NULL,
       success INTEGER NOT NULL DEFAULT 1,
       error_message TEXT,
-      provider TEXT DEFAULT 'anthropic'
+      provider TEXT DEFAULT 'anthropic',
+      usage_available INTEGER NOT NULL DEFAULT 1,
+      cost_available INTEGER NOT NULL DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_calls_caller ON llm_calls(caller);
@@ -231,8 +249,9 @@ export function setAnthropicServiceDb(db: DatabaseInstance): void {
   _insertStmt = db.prepare(`
     INSERT INTO llm_calls (id, model, caller, email_id, account_id,
       input_tokens, output_tokens, cache_read_tokens, cache_create_tokens,
-      cost_cents, duration_ms, success, error_message, provider)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      cost_cents, duration_ms, success, error_message, provider,
+      usage_available, cost_available)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 }
 
@@ -266,17 +285,20 @@ function recordCall(
   success: boolean,
   errorMessage: string | null,
   provider?: LlmProvider,
+  costCentsOverride?: number,
+  usageAvailable = true,
+  costAvailable = true,
 ): void {
   if (!_insertStmt) {
     log.warn("LLM service: database not initialized, skipping call recording");
     return;
   }
 
-  // Ollama Cloud is subscription-based — no per-token cost
   const costCents =
-    provider === "ollama-cloud"
+    costCentsOverride ??
+    (provider === "ollama-cloud" || provider === "opencode"
       ? 0
-      : calculateCostCents(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens);
+      : calculateCostCents(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens));
 
   try {
     _insertStmt.run(
@@ -294,6 +316,8 @@ function recordCall(
       success ? 1 : 0,
       errorMessage,
       provider ?? "anthropic",
+      usageAvailable ? 1 : 0,
+      costAvailable ? 1 : 0,
     );
   } catch (err) {
     // Recording failure must never break the LLM call
@@ -301,46 +325,51 @@ function recordCall(
   }
 }
 
-/**
- * Record a streaming call's cost after it completes.
- * Use this for calls that bypass createMessage() (e.g., anthropic.messages.stream()).
- */
-/**
- * Record the start of an agent session: a single zero-token, zero-cost row
- * stamping which harness was selected and which LLM backend it routes to.
- *
- * This is the only signal we have for OpenCode-driven sessions — their
- * actual LLM calls happen inside the spawned `opencode` server (via its
- * bundled AI SDK adapter) and bypass createMessage()'s recording path.
- *
- * Caller convention: `agent-session-start:<harnessId>` (e.g. "agent-session-start:opencode")
- * so a `SELECT ... WHERE caller LIKE 'agent-session-start:%'` returns the
- * session log; harness, provider, and model live in dedicated columns so
- * filtering by any of them is trivial.
- */
+/** Record an agent session through the existing llm_calls ledger. */
 export function recordAgentSessionStart(args: {
   harness: string;
   provider: LlmProvider;
   model: string;
   accountId?: string;
   emailId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreateTokens?: number;
+  costDollars?: number;
+  durationMs?: number;
+  success?: boolean;
+  errorMessage?: string;
 }): void {
+  const usageAvailable =
+    args.inputTokens !== undefined &&
+    args.outputTokens !== undefined &&
+    args.cacheReadTokens !== undefined &&
+    args.cacheCreateTokens !== undefined;
+  const costAvailable = args.costDollars !== undefined;
   recordCall(
     args.model,
-    `agent-session-start:${args.harness}`,
+    `agent-run:${args.harness}`,
     args.emailId ?? null,
     args.accountId ?? null,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-    null,
+    args.inputTokens ?? 0,
+    args.outputTokens ?? 0,
+    args.cacheReadTokens ?? 0,
+    args.cacheCreateTokens ?? 0,
+    args.durationMs ?? 0,
+    args.success ?? true,
+    args.errorMessage ?? null,
     args.provider,
+    args.costDollars === undefined ? undefined : args.costDollars * 100,
+    usageAvailable,
+    costAvailable,
   );
 }
 
+/**
+ * Record a streaming call's cost after it completes.
+ * Use this for calls that bypass createMessage() (e.g., anthropic.messages.stream()).
+ */
 export function recordStreamingCall(
   model: string,
   caller: string,
@@ -614,6 +643,92 @@ export async function createMessage(
   const model = params.model;
   const startTime = Date.now();
 
+  if (provider === "opencode") {
+    if (params.tools?.length) {
+      throw new Error("OpenCode feature inference does not support tools");
+    }
+    const controller = timeoutMs ? new AbortController() : undefined;
+    const timer = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
+    try {
+      const result = await openCodeService.complete({
+        selector: params.model || undefined,
+        system: flattenSystemPrompt(params.system),
+        prompt: params.messages
+          .map(
+            (message) =>
+              `${message.role.toUpperCase()}:\n${flattenMessageContent(message.content)}`,
+          )
+          .join("\n\n"),
+        outputSchema: options.outputSchema
+          ? (z.toJSONSchema(options.outputSchema) as Record<string, unknown>)
+          : undefined,
+        signal: controller?.signal,
+      });
+      const resolvedModel = `${result.providerId}/${result.modelId}`;
+      const text =
+        result.structured === undefined ? result.text : JSON.stringify(result.structured);
+      const response = {
+        id: result.id,
+        type: "message",
+        role: "assistant",
+        model: resolvedModel,
+        content: [{ type: "text", text, citations: null }],
+        container: null,
+        stop_details: null,
+        stop_reason: result.finishReason === "length" ? "max_tokens" : "end_turn",
+        stop_sequence: null,
+        usage: {
+          input_tokens: result.inputTokens,
+          output_tokens: result.outputTokens,
+          cache_creation_input_tokens: result.cacheWriteTokens,
+          cache_read_input_tokens: result.cacheReadTokens,
+          server_tool_use: null,
+          service_tier: null,
+        },
+      } as Message;
+      recordCall(
+        resolvedModel,
+        caller,
+        emailId ?? null,
+        accountId ?? null,
+        result.inputTokens,
+        result.outputTokens,
+        result.cacheReadTokens,
+        result.cacheWriteTokens,
+        Date.now() - startTime,
+        true,
+        null,
+        "opencode",
+        result.costDollars === undefined ? undefined : result.costDollars * 100,
+        true,
+        result.costDollars !== undefined,
+      );
+      return response;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      recordCall(
+        params.model || "opencode-default",
+        caller,
+        emailId ?? null,
+        accountId ?? null,
+        0,
+        0,
+        0,
+        0,
+        Date.now() - startTime,
+        false,
+        errorMessage,
+        "opencode",
+        undefined,
+        false,
+        false,
+      );
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   // Strip cache_control for Ollama (unsupported)
   const effectiveParams = isOllama ? adjustParamsForOllama(params) : params;
 
@@ -738,6 +853,9 @@ export async function createMessage(
     false,
     errMsg,
     provider,
+    undefined,
+    false,
+    false,
   );
 
   throw lastError;

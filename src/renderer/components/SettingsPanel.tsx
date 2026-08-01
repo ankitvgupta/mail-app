@@ -28,6 +28,8 @@ import {
   applyAgentDrafterSelection,
   isAgentRuntimeAvailable,
   type BlockedSender,
+  type IpcResponse,
+  type OpenCodeModelOption,
 } from "../../shared/types";
 import { useAppStore, type Account, type SettingsTab } from "../store";
 import { reconfigurePostHog, trackEvent } from "../services/posthog";
@@ -36,6 +38,7 @@ import { SnippetsEditor } from "./SnippetsEditor";
 import { MemoriesTab } from "./MemoriesTab";
 import { ExtensionsTab } from "./ExtensionsTab";
 import { OllamaModelSelect } from "./OllamaModelSelect";
+import { OpenCodeModelInput } from "./OpenCodeModelInput";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -65,6 +68,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     setSendAndArchive,
     currentAccountId,
     highlightMemoryIds,
+    setDefaultAgentIds,
   } = useAppStore();
   const [isAddingAccount, setIsAddingAccount] = useState(false);
   const [addAccountPhase, setAddAccountPhase] = useState("Connecting...");
@@ -105,6 +109,10 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [modelConfig, setModelConfig] = useState<ModelConfig>(DEFAULT_MODEL_CONFIG);
   const [featureProviders, setFeatureProviders] = useState<Record<string, LlmProvider>>({});
   const [ollamaModels, setOllamaModels] = useState<Record<string, string>>({});
+  const [openCodeModels, setOpenCodeModels] = useState<Record<string, string>>({});
+  const featureProvidersDirty = useRef(false);
+  const openCodeModelsDirty = useRef(false);
+  const backgroundAgentProviderDirty = useRef(false);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
   // "saved" for transient success feedback, any other string is an error message
   const [generalSaveResult, setGeneralSaveResult] = useState<string | null>(null);
@@ -231,6 +239,18 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     refetchOnMount: "always",
   });
 
+  const openCodeCatalog = useQuery({
+    queryKey: ["opencode-models"],
+    enabled: generalConfig?.opencode?.enabled === true,
+    queryFn: async () => {
+      const result = (await window.api.settings.listOpenCodeModels()) as IpcResponse<
+        OpenCodeModelOption[]
+      >;
+      if (!result.success) throw new Error(result.error);
+      return result.data;
+    },
+  });
+
   // What the main process will actually launch for background drafts, given
   // the current provider gates — the same resolver prefetch/rerun use, so the
   // fallback warning under the Agent Drafter row can't drift from real behavior.
@@ -289,10 +309,15 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setExaApiKey(generalConfig.exaApiKey ?? "");
       setSyncDraftsToGmail(generalConfig.syncDraftsToGmail ?? false);
       setModelConfig({ ...DEFAULT_MODEL_CONFIG, ...generalConfig.modelConfig });
-      setFeatureProviders(generalConfig.featureProviders ?? {});
+      if (!featureProvidersDirty.current) {
+        setFeatureProviders(generalConfig.featureProviders ?? {});
+      }
       const ollamaFeatureModels = generalConfig.ollamaCloud?.featureModels;
       if (ollamaFeatureModels) {
         setOllamaModels(ollamaFeatureModels);
+      }
+      if (!openCodeModelsDirty.current) {
+        setOpenCodeModels(generalConfig.opencode?.featureModels ?? {});
       }
       setGithubToken(generalConfig.githubToken ?? "");
       setAllowPrereleaseUpdates(generalConfig.allowPrereleaseUpdates ?? false);
@@ -306,9 +331,11 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setMcpServers(generalConfig.mcpServers ?? {});
       setCliTools((generalConfig.cliTools ?? []).map((t) => ({ ...t, _key: nextCliToolKey() })));
       setExtraPathDirs(generalConfig.extraPathDirs ?? []);
-      setBackgroundAgentProvider(
-        generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
-      );
+      if (!backgroundAgentProviderDirty.current) {
+        setBackgroundAgentProvider(
+          generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
+        );
+      }
       const ph = generalConfig.posthog;
       if (ph) {
         setPosthogEnabled(ph.enabled);
@@ -469,11 +496,17 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         // overwrite the freshly-saved key. By omitting apiKey/defaultModel, the
         // deep-merge falls through to the existing values for those fields.
         ollamaCloud: { featureModels: ollamaModels },
+        opencode: { featureModels: openCodeModels },
         githubToken: githubToken || undefined,
         allowPrereleaseUpdates,
       })) as { success: boolean; error?: string } | undefined;
       if (result?.success) {
         setGeneralSaveResult("saved");
+        setDefaultAgentIds([
+          featureProviders.agentChat === "opencode" && generalConfig?.opencode?.enabled
+            ? "opencode"
+            : "claude",
+        ]);
         // Functional clear so a later save's error can't be wiped by this timer
         setTimeout(() => setGeneralSaveResult((v) => (v === "saved" ? null : v)), 2000);
       } else {
@@ -1282,11 +1315,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                         const v = e.target.value;
                         if ((SENDER_LOOKUP_PROVIDERS as readonly string[]).includes(v)) {
                           setSenderLookupProvider(v as SenderLookupProvider);
-                          // Switching away from Exa hides the Ollama Cloud option
+                          // Switching away from Exa hides the non-Anthropic options
                           // in the senderLookup model dropdown — reset to anthropic
-                          // so a stale "ollama-cloud" value isn't silently persisted
+                          // so a stale value isn't silently persisted
                           // and then re-activated when the user switches back to Exa.
-                          if (v !== "exa" && featureProviders.senderLookup === "ollama-cloud") {
+                          if (
+                            v !== "exa" &&
+                            (featureProviders.senderLookup === "ollama-cloud" ||
+                              featureProviders.senderLookup === "opencode")
+                          ) {
+                            featureProvidersDirty.current = true;
                             setFeatureProviders((prev) => ({
                               ...prev,
                               senderLookup: "anthropic",
@@ -1389,18 +1427,19 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     },
                   ].map(({ key, label, description }) => {
                     const provider = featureProviders[key] ?? "anthropic";
-                    // The Agent Drafter row doubles as the background-agent runtime
-                    // picker: OpenCode/Hostler route background drafts to that agent
-                    // provider (backgroundAgentProvider, model configured in the
-                    // Extensions tab), while Anthropic/Ollama keep the built-in
-                    // Claude agent and pick which model it uses. While an external
-                    // runtime is selected, featureProviders.agentDrafter is hidden
-                    // but still saved — it keeps gating resolveAgentOllamaConfig
-                    // (the shared agent worker's Ollama routing) alongside agentChat.
+                    // The Agent Drafter row also selects the background runtime.
+                    // OpenCode has its own per-feature model here; Hostler keeps its
+                    // model in Extensions. Anthropic/Ollama use the built-in agent
+                    // with this row's model route.
                     const isBackgroundAgentRow = key === "agentDrafter";
-                    const externalRuntime =
+                    const selectedProvider =
                       isBackgroundAgentRow &&
-                      backgroundAgentProvider !== DEFAULT_BACKGROUND_AGENT_PROVIDER;
+                      backgroundAgentProvider !== DEFAULT_BACKGROUND_AGENT_PROVIDER
+                        ? backgroundAgentProvider
+                        : provider;
+                    const extensionModel = selectedProvider === "hostler";
+                    const openCodeEligible =
+                      key !== "senderLookup" || senderLookupProvider === "exa";
                     return (
                       <div
                         key={key}
@@ -1417,20 +1456,23 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                           </div>
                           <div className="flex items-center gap-2">
                             <select
-                              value={externalRuntime ? backgroundAgentProvider : provider}
+                              value={selectedProvider}
                               onChange={(e) => {
                                 const p = e.target.value;
                                 if (isBackgroundAgentRow) {
                                   const sel = applyAgentDrafterSelection(p);
                                   if (!sel) return;
+                                  backgroundAgentProviderDirty.current = true;
                                   setBackgroundAgentProvider(sel.backgroundAgentProvider);
                                   const llm = sel.agentDrafterProvider;
                                   if (llm) {
+                                    featureProvidersDirty.current = true;
                                     setFeatureProviders((prev) => ({ ...prev, [key]: llm }));
                                   }
                                   return;
                                 }
                                 if ((LLM_PROVIDERS as readonly string[]).includes(p)) {
+                                  featureProvidersDirty.current = true;
                                   setFeatureProviders((prev) => ({
                                     ...prev,
                                     [key]: p as LlmProvider,
@@ -1449,11 +1491,13 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                               {(key !== "senderLookup" || senderLookupProvider === "exa") && (
                                 <option value="ollama-cloud">Ollama Cloud</option>
                               )}
+                              {openCodeEligible && (
+                                <option value="opencode" disabled={!opencodeRuntimeAvailable}>
+                                  OpenCode
+                                </option>
+                              )}
                               {isBackgroundAgentRow && (
                                 <>
-                                  <option value="opencode" disabled={!opencodeRuntimeAvailable}>
-                                    OpenCode
-                                  </option>
                                   <option value="hostler" disabled={!hostlerRuntimeAvailable}>
                                     Hostler (cloud)
                                   </option>
@@ -1461,7 +1505,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                       option — render it so the select reflects the saved
                                       value the fallback warning references, instead of
                                       showing a blank control. */}
-                                  {externalRuntime &&
+                                  {selectedProvider !== provider &&
+                                    selectedProvider !== "opencode" &&
                                     backgroundAgentProvider !== "opencode" &&
                                     backgroundAgentProvider !== "hostler" && (
                                       <option value={backgroundAgentProvider} disabled>
@@ -1471,7 +1516,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                 </>
                               )}
                             </select>
-                            {externalRuntime ? (
+                            {extensionModel ? (
                               <button
                                 type="button"
                                 onClick={() => setActiveTab("extensions")}
@@ -1479,7 +1524,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                               >
                                 Model set in Extensions
                               </button>
-                            ) : provider === "anthropic" ? (
+                            ) : selectedProvider === "anthropic" ? (
                               <select
                                 value={modelConfig[key]}
                                 onChange={(e) => {
@@ -1500,7 +1545,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                   </option>
                                 ))}
                               </select>
-                            ) : (
+                            ) : selectedProvider === "ollama-cloud" ? (
                               <OllamaModelSelect
                                 value={ollamaModels[key] ?? DEFAULT_OLLAMA_MODEL}
                                 onChange={(v) => setOllamaModels((prev) => ({ ...prev, [key]: v }))}
@@ -1508,6 +1553,32 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                 selectClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 inputClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               />
+                            ) : selectedProvider === "opencode" ? (
+                              <OpenCodeModelInput
+                                value={openCodeModels[key] ?? ""}
+                                onChange={(value) => {
+                                  openCodeModelsDirty.current = true;
+                                  setOpenCodeModels((prev) => ({ ...prev, [key]: value }));
+                                }}
+                                models={openCodeCatalog.data ?? []}
+                                loading={openCodeCatalog.isFetching}
+                                error={
+                                  openCodeCatalog.error instanceof Error
+                                    ? openCodeCatalog.error.message
+                                    : undefined
+                                }
+                                onRefresh={() => void openCodeCatalog.refetch()}
+                                ariaLabel={`OpenCode model for ${label}`}
+                              />
+                            ) : null}
+                            {selectedProvider === "opencode" && !opencodeRuntimeAvailable && (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab("extensions")}
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                Enable OpenCode in Extensions
+                              </button>
                             )}
                           </div>
                         </div>
@@ -3582,6 +3653,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
               // Mirror the persisted featureProviders reset in the staged copy
               // (hydrated once per session) so Save Changes can't republish
               // ollama-cloud routes whose API key was just cleared.
+              featureProvidersDirty.current = true;
               setFeatureProviders((prev) =>
                 Object.fromEntries(
                   Object.entries(prev).map(([feature, provider]) => [

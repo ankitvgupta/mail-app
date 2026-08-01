@@ -2,11 +2,14 @@ import { ipcMain } from "electron";
 import { execFile, execFileSync } from "child_process";
 import { agentCoordinator } from "../agents/agent-coordinator";
 import { authenticateProvider } from "../agents/private-providers-main";
-import { getConfig, getModelIdForFeature } from "./settings.ipc";
+import { getConfig, getModelIdForFeature, getOpenCodeModelSelector } from "./settings.ipc";
 import { resolveAgentOllamaConfig } from "../../shared/types";
 import { getAgentTrace } from "../db";
-import type { AgentContext } from "../agents/types";
-import type { ScopedAgentEvent } from "../agents/types";
+import {
+  resolveAgentChatModelOverrides,
+  type AgentContext,
+  type ScopedAgentEvent,
+} from "../agents/types";
 import type { IpcResponse } from "../../shared/types";
 
 /** Check if `claude` CLI is available on PATH. Cached after first check. */
@@ -53,9 +56,14 @@ export function registerAgentIpc(): void {
         // If only agentChat is set to ollama-cloud (mismatched config), the
         // worker is still on Anthropic and would 400 with invalid_model
         // unless we send an Anthropic name.
-        const ollamaConfig = resolveAgentOllamaConfig(getConfig());
-        const modelOverride = ollamaConfig?.model ?? getModelIdForFeature("agentChat");
-        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
+        const standardModel =
+          resolveAgentOllamaConfig(getConfig())?.model ?? getModelIdForFeature("agentChat");
+        const modelOverrides = resolveAgentChatModelOverrides(
+          providerIds,
+          getOpenCodeModelSelector("agentChat"),
+          standardModel,
+        );
+        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverrides);
         return { success: true, data: { taskId } };
       } catch (error) {
         return {

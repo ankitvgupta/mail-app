@@ -3,6 +3,7 @@ import type {
   AgentContext,
   AgentEvent,
   AgentFrameworkConfig,
+  AgentModelOverrides,
   AgentProvider,
   AgentProviderConfig,
   AgentRunResult,
@@ -168,7 +169,7 @@ export class AgentOrchestrator {
     providerIds: string[],
     prompt: string,
     context: AgentContext,
-    modelOverride?: string,
+    modelOverrides?: AgentModelOverrides,
   ): Promise<void> {
     if (providerIds.length === 0) {
       throw new Error("runCommand requires at least one provider ID");
@@ -239,7 +240,7 @@ export class AgentOrchestrator {
               netFetch: this.deps.netFetchProxy,
               recordSessionStart: this.deps.recordAgentSessionStart,
               signal: abortController.signal,
-              modelOverride,
+              modelOverride: modelOverrides?.[id],
             });
 
             let result: IteratorResult<AgentEvent, AgentRunResult>;

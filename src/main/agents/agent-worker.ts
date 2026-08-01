@@ -176,7 +176,7 @@ function handleMainMessage(msg: WorkerMessage): void {
         return;
       }
       orchestrator
-        .runCommand(msg.taskId, msg.providerIds, msg.prompt, msg.context, msg.modelOverride)
+        .runCommand(msg.taskId, msg.providerIds, msg.prompt, msg.context, msg.modelOverrides)
         .then(() => {
           closeTaskPort(msg.taskId);
         })

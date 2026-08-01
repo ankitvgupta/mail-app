@@ -59,10 +59,9 @@ export interface AgentRunParams {
   toolExecutor: ToolExecutorFn;
   /** Fetch a URL through the main process's Chromium networking stack (shared session/cookies). */
   netFetch: NetFetchProxyFn;
-  /** Record one row in llm_calls stamping the harness + LLM backend + model
-   *  chosen for this session. Providers should call this exactly once near
-   *  the start of run(), after they've resolved the actual model they will
-   *  use. The call is fire-and-forget; failures are logged, not thrown. */
+  /** Record one row in llm_calls for this provider run. Claude/Hostler record
+   *  their resolved route at start; OpenCode records available usage at the
+   *  terminal return. The call is fire-and-forget. */
   recordSessionStart: AgentSessionStartFn;
   signal: AbortSignal;
   /** Per-task model override. When set, takes precedence over the framework config model. */
@@ -75,7 +74,41 @@ export type AgentSessionStartFn = (args: {
   model: string;
   accountId?: string;
   emailId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreateTokens?: number;
+  costDollars?: number;
+  durationMs?: number;
+  success?: boolean;
+  errorMessage?: string;
 }) => void;
+
+export type AgentModelOverrides = Record<string, string>;
+
+export function resolveAgentDrafterModelOverrides(
+  providerIds: string[],
+  explicitOverrides: AgentModelOverrides | undefined,
+  openCodeSelector: string,
+): AgentModelOverrides | undefined {
+  if (explicitOverrides !== undefined) return explicitOverrides;
+  return providerIds.length === 1 && providerIds[0] === "opencode"
+    ? { opencode: openCodeSelector }
+    : undefined;
+}
+
+export function resolveAgentChatModelOverrides(
+  providerIds: string[],
+  openCodeSelector: string,
+  standardModel: string,
+): AgentModelOverrides {
+  return Object.fromEntries(
+    providerIds.map((providerId) => [
+      providerId,
+      providerId === "opencode" ? openCodeSelector : standardModel,
+    ]),
+  );
+}
 
 export interface AgentResumeParams {
   taskId: string;
@@ -133,7 +166,8 @@ export interface OrchestratorDeps {
   dbProxy: DbProxyFn;
   gmailProxy: GmailProxyFn;
   netFetchProxy: NetFetchProxyFn;
-  /** Fire-and-forget — record agent-session-start row in llm_calls. */
+  /** Fire-and-forget agent accounting: start-time route for Claude/Hostler,
+   *  terminal usage for OpenCode. */
   recordAgentSessionStart: AgentSessionStartFn;
   config: AgentFrameworkConfig;
   /** Set the active taskId so proxy requests can be scoped for cancellation. */
@@ -176,7 +210,7 @@ export interface AgentFrameworkConfig {
   providers?: Record<string, ProviderSettings>;
   /** OpenCode-specific settings. Kept top-level (not under providers) so the
    *  provider can read it without going through ProviderSettings's narrow shape. */
-  opencode?: { enabled: boolean; model?: string };
+  opencode?: { enabled: boolean; model?: string; featureModels?: Record<string, string> };
   /** Hostler-specific settings (hosted cloud agent backend). Kept top-level
    *  for the same reason as opencode — harness/model don't fit ProviderSettings. */
   hostler?: {
@@ -221,7 +255,7 @@ export type WorkerMessage =
       providerIds: string[];
       prompt: string;
       context: AgentContext;
-      modelOverride?: string;
+      modelOverrides?: AgentModelOverrides;
     }
   | { type: "cancel"; taskId: string }
   | { type: "confirm"; toolCallId: string; approved: boolean }

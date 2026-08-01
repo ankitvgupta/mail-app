@@ -54,7 +54,11 @@ export class ArchiveReadyAnalyzer {
           },
         ],
       },
-      { caller: "archive-ready-analyzer", provider: this.provider },
+      {
+        caller: "archive-ready-analyzer",
+        provider: this.provider,
+        outputSchema: ArchiveReadyResultSchema,
+      },
     );
 
     // Log cache performance
