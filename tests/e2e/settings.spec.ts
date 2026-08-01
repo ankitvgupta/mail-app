@@ -784,6 +784,7 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
       window.api.settings.set({
         featureProviders: {},
         backgroundAgentProvider: "claude",
+        allowPrereleaseUpdates: true,
         opencode: { enabled: true, model: "legacy-model", featureModels: {} },
       }),
     );
@@ -792,6 +793,7 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
     // panel mount so user interaction deterministically wins the race.
     await page.locator("button[title='Settings']").click();
     await expect(page.getByRole("button", { name: "Save Changes" })).toBeEnabled();
+    await expect(page.getByRole("switch", { name: "Pre-release updates" })).toBeChecked();
     await page.keyboard.press("Escape");
     const stored = await page.evaluate(() => window.api.settings.get());
 
@@ -829,6 +831,9 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
     await provider.selectOption("opencode");
     const model = page.getByLabel("OpenCode model for Email Analysis");
     await model.fill("openai/gpt-5.2");
+    const agentDrafter = page.getByLabel("Provider for Agent Drafter");
+    await agentDrafter.selectOption("opencode");
+    await expect(agentDrafter).toHaveValue("opencode");
 
     await electronApp.evaluate(() => {
       (
@@ -847,7 +852,34 @@ test.describe("Settings Panel - per-feature OpenCode models", () => {
       )
       .toBe(false);
 
+    // This untouched value starts false in the newly-mounted component and
+    // changes only when the delayed React Query response hydrates staged state.
+    await expect(page.getByRole("switch", { name: "Pre-release updates" })).toBeChecked();
     await expect(provider).toHaveValue("opencode");
     await expect(model).toHaveValue("openai/gpt-5.2");
+    await expect(agentDrafter).toHaveValue("opencode");
+
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+
+    // Restart to restore the real settings:get handler, then verify the store
+    // rather than the delayed test response.
+    await closeApp(electronApp);
+    const result = await launchElectronApp({ userDataDir });
+    electronApp = result.app;
+    page = result.page;
+    const persisted = (await page.evaluate(() => window.api.settings.get())) as {
+      data?: {
+        featureProviders?: Record<string, string>;
+        backgroundAgentProvider?: string;
+        opencode?: { featureModels?: Record<string, string> };
+      };
+    };
+    expect(persisted.data?.featureProviders).toMatchObject({
+      analysis: "opencode",
+      agentDrafter: "opencode",
+    });
+    expect(persisted.data?.backgroundAgentProvider).toBe("opencode");
+    expect(persisted.data?.opencode?.featureModels?.analysis).toBe("openai/gpt-5.2");
   });
 });

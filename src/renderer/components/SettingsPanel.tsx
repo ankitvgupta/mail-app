@@ -112,6 +112,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [openCodeModels, setOpenCodeModels] = useState<Record<string, string>>({});
   const featureProvidersDirty = useRef(false);
   const openCodeModelsDirty = useRef(false);
+  const backgroundAgentProviderDirty = useRef(false);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
   // "saved" for transient success feedback, any other string is an error message
   const [generalSaveResult, setGeneralSaveResult] = useState<string | null>(null);
@@ -330,9 +331,11 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setMcpServers(generalConfig.mcpServers ?? {});
       setCliTools((generalConfig.cliTools ?? []).map((t) => ({ ...t, _key: nextCliToolKey() })));
       setExtraPathDirs(generalConfig.extraPathDirs ?? []);
-      setBackgroundAgentProvider(
-        generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
-      );
+      if (!backgroundAgentProviderDirty.current) {
+        setBackgroundAgentProvider(
+          generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
+        );
+      }
       const ph = generalConfig.posthog;
       if (ph) {
         setPosthogEnabled(ph.enabled);
@@ -1459,6 +1462,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                 if (isBackgroundAgentRow) {
                                   const sel = applyAgentDrafterSelection(p);
                                   if (!sel) return;
+                                  backgroundAgentProviderDirty.current = true;
                                   setBackgroundAgentProvider(sel.backgroundAgentProvider);
                                   const llm = sel.agentDrafterProvider;
                                   if (llm) {
