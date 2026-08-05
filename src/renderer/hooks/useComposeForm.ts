@@ -405,7 +405,7 @@ export function useComposeForm({
         composeContext: serializeComposeContext(composeContext),
       })) as IpcResponse<{ id: string; scheduledAt: number }>;
 
-      if (!queued.success || !queued.data) {
+      if (!queued.success) {
         setError(queued.error || "Failed to send");
         return null;
       }

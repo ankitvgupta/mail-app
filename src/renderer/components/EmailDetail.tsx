@@ -1493,7 +1493,7 @@ function InlineReply({
         composeContext: serializeComposeContext(composeContext),
       })) as IpcResponse<{ id: string; scheduledAt: number }>;
 
-      if (!queued.success || !queued.data) {
+      if (!queued.success) {
         form.setError(queued.error || "Failed to send");
         return;
       }
