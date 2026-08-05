@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "../store";
 import { useSignature } from "./useSignature";
 import { formatAlias } from "../utils/alias-formatting";
+import { serializeComposeContext } from "../utils/undo-send-context";
 import type { ComposeAttachmentItem } from "../components/AttachmentList";
 import type {
   ReplyInfo,
@@ -382,23 +383,40 @@ export function useComposeForm({
     // Check for undo send delay
     const { undoSendDelaySeconds, addUndoSend } = useAppStore.getState();
     if (undoSendDelaySeconds > 0) {
+      const delayMs = undoSendDelaySeconds * 1000;
+      const composeContext = {
+        mode: composeMode,
+        replyToEmailId,
+        threadId: replyInfo?.threadId,
+        bodyHtml,
+        bodyText,
+        to,
+        cc: cc.length > 0 ? cc : undefined,
+        bcc: bcc.length > 0 ? bcc : undefined,
+        subject,
+      };
+
+      // Hand the message to main BEFORE showing the toast. Main owns the timer
+      // and the DB row, so the send survives closing the window mid-delay.
+      const queued = (await window.api.scheduledSend.create({
+        ...sendOptions,
+        scheduledAt: Date.now() + delayMs,
+        kind: "undo",
+        composeContext: serializeComposeContext(composeContext),
+      })) as IpcResponse<{ id: string; scheduledAt: number }>;
+
+      if (!queued.success || !queued.data) {
+        setError(queued.error || "Failed to send");
+        return null;
+      }
+
       addUndoSend({
-        id: crypto.randomUUID(),
+        id: queued.data.id,
         sendOptions,
         recipients: to.join(", "),
-        scheduledAt: Date.now(),
-        delayMs: undoSendDelaySeconds * 1000,
-        composeContext: {
-          mode: composeMode,
-          replyToEmailId,
-          threadId: replyInfo?.threadId,
-          bodyHtml,
-          bodyText,
-          to,
-          cc: cc.length > 0 ? cc : undefined,
-          bcc: bcc.length > 0 ? bcc : undefined,
-          subject,
-        },
+        scheduledAt: queued.data.scheduledAt - delayMs,
+        delayMs,
+        composeContext,
       });
       return "undo-queued";
     }

@@ -354,6 +354,48 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    // NOTE: version 8 is claimed by a concurrent branch (observed applied in a
+    // real user DB on 2026-08-01). Migrations are forward-only and keyed by
+    // number, so reusing 8 here would make this one silently skip on any DB that
+    // already ran the other 8, leaving the columns missing. Renumbered to 9; the
+    // ALTERs below are individually guarded so it is safe either way.
+    version: 9,
+    name: "unify_undo_send_into_scheduled_messages",
+    up: (db) => {
+      // The undo-send delay used to live as a setTimeout in the renderer, so a
+      // window close during the delay silently dropped the message. It now
+      // shares the scheduled_messages scheduler, which needs four extra columns.
+      //
+      // `attachments` also fixes a latent send-later bug: the table never had
+      // the column, so scheduled sends silently dropped attachments.
+      //
+      // Guard on table existence — migrations run BEFORE the SCHEMA CREATE
+      // statements in initDatabase, so on a fresh DB this table doesn't exist
+      // yet and SCHEMA already carries the final column set.
+      const cols = db.prepare("PRAGMA table_info(scheduled_messages)").all() as Array<{
+        name: string;
+      }>;
+      if (cols.length === 0) return;
+
+      const existing = new Set(cols.map((c) => c.name));
+      const additions: Array<[string, string]> = [
+        ["attachments", "TEXT"],
+        ["kind", "TEXT NOT NULL DEFAULT 'scheduled'"],
+        ["archive_thread_id", "TEXT"],
+        ["compose_context", "TEXT"],
+      ];
+      for (const [name, type] of additions) {
+        if (!existing.has(name)) {
+          db.exec(`ALTER TABLE scheduled_messages ADD COLUMN ${name} ${type}`);
+        }
+      }
+
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(status, scheduled_at)`,
+      );
+    },
+  },
 ];
 
 function runNumberedMigrations(db: DatabaseInstance): void {

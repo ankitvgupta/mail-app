@@ -22,7 +22,7 @@ import { registerGmailIpc } from "./ipc/gmail.ipc";
 import { registerAnalysisIpc } from "./ipc/analysis.ipc";
 import { registerDraftsIpc } from "./ipc/drafts.ipc";
 import { registerSettingsIpc, getConfig } from "./ipc/settings.ipc";
-import { registerSyncIpc, getEmailSyncService } from "./ipc/sync.ipc";
+import { registerSyncIpc, getEmailSyncService, archiveThreadInternal } from "./ipc/sync.ipc";
 import { registerPrefetchIpc } from "./ipc/prefetch.ipc";
 import { registerExtensionsIpc } from "./ipc/extensions.ipc";
 import { registerComposeIpc } from "./ipc/compose.ipc";
@@ -465,7 +465,12 @@ app.whenReady().then(async () => {
   scheduledSendService.setClientResolver((accountId) =>
     getEmailSyncService().getClientForAccount(accountId),
   );
-  scheduledSendService.start();
+  scheduledSendService.setThreadArchiver(async (threadId, accountId) => {
+    await archiveThreadInternal(accountId, threadId);
+  });
+  // Recover before starting: rows that came due while the app was closed (or that
+  // were mid-undo-delay when it was killed) fire now instead of being lost.
+  scheduledSendService.recoverOnStartup();
 
   // NOTE: outbox processing on "online" is handled by sync.ipc.ts
   // after account reconnection completes, to avoid racing against client init.
@@ -641,7 +646,26 @@ const walCheckpointInterval = setInterval(() => {
 // Flush WAL and close DB before the process exits to prevent data loss.
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
-app.on("before-quit", () => {
+let isQuitting = false;
+
+app.on("before-quit", (event) => {
+  // A message inside its undo-send delay has been persisted but not sent yet.
+  // Quitting would strand it until the next launch, so take one async pass to
+  // flush pending sends. before-quit is synchronous, hence the standard
+  // preventDefault → await → quit again dance; the flush caps itself so a hung
+  // network can't block quit (survivors are recovered by recoverOnStartup).
+  if (!isQuitting) {
+    event.preventDefault();
+    scheduledSendService
+      .flushPendingNow()
+      .catch((err) => log.error({ err }, "[Quit] Failed to flush pending sends"))
+      .finally(() => {
+        isQuitting = true;
+        app.quit();
+      });
+    return;
+  }
+
   // Stop all interval-based services before closing the DB —
   // otherwise their timers fire after the DB is gone and crash.
   clearInterval(walCheckpointInterval);

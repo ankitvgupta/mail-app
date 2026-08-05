@@ -27,8 +27,10 @@ function extractComposeContextBlocks(
   const results: Array<{ file: string; startLine: number; block: string }> = [];
 
   for (let i = 0; i < lines.length; i++) {
-    // Look for `composeContext: {`
-    if (/composeContext\s*:\s*\{/.test(lines[i])) {
+    // Matches both the inline `composeContext: {` form and the hoisted
+    // `const composeContext = {` form (used since the context is built once and
+    // then both serialized for main and kept for the local store item).
+    if (/composeContext\s*[:=]\s*\{/.test(lines[i])) {
       let braceCount = 0;
       let started = false;
       let block = "";

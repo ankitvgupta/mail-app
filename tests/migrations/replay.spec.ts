@@ -199,14 +199,20 @@ test.describe("Migration replay + symmetry", () => {
     db.close();
   });
 
-  test("numbered migration versions are sequential starting from 1", () => {
-    // Catches accidental re-numbering or gaps that would break the
-    // forward-only invariant.
+  test("numbered migration versions are strictly increasing and unique", () => {
+    // The forward-only invariant needs versions to be ordered and unique — a
+    // DUPLICATE is the dangerous case, because runNumberedMigrations skips any
+    // version <= the recorded max, so the second migration to claim a number
+    // silently never runs.
+    //
+    // A GAP is tolerated: parallel branches reserve numbers independently, so a
+    // branch can legitimately hold 9 while another holds 8 until both merge.
     const versions = NUMBERED_MIGRATIONS.map((m) => m.version);
     expect(versions).toEqual([...versions].sort((a, b) => a - b));
     expect(versions[0]).toBe(1);
+    expect(new Set(versions).size).toBe(versions.length);
     for (let i = 1; i < versions.length; i++) {
-      expect(versions[i] - versions[i - 1]).toBe(1);
+      expect(versions[i]).toBeGreaterThan(versions[i - 1]);
     }
   });
 });

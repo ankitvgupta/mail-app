@@ -4,7 +4,7 @@ import {
   insertScheduledMessage,
   getScheduledMessages,
   getScheduledMessage,
-  updateScheduledMessageStatus,
+  claimScheduledMessage,
   updateScheduledMessageTime,
   deleteScheduledMessage,
   getScheduledMessageStats,
@@ -16,6 +16,7 @@ import { getEmailSyncService } from "./sync.ipc";
 import type {
   IpcResponse,
   ScheduledMessage,
+  ScheduledMessageKind,
   ScheduledMessageStats,
   SendMessageOptions,
 } from "../../shared/types";
@@ -43,6 +44,9 @@ function rowToScheduledMessage(row: ScheduledMessageRow): ScheduledMessage {
     inReplyTo: row.inReplyTo,
     references: row.references,
     scheduledAt: row.scheduledAt,
+    kind: row.kind,
+    archiveThreadId: row.archiveThreadId,
+    composeContext: row.composeContext,
     status: row.status,
     errorMessage: row.errorMessage,
     createdAt: row.createdAt,
@@ -57,8 +61,15 @@ export function registerScheduledSendIpc(): void {
     "scheduled-send:create",
     async (
       _,
-      options: SendMessageOptions & { accountId: string; scheduledAt: number },
+      options: SendMessageOptions & {
+        accountId: string;
+        scheduledAt: number;
+        kind?: ScheduledMessageKind;
+        archiveThreadId?: string;
+        composeContext?: string;
+      },
     ): Promise<IpcResponse<ScheduledMessage>> => {
+      const kind: ScheduledMessageKind = options.kind ?? "scheduled";
       if (useFakeData) {
         log.info(
           { to: options.to, scheduledAt: new Date(options.scheduledAt).toISOString() },
@@ -78,6 +89,9 @@ export function registerScheduledSendIpc(): void {
           inReplyTo: options.inReplyTo,
           references: options.references,
           scheduledAt: options.scheduledAt,
+          kind,
+          archiveThreadId: options.archiveThreadId,
+          composeContext: options.composeContext,
           status: "scheduled",
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -111,13 +125,20 @@ export function registerScheduledSendIpc(): void {
           bodyText: options.bodyText,
           inReplyTo: options.inReplyTo,
           references: options.references,
+          attachments: options.attachments,
           scheduledAt: options.scheduledAt,
+          kind,
+          archiveThreadId: options.archiveThreadId,
+          composeContext: options.composeContext,
           createdAt: now,
         });
 
         log.info(
-          `[ScheduledSend] Scheduled message ${id} for ${new Date(options.scheduledAt).toISOString()}`,
+          `[ScheduledSend] Scheduled message ${id} (${kind}) for ${new Date(options.scheduledAt).toISOString()}`,
         );
+
+        // Re-arm so a short undo delay isn't held up behind a longer pending sleep.
+        scheduledSendService.reschedule();
 
         const row = getScheduledMessage(id);
         if (!row) {
@@ -140,9 +161,12 @@ export function registerScheduledSendIpc(): void {
   // List scheduled messages for an account
   ipcMain.handle(
     "scheduled-send:list",
-    async (_, { accountId }: { accountId?: string }): Promise<IpcResponse<ScheduledMessage[]>> => {
+    async (
+      _,
+      { accountId, kind }: { accountId?: string; kind?: ScheduledMessageKind },
+    ): Promise<IpcResponse<ScheduledMessage[]>> => {
       try {
-        const rows = getScheduledMessages(accountId);
+        const rows = getScheduledMessages(accountId, kind);
         return { success: true, data: rows.map(rowToScheduledMessage) };
       } catch (error) {
         return {
@@ -156,14 +180,29 @@ export function registerScheduledSendIpc(): void {
   // Cancel a scheduled message (converts it to a Gmail draft so content isn't lost)
   ipcMain.handle(
     "scheduled-send:cancel",
-    async (_, { id }: { id: string }): Promise<IpcResponse<{ draftId?: string }>> => {
+    async (
+      _,
+      { id }: { id: string },
+    ): Promise<IpcResponse<{ draftId?: string; composeContext?: string; cancelled: boolean }>> => {
       try {
-        const row = getScheduledMessage(id);
+        // Claim atomically — if the send already fired we lose the race and must
+        // report that rather than pretending the message was recalled.
+        const row = claimScheduledMessage(id, "cancelled");
         if (!row) {
-          return { success: false, error: "Scheduled message not found" };
+          const existing = getScheduledMessage(id);
+          if (!existing) {
+            return { success: false, error: "Scheduled message not found" };
+          }
+          return { success: true, data: { cancelled: false } };
         }
-        if (row.status !== "scheduled") {
-          return { success: false, error: `Cannot cancel message in '${row.status}' state` };
+
+        // Undo-send reopens the compose editor instead of leaving a Gmail draft,
+        // so the round-tripped context is all the renderer needs.
+        if (row.kind === "undo") {
+          log.info(`[ScheduledSend] Cancelled undo-send ${id}`);
+          scheduledSendService.reschedule();
+          broadcastStatsChanged();
+          return { success: true, data: { composeContext: row.composeContext, cancelled: true } };
         }
 
         // Try to save content as a Gmail draft so it's not lost
@@ -195,10 +234,11 @@ export function registerScheduledSendIpc(): void {
           }
         }
 
-        updateScheduledMessageStatus(id, "cancelled");
+        // Status was already set by the claim above.
         log.info(`[ScheduledSend] Cancelled message ${id}`);
+        scheduledSendService.reschedule();
         broadcastStatsChanged();
-        return { success: true, data: { draftId } };
+        return { success: true, data: { draftId, cancelled: true } };
       } catch (error) {
         return {
           success: false,
@@ -234,6 +274,7 @@ export function registerScheduledSendIpc(): void {
           return { success: false, error: "Failed to retrieve updated message" };
         }
 
+        scheduledSendService.reschedule();
         broadcastStatsChanged();
         return { success: true, data: rowToScheduledMessage(updated) };
       } catch (error) {
@@ -251,6 +292,7 @@ export function registerScheduledSendIpc(): void {
     async (_, { id }: { id: string }): Promise<IpcResponse<void>> => {
       try {
         deleteScheduledMessage(id);
+        scheduledSendService.reschedule();
         broadcastStatsChanged();
         return { success: true, data: undefined };
       } catch (error) {

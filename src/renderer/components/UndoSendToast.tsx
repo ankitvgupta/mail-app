@@ -1,103 +1,48 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAppStore, type UndoSendItem } from "../store";
 
 // Map of item ID → cancel function, so the parent (or keyboard shortcut) can
 // trigger a clean undo on any queued item without race conditions.
 const cancelHandlers = new Map<string, () => void>();
 
+type CancelResponse = {
+  success: boolean;
+  data?: { composeContext?: string; cancelled: boolean };
+  error?: string;
+};
+
 function UndoSendToastItem({ item }: { item: UndoSendItem }) {
   const removeUndoSend = useAppStore((s) => s.removeUndoSend);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const sendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sentRef = useRef(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  // The send itself is owned by the main process, so the only local state that
+  // matters is whether the undo window has visually elapsed.
+  const [elapsed, setElapsed] = useState(() => Date.now() >= item.scheduledAt + item.delayMs);
 
-  const doSend = useCallback(async () => {
-    if (sentRef.current) return;
-    sentRef.current = true;
+  const handleUndo = useCallback(async () => {
+    const response = (await window.api.scheduledSend.cancel(item.id)) as CancelResponse;
 
-    try {
-      const response = await window.api.compose.send(item.sendOptions);
-      if (!response.success) {
-        setSendError(response.error);
-        sentRef.current = false;
-        return;
-      }
-
-      // Replace the optimistic "pending-*" email with the real Gmail ID so
-      // background sync won't add a duplicate when it discovers the same message.
-      // Done as a single atomic setState to prevent intermediate states where the
-      // email is removed but not yet re-added (which would unmount any inline
-      // reply editor attached to it).
-      const ctx = item.composeContext;
-      if (ctx?.optimisticEmailId && response.data?.id && !response.data.queued) {
-        const state = useAppStore.getState();
-        const optimistic = state.emails.find((e) => e.id === ctx.optimisticEmailId);
-        if (optimistic) {
-          useAppStore.setState((s) => ({
-            emails: [
-              ...s.emails.filter((e) => e.id !== ctx.optimisticEmailId),
-              { ...optimistic, id: response.data!.id },
-            ],
-            // Update focusedThreadEmailId so subsequent Reply All clicks
-            // don't target the now-removed optimistic email
-            ...(s.focusedThreadEmailId === ctx.optimisticEmailId
-              ? { focusedThreadEmailId: response.data!.id }
-              : {}),
-            // Update inlineReplyToEmailId so the InlineReply component doesn't
-            // unmount when the optimistic email it's targeting gets replaced
-            ...(s.inlineReplyToEmailId === ctx.optimisticEmailId
-              ? { inlineReplyToEmailId: response.data!.id }
-              : {}),
-          }));
-        }
-      }
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to send");
-      sentRef.current = false;
+    if (!response.success) {
+      setCancelError(response.error || "Failed to undo");
       return;
     }
-    if (item.archiveThreadId) {
-      // Optimistically remove the thread from the local store. The IPC handler
-      // only broadcasts sync:emails-removed in the online-success path, so we
-      // can't rely on it for demo mode, offline mode, or the queued path.
-      // Use removeEmailsAndAdvance (not removeEmails) when the archived thread
-      // is currently selected — otherwise split view keeps the now-stale
-      // selection and shows a blank detail pane.
-      const archiveThreadId = item.archiveThreadId;
-      const accountId = item.sendOptions.accountId;
-      const state = useAppStore.getState();
-      const threadEmailIds = state.emails
-        .filter((e) => e.threadId === archiveThreadId && e.accountId === accountId)
-        .map((e) => e.id);
-      if (threadEmailIds.length > 0) {
-        if (state.selectedThreadId === archiveThreadId) {
-          state.removeEmailsAndAdvance(threadEmailIds, null, null);
-        } else {
-          state.removeEmails(threadEmailIds);
-        }
-      }
-      window.api.emails
-        .archiveThread(archiveThreadId, accountId)
-        .catch((err: unknown) => console.error("[Send & Archive] archive failed", err));
-    }
-    cancelHandlers.delete(item.id);
-    removeUndoSend(item.id);
-  }, [item, removeUndoSend]);
 
-  const handleUndo = useCallback(() => {
-    if (sendTimerRef.current) clearTimeout(sendTimerRef.current);
-    sentRef.current = true; // prevent race
+    // Lost the race — the message was already sent. Say so rather than
+    // reopening compose, which would imply the send was recalled.
+    if (!response.data?.cancelled) {
+      setElapsed(true);
+      return;
+    }
+
     cancelHandlers.delete(item.id);
 
     // Reopen compose with the draft content so the user can edit and re-send
     const ctx = item.composeContext;
     if (ctx) {
       const store = useAppStore.getState();
-      // Remove the optimistic "sent" email from the store. On the error path
-      // the send already ran (and failed), so focusedThreadEmailId /
+      // Remove the optimistic "sent" email from the store. focusedThreadEmailId /
       // inlineReplyToEmailId may point at the optimistic ID; null them in the
-      // same setState as the removal to avoid a render that observes a
-      // dangling reference, matching the doSend success path above.
+      // same setState as the removal to avoid a render that observes a dangling
+      // reference.
       if (ctx.optimisticEmailId) {
         const optimisticId = ctx.optimisticEmailId;
         useAppStore.setState((s) => ({
@@ -128,45 +73,36 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
 
   // Register cancel handler so parent / keyboard shortcut can trigger undo
   useEffect(() => {
-    cancelHandlers.set(item.id, handleUndo);
+    cancelHandlers.set(item.id, () => void handleUndo());
     return () => {
       cancelHandlers.delete(item.id);
     };
   }, [item.id, handleUndo]);
 
+  // Hide the Undo affordance once the delay has passed. The send fires in main
+  // regardless of this timer, so it only drives presentation.
   useEffect(() => {
-    const endTime = item.scheduledAt + item.delayMs;
-    const remaining = Math.max(0, endTime - Date.now());
-
-    sendTimerRef.current = setTimeout(() => {
-      doSend();
-    }, remaining);
-
-    return () => {
-      if (sendTimerRef.current) clearTimeout(sendTimerRef.current);
-    };
-  }, [item, doSend]);
+    const remaining = item.scheduledAt + item.delayMs - Date.now();
+    if (remaining <= 0) {
+      setElapsed(true);
+      return;
+    }
+    const timer = setTimeout(() => setElapsed(true), remaining);
+    return () => clearTimeout(timer);
+  }, [item.scheduledAt, item.delayMs]);
 
   return (
     <div className="bg-gray-900 dark:bg-gray-700 text-white rounded-lg shadow-lg flex items-center justify-between px-4 py-3 min-w-[280px]">
       <span className="text-sm">
-        {sendError ? <span className="text-red-400">{sendError}</span> : "Message sent."}
+        {cancelError ? <span className="text-red-400">{cancelError}</span> : "Message sent."}
       </span>
-      {!sentRef.current && !sendError && (
+      {!elapsed && !cancelError && (
         <button
-          onClick={handleUndo}
+          onClick={() => void handleUndo()}
           className="ml-4 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
           title={navigator.platform.includes("Mac") ? "Cmd+Z" : "Ctrl+Z"}
         >
           Undo
-        </button>
-      )}
-      {sendError && (
-        <button
-          onClick={handleUndo}
-          className="ml-4 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
-        >
-          Edit
         </button>
       )}
     </div>

@@ -58,6 +58,7 @@ import type {
 } from "../shared/types";
 import type { ScopedAgentEvent, AgentProviderConfig } from "../shared/agent-types";
 import { mergeAndThreadSearchResults } from "./utils/searchResults";
+import { parseOptimisticEmailId, parseComposeContext } from "./utils/undo-send-context";
 import type { EmailThread } from "./store";
 
 function decodeHtmlEntities(text: string): string {
@@ -1300,9 +1301,49 @@ export default function App() {
     window.api.scheduledSend.onStatsChanged((stats: { scheduled: number; total: number }) => {
       setScheduledMessageStats(stats);
     });
-    window.api.scheduledSend.onSent((data: { id: string }) => {
-      console.log(`[ScheduledSend] Message sent: ${data.id}`);
-    });
+    window.api.scheduledSend.onSent(
+      (data: {
+        id: string;
+        kind?: "scheduled" | "undo";
+        gmailId?: string;
+        composeContext?: string;
+      }) => {
+        console.log(`[ScheduledSend] Message sent: ${data.id}`);
+        if (data.kind !== "undo") return;
+
+        const store = useAppStore.getState();
+        store.removeUndoSend(data.id);
+
+        // Replace the optimistic "pending-*" email with the real Gmail ID so
+        // background sync won't add a duplicate when it discovers the same
+        // message. Done as a single atomic setState to prevent intermediate
+        // states where the email is removed but not yet re-added (which would
+        // unmount any inline reply editor attached to it).
+        const optimisticEmailId = parseOptimisticEmailId(data.composeContext);
+        if (!optimisticEmailId || !data.gmailId) return;
+        const gmailId = data.gmailId;
+
+        const optimistic = store.emails.find((e) => e.id === optimisticEmailId);
+        if (!optimistic) return;
+
+        useAppStore.setState((s) => ({
+          emails: [
+            ...s.emails.filter((e) => e.id !== optimisticEmailId),
+            { ...optimistic, id: gmailId },
+          ],
+          // Update focusedThreadEmailId so subsequent Reply All clicks
+          // don't target the now-removed optimistic email
+          ...(s.focusedThreadEmailId === optimisticEmailId
+            ? { focusedThreadEmailId: gmailId }
+            : {}),
+          // Update inlineReplyToEmailId so the InlineReply component doesn't
+          // unmount when the optimistic email it's targeting gets replaced
+          ...(s.inlineReplyToEmailId === optimisticEmailId
+            ? { inlineReplyToEmailId: gmailId }
+            : {}),
+        }));
+      },
+    );
     window.api.scheduledSend.onFailed((data: { id: string; error: string }) => {
       console.log(`[ScheduledSend] Message failed: ${data.id} - ${data.error}`);
       setError(`Scheduled message failed: ${data.error}`);
@@ -1429,6 +1470,40 @@ export default function App() {
       }
     });
 
+    // Rebuild undo-send toasts for sends still inside their delay. The window may
+    // have been closed and reopened while main kept counting down, so the queue
+    // is restored from main rather than assumed empty.
+    window.api.scheduledSend
+      .list(undefined, "undo")
+      .then((result: IpcResponse<ScheduledMessage[]>) => {
+        if (!result.success || !result.data) return;
+        const store = useAppStore.getState();
+        for (const msg of result.data) {
+          const context = parseComposeContext(msg.composeContext);
+          store.addUndoSend({
+            id: msg.id,
+            sendOptions: {
+              accountId: msg.accountId,
+              to: msg.to,
+              cc: msg.cc,
+              bcc: msg.bcc,
+              subject: msg.subject,
+              bodyHtml: msg.bodyHtml,
+              bodyText: msg.bodyText,
+              threadId: msg.threadId,
+              inReplyTo: msg.inReplyTo,
+              references: msg.references,
+            },
+            recipients: msg.to.join(", "),
+            // createdAt is when the delay started; scheduledAt is when it fires.
+            scheduledAt: msg.createdAt,
+            delayMs: msg.scheduledAt - msg.createdAt,
+            archiveThreadId: msg.archiveThreadId,
+            composeContext: context,
+          });
+        }
+      });
+
     // Relay navigator.onLine events to main process
     const handleOnline = () => {
       window.api.network.updateStatus(true);
@@ -1500,7 +1575,12 @@ export default function App() {
 
   // Fetch scheduled messages list for the dropdown
   const fetchScheduledMessages = useCallback(async () => {
-    const result = (await window.api.scheduledSend.list(currentAccountId ?? undefined)) as {
+    // Scope to 'scheduled': undo-send rows share this table but belong to the
+    // toast, not the send-later dropdown.
+    const result = (await window.api.scheduledSend.list(
+      currentAccountId ?? undefined,
+      "scheduled",
+    )) as {
       success: boolean;
       data?: ScheduledMessage[];
     };

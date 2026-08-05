@@ -819,10 +819,21 @@ const api = {
       references?: string;
       scheduledAt: number;
       recipientNames?: Record<string, string>;
+      attachments?: Array<{
+        filename: string;
+        mimeType: string;
+        path?: string;
+        content?: string;
+        size?: number;
+      }>;
+      // 'undo' marks the short undo-send delay; omitted means user send-later.
+      kind?: "scheduled" | "undo";
+      archiveThreadId?: string;
+      composeContext?: string;
     }): Promise<unknown> => ipcRenderer.invoke("scheduled-send:create", options),
 
-    list: (accountId?: string): Promise<unknown> =>
-      ipcRenderer.invoke("scheduled-send:list", { accountId }),
+    list: (accountId?: string, kind?: "scheduled" | "undo"): Promise<unknown> =>
+      ipcRenderer.invoke("scheduled-send:list", { accountId, kind }),
 
     cancel: (id: string): Promise<unknown> => ipcRenderer.invoke("scheduled-send:cancel", { id }),
 
@@ -835,12 +846,28 @@ const api = {
       ipcRenderer.invoke("scheduled-send:stats", { accountId }),
 
     onSent: (
-      callback: (data: { id: string; gmailId?: string; threadId?: string }) => void,
+      callback: (data: {
+        id: string;
+        kind?: "scheduled" | "undo";
+        gmailId?: string;
+        threadId?: string;
+        composeContext?: string;
+        archiveThreadId?: string;
+      }) => void,
     ): void => {
       ipcRenderer.on(
         "scheduled-send:sent",
-        (_: Electron.IpcRendererEvent, data: { id: string; gmailId?: string; threadId?: string }) =>
-          callback(data),
+        (
+          _: Electron.IpcRendererEvent,
+          data: {
+            id: string;
+            kind?: "scheduled" | "undo";
+            gmailId?: string;
+            threadId?: string;
+            composeContext?: string;
+            archiveThreadId?: string;
+          },
+        ) => callback(data),
       );
     },
 

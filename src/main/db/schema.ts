@@ -196,7 +196,13 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
   body_text TEXT,
   in_reply_to TEXT,
   references_header TEXT,
+  attachments TEXT,
   scheduled_at INTEGER NOT NULL,
+  -- 'scheduled' = user-chosen send-later; 'undo' = the short undo-send delay.
+  -- Only affects cancel policy and which UI owns the row, never when it fires.
+  kind TEXT NOT NULL DEFAULT 'scheduled',
+  archive_thread_id TEXT,
+  compose_context TEXT,
   status TEXT DEFAULT 'scheduled',
   error_message TEXT,
   created_at INTEGER NOT NULL,
@@ -380,6 +386,7 @@ CREATE INDEX IF NOT EXISTS idx_archive_ready_ready ON archive_ready(is_ready, di
 CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_messages(status);
 CREATE INDEX IF NOT EXISTS idx_scheduled_account ON scheduled_messages(account_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled_at ON scheduled_messages(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(start_time);
 CREATE INDEX IF NOT EXISTS idx_cal_events_account ON calendar_events(account_id);
 CREATE INDEX IF NOT EXISTS idx_memories_account ON memories(account_id);

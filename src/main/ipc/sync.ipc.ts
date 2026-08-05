@@ -118,6 +118,119 @@ function getMainWindow(): BrowserWindow | null {
   return windows.length > 0 ? windows[0] : null;
 }
 
+/**
+ * Archive every inbox email in a thread, with optimistic local label updates and
+ * offline queueing. Exported so the scheduled-send service can reuse it for
+ * send-and-archive instead of duplicating this logic.
+ */
+export async function archiveThreadInternal(
+  accountId: string,
+  threadId: string,
+): Promise<{
+  success: boolean;
+  error?: string;
+  queued?: boolean;
+  failedIds?: string[];
+  archivedIds?: string[];
+}> {
+  const threadEmails = getEmailsByThread(threadId, accountId);
+  // Treat emails with no labelIds (NULL in DB) as inbox emails,
+  // matching the getInboxEmails query: WHERE label_ids IS NULL OR label_ids LIKE '%"INBOX"%'
+  const inboxEmails = threadEmails.filter((e) => !e.labelIds || e.labelIds.includes("INBOX"));
+
+  // Optimistically update DB for all inbox emails
+  const previousLabelsMap = new Map<string, string[]>();
+  for (const email of inboxEmails) {
+    previousLabelsMap.set(email.id, email.labelIds || []);
+    updateEmailLabelIds(
+      email.id,
+      (email.labelIds || []).filter((l: string) => l !== "INBOX"),
+    );
+  }
+
+  if (useFakeData) {
+    return { success: true };
+  }
+
+  // If offline, queue each email for later — DB already updated
+  if (!networkMonitor.isOnline) {
+    for (const email of inboxEmails) {
+      pendingActionsQueue.enqueue("archive", email.id, accountId);
+    }
+    return { success: true, queued: true };
+  }
+
+  try {
+    const client = activeClients.get(accountId);
+    if (!client) {
+      for (const email of inboxEmails) {
+        pendingActionsQueue.enqueue("archive", email.id, accountId);
+      }
+      return { success: true, queued: true };
+    }
+
+    const archivedIds: string[] = [];
+    const failedIds: string[] = [];
+    let anyQueued = false;
+    for (let i = 0; i < inboxEmails.length; i++) {
+      const email = inboxEmails[i];
+      try {
+        await client.archiveMessage(email.id);
+        archivedIds.push(email.id);
+      } catch (err) {
+        if (isNetworkError(err)) {
+          // Queue this and all remaining emails, then mark offline
+          for (let j = i; j < inboxEmails.length; j++) {
+            pendingActionsQueue.enqueue("archive", inboxEmails[j].id, accountId);
+          }
+          anyQueued = true;
+          networkMonitor.setOffline();
+          break;
+        } else {
+          // Permanent failure for this email — restore its INBOX label
+          const prev = previousLabelsMap.get(email.id) || [];
+          updateEmailLabelIds(email.id, prev);
+          failedIds.push(email.id);
+        }
+      }
+    }
+
+    // Clean up agent traces for archived thread emails
+    for (const email of threadEmails) {
+      if (email.draft?.agentTaskId) {
+        try {
+          deleteAgentTrace(email.draft.agentTaskId);
+        } catch {
+          /* non-critical */
+        }
+      }
+    }
+
+    // Notify renderer: remove entire thread (including SENT) so no ghost threads remain
+    if (archivedIds.length > 0) {
+      const allThreadEmailIds = threadEmails.map((e) => e.id);
+      const window = getMainWindow();
+      if (window) {
+        window.webContents.send("sync:emails-removed", {
+          accountId,
+          emailIds: allThreadEmailIds,
+        });
+      }
+    }
+
+    return { success: true, queued: anyQueued, failedIds, archivedIds };
+  } catch (error) {
+    // Restore all labels on catastrophic failure
+    for (const [emailId, labels] of previousLabelsMap) {
+      updateEmailLabelIds(emailId, labels);
+    }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
 export function registerSyncIpc(): void {
   // When going online, reconnect failed accounts THEN process queues
   networkMonitor.on("online", async () => {
@@ -1211,102 +1324,8 @@ export function registerSyncIpc(): void {
   ipcMain.handle(
     "emails:archive-thread",
     async (_, { accountId, threadId }: { accountId: string; threadId: string }) => {
-      const threadEmails = getEmailsByThread(threadId, accountId);
-      // Treat emails with no labelIds (NULL in DB) as inbox emails,
-      // matching the getInboxEmails query: WHERE label_ids IS NULL OR label_ids LIKE '%"INBOX"%'
-      const inboxEmails = threadEmails.filter((e) => !e.labelIds || e.labelIds.includes("INBOX"));
-
-      // Optimistically update DB for all inbox emails
-      const previousLabelsMap = new Map<string, string[]>();
-      for (const email of inboxEmails) {
-        previousLabelsMap.set(email.id, email.labelIds || []);
-        updateEmailLabelIds(
-          email.id,
-          (email.labelIds || []).filter((l: string) => l !== "INBOX"),
-        );
-      }
-
-      if (useFakeData) {
-        return { success: true, data: undefined };
-      }
-
-      // If offline, queue each email for later — DB already updated
-      if (!networkMonitor.isOnline) {
-        for (const email of inboxEmails) {
-          pendingActionsQueue.enqueue("archive", email.id, accountId);
-        }
-        return { success: true, data: undefined, queued: true };
-      }
-
-      try {
-        const client = activeClients.get(accountId);
-        if (!client) {
-          for (const email of inboxEmails) {
-            pendingActionsQueue.enqueue("archive", email.id, accountId);
-          }
-          return { success: true, data: undefined, queued: true };
-        }
-
-        const archivedIds: string[] = [];
-        const failedIds: string[] = [];
-        let anyQueued = false;
-        for (let i = 0; i < inboxEmails.length; i++) {
-          const email = inboxEmails[i];
-          try {
-            await client.archiveMessage(email.id);
-            archivedIds.push(email.id);
-          } catch (err) {
-            if (isNetworkError(err)) {
-              // Queue this and all remaining emails, then mark offline
-              for (let j = i; j < inboxEmails.length; j++) {
-                pendingActionsQueue.enqueue("archive", inboxEmails[j].id, accountId);
-              }
-              anyQueued = true;
-              networkMonitor.setOffline();
-              break;
-            } else {
-              // Permanent failure for this email — restore its INBOX label
-              const prev = previousLabelsMap.get(email.id) || [];
-              updateEmailLabelIds(email.id, prev);
-              failedIds.push(email.id);
-            }
-          }
-        }
-
-        // Clean up agent traces for archived thread emails
-        for (const email of threadEmails) {
-          if (email.draft?.agentTaskId) {
-            try {
-              deleteAgentTrace(email.draft.agentTaskId);
-            } catch {
-              /* non-critical */
-            }
-          }
-        }
-
-        // Notify renderer: remove entire thread (including SENT) so no ghost threads remain
-        if (archivedIds.length > 0) {
-          const allThreadEmailIds = threadEmails.map((e) => e.id);
-          const window = getMainWindow();
-          if (window) {
-            window.webContents.send("sync:emails-removed", {
-              accountId,
-              emailIds: allThreadEmailIds,
-            });
-          }
-        }
-
-        return { success: true, data: undefined, queued: anyQueued, failedIds, archivedIds };
-      } catch (error) {
-        // Restore all labels on catastrophic failure
-        for (const [emailId, labels] of previousLabelsMap) {
-          updateEmailLabelIds(emailId, labels);
-        }
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-        };
-      }
+      const result = await archiveThreadInternal(accountId, threadId);
+      return { ...result, data: undefined };
     },
   );
 

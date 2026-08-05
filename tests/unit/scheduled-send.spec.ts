@@ -322,8 +322,13 @@ test.describe("Scheduled Send - Schema Validation", () => {
     expect(mainCode).toContain("import { scheduledSendService }");
     expect(mainCode).toContain("import { registerScheduledSendIpc }");
     expect(mainCode).toContain("scheduledSendService.setClientResolver");
-    expect(mainCode).toContain("scheduledSendService.start()");
+    // recoverOnStartup() starts the scheduler and additionally fires rows that
+    // came due while the app was closed.
+    expect(mainCode).toContain("scheduledSendService.recoverOnStartup()");
     expect(mainCode).toContain("registerScheduledSendIpc()");
+    // Pending sends must be flushed before quit, or an in-flight undo delay
+    // would be stranded until the next launch.
+    expect(mainCode).toContain("flushPendingNow()");
   });
 
   test("store has scheduled message stats state", () => {

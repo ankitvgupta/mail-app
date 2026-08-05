@@ -3474,6 +3474,21 @@ export function getSnoozedByThread(threadId: string, accountId: string): Snoozed
 
 export type ScheduledMessageStatus = "scheduled" | "sending" | "sent" | "failed" | "cancelled";
 
+/**
+ * 'scheduled' = user-chosen send-later. 'undo' = the short undo-send delay.
+ * Both use the same scheduler and fire identically; kind only selects the
+ * cancel policy (draft vs. reopen-compose) and which UI owns the row.
+ */
+export type ScheduledMessageKind = "scheduled" | "undo";
+
+export type ScheduledMessageAttachment = {
+  filename: string;
+  mimeType: string;
+  path?: string;
+  content?: string;
+  size?: number;
+};
+
 export type ScheduledMessageRow = {
   id: string;
   accountId: string;
@@ -3488,13 +3503,30 @@ export type ScheduledMessageRow = {
   bodyText?: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: ScheduledMessageAttachment[];
   scheduledAt: number;
+  kind: ScheduledMessageKind;
+  archiveThreadId?: string;
+  /** Opaque JSON blob owned by the renderer; main only round-trips it. */
+  composeContext?: string;
   status: ScheduledMessageStatus;
   errorMessage?: string;
   createdAt: number;
   updatedAt: number;
   sentAt?: number;
 };
+
+// Shared by every scheduled_messages SELECT so the column list can't drift.
+const SCHEDULED_MESSAGE_COLUMNS = `
+  id, account_id as accountId, type, thread_id as threadId,
+  to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
+  subject, body_html as bodyHtml, body_text as bodyText,
+  in_reply_to as inReplyTo, references_header as referencesHeader,
+  from_address as fromAddress, attachments,
+  scheduled_at as scheduledAt, kind, archive_thread_id as archiveThreadId,
+  compose_context as composeContext, status, error_message as errorMessage,
+  created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
+`;
 
 export function insertScheduledMessage(
   item: Omit<ScheduledMessageRow, "status" | "updatedAt" | "sentAt" | "errorMessage">,
@@ -3504,9 +3536,10 @@ export function insertScheduledMessage(
     INSERT INTO scheduled_messages (
       id, account_id, type, thread_id, to_addresses, cc_addresses, bcc_addresses,
       subject, body_html, body_text, in_reply_to, references_header,
-      from_address, scheduled_at, status, created_at, updated_at
+      from_address, attachments, scheduled_at, kind, archive_thread_id,
+      compose_context, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
   `);
   const now = Date.now();
   stmt.run(
@@ -3523,7 +3556,11 @@ export function insertScheduledMessage(
     item.inReplyTo || null,
     item.references || null,
     item.from || null,
+    item.attachments?.length ? JSON.stringify(item.attachments) : null,
     item.scheduledAt,
+    item.kind,
+    item.archiveThreadId || null,
+    item.composeContext || null,
     item.createdAt,
     now,
   );
@@ -3533,13 +3570,7 @@ export function getDueScheduledMessages(limit: number = 10): ScheduledMessageRow
   const db = getDatabase();
   const now = Date.now();
   const stmt = db.prepare(`
-    SELECT id, account_id as accountId, type, thread_id as threadId,
-           to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
-           subject, body_html as bodyHtml, body_text as bodyText,
-           in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
-           scheduled_at as scheduledAt, status, error_message as errorMessage,
-           created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
+    SELECT ${SCHEDULED_MESSAGE_COLUMNS}
     FROM scheduled_messages
     WHERE status = 'scheduled' AND scheduled_at <= ?
     ORDER BY scheduled_at ASC
@@ -3549,39 +3580,47 @@ export function getDueScheduledMessages(limit: number = 10): ScheduledMessageRow
   return rows.map(rowToScheduledMessage);
 }
 
-export function getScheduledMessages(accountId?: string): ScheduledMessageRow[] {
+/**
+ * Earliest not-yet-due scheduled_at, or null when nothing is pending.
+ * Drives the next-due timer so a 15s undo isn't held up by a coarse poll.
+ */
+export function getNextScheduledMessageTime(): number | null {
+  const db = getDatabase();
+  const row = db
+    .prepare(`SELECT MIN(scheduled_at) as next FROM scheduled_messages WHERE status = 'scheduled'`)
+    .get() as { next: number | null } | undefined;
+  return row?.next ?? null;
+}
+
+export function getScheduledMessages(
+  accountId?: string,
+  kind?: ScheduledMessageKind,
+): ScheduledMessageRow[] {
   const db = getDatabase();
   let query = `
-    SELECT id, account_id as accountId, type, thread_id as threadId,
-           to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
-           subject, body_html as bodyHtml, body_text as bodyText,
-           in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
-           scheduled_at as scheduledAt, status, error_message as errorMessage,
-           created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
+    SELECT ${SCHEDULED_MESSAGE_COLUMNS}
     FROM scheduled_messages
     WHERE status = 'scheduled'
   `;
+  const params: string[] = [];
   if (accountId) {
     query += ` AND account_id = ?`;
+    params.push(accountId);
+  }
+  if (kind) {
+    query += ` AND kind = ?`;
+    params.push(kind);
   }
   query += ` ORDER BY scheduled_at ASC`;
 
-  const stmt = db.prepare(query);
-  const rows = accountId ? stmt.all(accountId) : stmt.all();
+  const rows = db.prepare(query).all(...params);
   return (rows as Record<string, unknown>[]).map(rowToScheduledMessage);
 }
 
 export function getScheduledMessage(id: string): ScheduledMessageRow | null {
   const db = getDatabase();
   const stmt = db.prepare(`
-    SELECT id, account_id as accountId, type, thread_id as threadId,
-           to_addresses as toAddresses, cc_addresses as ccAddresses, bcc_addresses as bccAddresses,
-           subject, body_html as bodyHtml, body_text as bodyText,
-           in_reply_to as inReplyTo, references_header as referencesHeader,
-           from_address as fromAddress,
-           scheduled_at as scheduledAt, status, error_message as errorMessage,
-           created_at as createdAt, updated_at as updatedAt, sent_at as sentAt
+    SELECT ${SCHEDULED_MESSAGE_COLUMNS}
     FROM scheduled_messages
     WHERE id = ?
   `);
@@ -3614,6 +3653,26 @@ export function updateScheduledMessageStatus(
   }
 }
 
+/**
+ * Atomically move a row out of 'scheduled' — the guard against cancel racing a
+ * fire. A conditional UPDATE is indivisible, so exactly one of "send it" and
+ * "cancel it" wins; the loser sees rowcount 0 and must not act.
+ */
+export function claimScheduledMessage(
+  id: string,
+  nextStatus: ScheduledMessageStatus,
+): ScheduledMessageRow | null {
+  const db = getDatabase();
+  const result = db
+    .prepare(
+      `UPDATE scheduled_messages SET status = ?, updated_at = ?
+       WHERE id = ? AND status = 'scheduled'`,
+    )
+    .run(nextStatus, Date.now(), id);
+  if (result.changes === 0) return null;
+  return getScheduledMessage(id);
+}
+
 export function updateScheduledMessageTime(id: string, scheduledAt: number): void {
   const db = getDatabase();
   db.prepare(
@@ -3631,10 +3690,12 @@ export function deleteScheduledMessage(id: string): void {
 
 export function getScheduledMessageStats(accountId?: string): { scheduled: number; total: number } {
   const db = getDatabase();
+  // Only user-scheduled sends: a message inside its few-second undo window is
+  // not a "scheduled message" as far as the send-later badge is concerned.
   let query = `
     SELECT status, COUNT(*) as count
     FROM scheduled_messages
-    WHERE status IN ('scheduled', 'sending')
+    WHERE status IN ('scheduled', 'sending') AND kind = 'scheduled'
   `;
   if (accountId) {
     query += ` AND account_id = ?`;
@@ -3669,7 +3730,14 @@ function rowToScheduledMessage(row: Record<string, unknown>): ScheduledMessageRo
     bodyText: (row.bodyText as string | null) ?? undefined,
     inReplyTo: (row.inReplyTo as string | null) ?? undefined,
     references: (row.referencesHeader as string | null) ?? undefined,
+    attachments: row.attachments
+      ? (JSON.parse(row.attachments as string) as ScheduledMessageAttachment[])
+      : undefined,
     scheduledAt: row.scheduledAt as number,
+    // Rows written before the undo-send unification have no kind; they are all send-later.
+    kind: ((row.kind as string | null) ?? "scheduled") as ScheduledMessageKind,
+    archiveThreadId: (row.archiveThreadId as string | null) ?? undefined,
+    composeContext: (row.composeContext as string | null) ?? undefined,
     status: row.status as ScheduledMessageStatus,
     errorMessage: (row.errorMessage as string | null) ?? undefined,
     createdAt: row.createdAt as number,
