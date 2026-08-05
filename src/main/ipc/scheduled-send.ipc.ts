@@ -29,6 +29,14 @@ const isTestMode = process.env.EXO_TEST_MODE === "true";
 const isDemoMode = process.env.EXO_DEMO_MODE === "true";
 const useFakeData = isTestMode || isDemoMode;
 
+// Demo/test mode bypasses the DB and the scheduler, so pending sends are tracked
+// here instead — just enough to reproduce the fire-and-cancel lifecycle the
+// renderer depends on.
+const demoTimers = new Map<
+  string,
+  { timer: ReturnType<typeof setTimeout>; composeContext?: string }
+>();
+
 function rowToScheduledMessage(row: ScheduledMessageRow): ScheduledMessage {
   return {
     id: row.id,
@@ -96,6 +104,27 @@ export function registerScheduledSendIpc(): void {
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
+
+        // Demo/test mode has no DB row and no scheduler, so nothing would ever
+        // emit "sent" — the undo toast would hang forever waiting for it.
+        // Simulate the fire so the renderer sees the same lifecycle it does in
+        // production.
+        const demoDelay = Math.max(0, options.scheduledAt - Date.now());
+        const timer = setTimeout(() => {
+          demoTimers.delete(msg.id);
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send("scheduled-send:sent", {
+              id: msg.id,
+              kind,
+              gmailId: `demo-sent-${msg.id}`,
+              threadId: options.threadId,
+              composeContext: options.composeContext,
+              archiveThreadId: options.archiveThreadId,
+            });
+          }
+        }, demoDelay);
+        demoTimers.set(msg.id, { timer, composeContext: options.composeContext });
+
         return { success: true, data: msg };
       }
 
@@ -184,6 +213,22 @@ export function registerScheduledSendIpc(): void {
       _,
       { id }: { id: string },
     ): Promise<IpcResponse<{ draftId?: string; composeContext?: string; cancelled: boolean }>> => {
+      // In demo/test mode the pending send is a timer, not a row. Clearing it is
+      // the whole cancel; a missing timer means it already fired, which is the
+      // same lost-the-race answer the DB path gives.
+      if (useFakeData) {
+        const pending = demoTimers.get(id);
+        if (!pending) {
+          return { success: true, data: { cancelled: false } };
+        }
+        clearTimeout(pending.timer);
+        demoTimers.delete(id);
+        return {
+          success: true,
+          data: { composeContext: pending.composeContext, cancelled: true },
+        };
+      }
+
       try {
         // Claim atomically — if the send already fired we lose the race and must
         // report that rather than pretending the message was recalled.
