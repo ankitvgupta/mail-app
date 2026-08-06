@@ -10,6 +10,7 @@
  */
 import type BetterSqlite3 from "better-sqlite3";
 import { createLogger } from "../services/logger";
+import { stripLargeDataUris, DATA_URI_STRIP_THRESHOLD } from "../../shared/body-sanitizer";
 
 const log = createLogger("db-migrations");
 
@@ -19,6 +20,12 @@ interface Migration {
   version: number;
   name: string;
   up: (db: DatabaseInstance) => void;
+  /**
+   * Run VACUUM after all pending migrations complete. VACUUM cannot run
+   * inside a transaction (each migration runs in one), so it's deferred to
+   * the end of runNumberedMigrations and executed at most once.
+   */
+  vacuumAfter?: boolean;
 }
 
 /**
@@ -329,8 +336,9 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
     //
     // Guard on table existence: migrations run BEFORE the SCHEMA `CREATE TABLE`
     // statements in initDatabase, so on a fresh DB the `emails` table won't
-    // exist yet. SCHEMA itself includes this index (see schema.ts), so fresh
-    // DBs are still covered — this migration only matters for existing DBs.
+    // exist yet — this migration only matters for existing DBs. (Migration 8
+    // later replaces this index with the wider idx_emails_all_light, which is
+    // what schema.ts now creates for fresh DBs.)
     up: (db) => {
       const tableExists = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='emails'")
@@ -354,6 +362,81 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 8,
+    name: "strip_large_data_uris_and_widen_merge_cover_index",
+    vacuumAfter: true,
+    // Prod forensics (July 2026): the emails table was 1.6GB for ~15k rows
+    // because inline images were stored as base64 data: URIs inside body HTML
+    // (avg 106KB/row, max 29MB) — content the renderer strips to a placeholder
+    // before display anyway. Because `body` is declared before label_ids/
+    // message_id/in_reply_to, every inbox/sent/search scan had to walk each
+    // row's overflow-page chain even when body wasn't selected, freezing the
+    // main process for 0.8-12s per query (better-sqlite3 is synchronous).
+    // saveEmail now strips at the write boundary; this migration strips the
+    // rows written before the fix and reclaims the space via vacuumAfter.
+    //
+    // The index change widens idx_emails_merge_cover (whose four columns are
+    // this index's prefix, so it's strictly superseded) into a covering index
+    // for getInboxEmails' allLight query — SELECT id, account_id, thread_id,
+    // message_id, in_reply_to, date, label_ids over every row of an account —
+    // so it's served from index pages without touching table rows at all.
+    //
+    // Guard on table existence: migrations run BEFORE SCHEMA on fresh DBs;
+    // schema.ts creates the new index for those.
+    up: (db) => {
+      const tableExists = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='emails'")
+        .get();
+      if (!tableExists) return;
+
+      // Strip BEFORE building the index. Building idx_emails_all_light must read
+      // label_ids/message_id/in_reply_to, which are declared after body, so on
+      // the pre-strip table it walks every fat row's overflow-page chain — the
+      // exact cost this migration removes. Stripping first shrinks the table so
+      // the index build scans the small version.
+      //
+      // Two-pass strip: collect candidate ids first, then load one body at a
+      // time — better-sqlite3 can't run statements while an iterator is open,
+      // and .all() on the bodies would pull the whole 1.5GB into memory. LIKE is
+      // ASCII-case-insensitive in SQLite by default, so `DATA:` bodies are also
+      // selected here (the strip itself is case-insensitive too).
+      const fatRows = db
+        .prepare("SELECT id FROM emails WHERE LENGTH(body) >= ? AND body LIKE '%data:%'")
+        .all(DATA_URI_STRIP_THRESHOLD) as Array<{ id: string }>;
+
+      if (fatRows.length > 0) {
+        log.info(
+          { candidates: fatRows.length },
+          "One-time migration: stripping oversized inline images from stored email bodies — this may take a minute on large databases",
+        );
+        const selectBody = db.prepare("SELECT body FROM emails WHERE id = ?");
+        const updateBody = db.prepare("UPDATE emails SET body = ? WHERE id = ?");
+        let strippedCount = 0;
+        let reclaimedChars = 0;
+        for (const { id } of fatRows) {
+          const row = selectBody.get(id) as { body: string } | undefined;
+          if (!row?.body) continue;
+          const stripped = stripLargeDataUris(row.body);
+          if (stripped !== row.body) {
+            updateBody.run(stripped, id);
+            strippedCount++;
+            reclaimedChars += row.body.length - stripped.length;
+          }
+        }
+        log.info(
+          { stripped: strippedCount, reclaimedMB: Math.round(reclaimedChars / 1024 / 1024) },
+          "Inline-image strip migration complete",
+        );
+      }
+
+      db.exec("DROP INDEX IF EXISTS idx_emails_merge_cover");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_emails_all_light
+          ON emails(account_id, thread_id, message_id, in_reply_to, date, label_ids, id);
+      `);
+    },
+  },
 ];
 
 function runNumberedMigrations(db: DatabaseInstance): void {
@@ -375,6 +458,7 @@ function runNumberedMigrations(db: DatabaseInstance): void {
     log.info({ version: 0 }, "Migration system initialized at baseline");
   }
 
+  let needsVacuum = false;
   for (const migration of NUMBERED_MIGRATIONS) {
     if (migration.version > currentVersion) {
       log.info({ version: migration.version, name: migration.name }, "Running numbered migration");
@@ -384,6 +468,51 @@ function runNumberedMigrations(db: DatabaseInstance): void {
       });
       runInTransaction();
       currentVersion = migration.version;
+      if (migration.vacuumAfter) needsVacuum = true;
     }
+  }
+
+  maybeVacuum(db, needsVacuum);
+}
+
+/**
+ * VACUUM to reclaim freed pages after a migration.
+ *
+ * VACUUM can't run inside a transaction, so it happens here after all
+ * migrations commit. The decision is also self-healing: a migration bumps
+ * schema_version and frees pages in one committed transaction, but VACUUM runs
+ * separately — if the app is force-quit in that window, the flag is lost and the
+ * freed space would never be reclaimed. So we ALSO vacuum whenever the freelist
+ * is large (checked cheaply on every startup), which reclaims after any
+ * interruption and skips when there's nothing to reclaim.
+ *
+ * VACUUM is an optimization, not a correctness requirement: it needs transient
+ * temp space and can throw SQLITE_FULL on a near-full disk. Since it runs at
+ * module load before any window exists, an unhandled throw would crash startup
+ * (a boot loop) even though every migration already committed — so failures are
+ * logged and swallowed.
+ */
+function maybeVacuum(db: DatabaseInstance, migrationRequestedVacuum: boolean): void {
+  let shouldVacuum = migrationRequestedVacuum;
+  if (!shouldVacuum) {
+    const pageCount = db.pragma("page_count", { simple: true }) as number;
+    const freelist = db.pragma("freelist_count", { simple: true }) as number;
+    const pageSize = db.pragma("page_size", { simple: true }) as number;
+    // >20% of the file free and >50MB of reclaimable space — enough to be worth
+    // the rewrite, rare enough not to fire on normal fragmentation.
+    if (pageCount > 0 && freelist / pageCount > 0.2 && freelist * pageSize > 50 * 1024 * 1024) {
+      shouldVacuum = true;
+    }
+  }
+  if (!shouldVacuum) return;
+
+  log.info("Running VACUUM to reclaim freed database space");
+  const start = Date.now();
+  try {
+    db.exec("VACUUM");
+    log.info({ durationMs: Date.now() - start }, "VACUUM complete");
+  } catch (err) {
+    // Non-fatal: the DB is fully consistent without VACUUM; it just stays large.
+    log.warn({ err }, "VACUUM failed — continuing startup; space will be reclaimed on a later run");
   }
 }
