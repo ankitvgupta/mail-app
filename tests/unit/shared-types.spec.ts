@@ -288,6 +288,34 @@ test.describe("ConfigSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  test("validates a persisted navigation snapshot", () => {
+    const result = ConfigSchema.safeParse({
+      navigationState: {
+        accountId: null,
+        currentSplitId: "__priority__",
+        selectedEmailId: "message-1",
+        selectedThreadId: "thread-1",
+        focusedThreadEmailId: "message-1",
+        viewMode: "full",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects an invalid persisted navigation view mode", () => {
+    const result = ConfigSchema.safeParse({
+      navigationState: {
+        accountId: null,
+        currentSplitId: "__priority__",
+        selectedEmailId: null,
+        selectedThreadId: null,
+        focusedThreadEmailId: null,
+        viewMode: "detail",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ============================================================

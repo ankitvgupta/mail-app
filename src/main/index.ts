@@ -17,7 +17,7 @@ ipcMain.on("debug:log", (_, msg: string) => {
 import { ExtensionManifestSchema } from "../shared/extension-types";
 import webSearchPackageJson from "../extensions/mail-ext-web-search/package.json";
 import calendarPackageJson from "../extensions/mail-ext-calendar/package.json";
-import { createWindow, getIconPath } from "./window";
+import { createWindow, getIconPath, markAppQuitting, showMainWindow } from "./window";
 import { registerGmailIpc } from "./ipc/gmail.ipc";
 import { registerAnalysisIpc } from "./ipc/analysis.ipc";
 import { registerDraftsIpc } from "./ipc/drafts.ipc";
@@ -346,6 +346,7 @@ function handleMailtoUrl(url: string): void {
   }
   // Ensure window is visible
   if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
   win.focus();
   win.webContents.send("mailto:open", parseMailtoUrl(url));
 }
@@ -367,6 +368,7 @@ app.on("second-instance", (_event, argv) => {
   if (wins.length > 0) {
     const win = wins[0];
     if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
     win.focus();
   }
   const mailtoArg = argv.find((arg) => arg.toLowerCase().startsWith("mailto:"));
@@ -616,11 +618,10 @@ app.whenReady().then(async () => {
   agentCoordinator.start(mainWindow);
 
   app.on("activate", function () {
-    // On macOS re-create a window when dock icon is clicked and no windows are open
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const newWindow = createWindow();
-      agentCoordinator.setMainWindow(newWindow);
-    }
+    // Reuse a hidden renderer after a normal macOS window close. If the
+    // renderer was genuinely destroyed, showMainWindow creates a replacement.
+    const activatedWindow = showMainWindow();
+    agentCoordinator.setMainWindow(activatedWindow);
   });
 });
 
@@ -642,6 +643,7 @@ const walCheckpointInterval = setInterval(() => {
 // Without this, infrequent writes (e.g. memories) can be stranded in the
 // WAL file and lost if the file is corrupted or removed during an update.
 app.on("before-quit", () => {
+  markAppQuitting();
   // Stop all interval-based services before closing the DB —
   // otherwise their timers fire after the DB is gone and crash.
   clearInterval(walCheckpointInterval);
@@ -653,3 +655,7 @@ app.on("before-quit", () => {
   closeDatabase();
   closeLogs();
 });
+
+// Covers updater-driven quits that may reach the final quit phase without a
+// normal before-quit delivery. The close handler is idempotent once latched.
+app.on("will-quit", markAppQuitting);

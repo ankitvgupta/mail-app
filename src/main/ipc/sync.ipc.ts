@@ -55,6 +55,9 @@ const activeClients: Map<string, GmailClient> = new Map();
 // Track in-progress OAuth flow so it can be cancelled
 let pendingAddClient: GmailClient | null = null;
 let retryingConnections = false;
+let syncInitInvocationCount = 0;
+let syncInitInFlight: Promise<IpcResponse<AccountInfo[]>> | null = null;
+let backgroundProcessingStarted = false;
 
 // Email data saved before optimistic trash deletion, keyed by emailId.
 // Used to restore the email to DB if a queued trash action fails permanently.
@@ -679,266 +682,321 @@ export function registerSyncIpc(): void {
   );
 
   // Initialize accounts on startup
-  ipcMain.handle("sync:init", async (): Promise<IpcResponse<AccountInfo[]>> => {
-    const t0 = performance.now();
-    log.info(`[PERF] sync:init START`);
+  ipcMain.handle("sync:init", (): Promise<IpcResponse<AccountInfo[]>> => {
+    syncInitInvocationCount += 1;
+    const invocation = syncInitInvocationCount;
 
-    if (useFakeData) {
-      // In demo mode, ensure the demo account exists and populate with fake emails
-      saveAccount("default", "me@example.com", undefined, true);
-      const { DEMO_INBOX_EMAILS, DEMO_STYLE_SEED_EMAILS } = await import("../demo/fake-inbox");
-      for (const email of DEMO_INBOX_EMAILS) {
-        saveEmail(email, "default");
-      }
-      // Style seed emails are only in the DB (for style profiling), not shown in inbox
-      for (const email of DEMO_STYLE_SEED_EMAILS) {
-        saveEmail(email, "default");
-      }
-      log.info(
-        `[Demo] Saved ${DEMO_INBOX_EMAILS.length + DEMO_STYLE_SEED_EMAILS.length} demo emails to database`,
-      );
-
-      // Save demo analysis data for each email so archive-ready checks pass
-      const { DEMO_EXPECTED_ANALYSIS } = await import("../demo/fake-inbox");
-      for (const [emailId, analysis] of Object.entries(DEMO_EXPECTED_ANALYSIS)) {
-        saveAnalysis(emailId, analysis.needsReply, analysis.reason);
-      }
-
-      // Seed demo AI drafts so draft-edit learning can be tested
-      const { DEMO_DRAFT_RESPONSES } = await import("../demo/fake-inbox");
-      for (const [emailId, draftBody] of Object.entries(DEMO_DRAFT_RESPONSES)) {
-        saveDraft(emailId, draftBody, "pending");
-      }
-      log.info(`[Demo] Saved ${Object.keys(DEMO_DRAFT_RESPONSES).length} demo drafts to database`);
-
-      // Save demo archive-ready data so the Archive Ready view has content
-      const demoArchiveReady = [
-        {
-          threadId: "thread-project-alpha",
-          reason:
-            "User confirmed availability and agreed on 7-week timeline - conversation is complete",
-        },
-        { threadId: "thread-github-ci", reason: "Automated CI notification - no response needed" },
-        { threadId: "thread-newsletter", reason: "Newsletter subscription - informational only" },
-        { threadId: "thread-amazon-ship", reason: "Shipping confirmation - no response needed" },
-        { threadId: "thread-calendar", reason: "Calendar notification - no response needed" },
-        { threadId: "thread-html-test", reason: "Product update newsletter - informational only" },
-      ];
-      for (const { threadId, reason } of demoArchiveReady) {
-        saveArchiveReady(threadId, "default", true, reason);
-      }
-      log.info(`[Demo] Saved ${demoArchiveReady.length} demo archive-ready records`);
-
-      // Clear stale snooze data (e.g. from previous e2e test runs sharing this DB)
-      clearSnoozedEmails("default");
-
-      // Seed demo snoozed emails so the Snoozed tab has content
-      const demoSnoozed = [
-        {
-          id: "snooze-demo-1",
-          emailId: "demo-010",
-          threadId: "thread-lunch",
-          snoozeUntil: Date.now() + 4 * 60 * 60 * 1000,
-        },
-        {
-          id: "snooze-demo-2",
-          emailId: "demo-meeting",
-          threadId: "thread-meeting-request",
-          snoozeUntil: Date.now() + 24 * 60 * 60 * 1000,
-        },
-      ];
-      for (const s of demoSnoozed) {
-        snoozeEmail(s.id, s.emailId, s.threadId, "default", s.snoozeUntil);
-      }
-      log.info(`[Demo] Saved ${demoSnoozed.length} demo snoozed records`);
-
-      // Seed correspondent profiles for style testing contacts
-      saveCorrespondentProfile({
-        email: "dalton.caldwell@gmail.com",
-        accountId: "default",
-        displayName: "Dalton Caldwell",
-        emailCount: 10,
-        avgWordCount: 7,
-        dominantGreeting: "hey",
-        dominantSignoff: "none",
-        formalityScore: 0.12,
-        lastComputedAt: Date.now(),
-      });
-      saveCorrespondentProfile({
-        email: "g.ralston@whitfield-partners.com",
-        accountId: "default",
-        displayName: "Dr. Geoff Ralston",
-        emailCount: 10,
-        avgWordCount: 120,
-        dominantGreeting: "dear",
-        dominantSignoff: "regards",
-        formalityScore: 0.88,
-        lastComputedAt: Date.now(),
-      });
-      log.info("[Demo] Saved 2 demo correspondent profiles for style testing");
-
-      log.info(`[PERF] sync:init END (demo) ${(performance.now() - t0).toFixed(1)}ms`);
-      return {
-        success: true,
-        data: [{ accountId: "default", email: "me@example.com", isConnected: true }],
-      };
+    if (syncInitInFlight) {
+      log.info(`[PERF] sync:init #${invocation} coalesced with in-flight initialization`);
+      return syncInitInFlight;
     }
 
-    try {
-      const t1 = performance.now();
-      let accounts = getAccounts();
-      log.info(`[PERF] sync:init getAccounts took ${(performance.now() - t1).toFixed(1)}ms`);
-      const connectedAccounts: AccountInfo[] = [];
+    const initialization = (async (): Promise<IpcResponse<AccountInfo[]>> => {
+      const t0 = performance.now();
+      log.info(`[PERF] sync:init #${invocation} START`);
 
-      // If no accounts in database, try to connect with default account
-      // This handles the case where user completed OAuth before account saving was implemented
-      if (accounts.length === 0) {
-        try {
-          const client = new GmailClient("default");
-          await client.connect();
-
-          // Get profile and save account
-          const profile = await client.getProfile();
-          const displayName = await client.fetchDisplayName();
-          saveAccount("default", profile.emailAddress, displayName ?? undefined, true);
-          log.info(`[Sync] Migrated existing OAuth to account: ${profile.emailAddress}`);
-
-          // Refresh accounts list
-          accounts = getAccounts();
-        } catch (_err) {
-          // No valid tokens - user needs to complete setup
-          log.info("[Sync] No existing OAuth tokens found");
+      if (useFakeData) {
+        // In demo mode, ensure the demo account exists and populate with fake emails
+        saveAccount("default", "me@example.com", undefined, true);
+        const { DEMO_INBOX_EMAILS, DEMO_STYLE_SEED_EMAILS } = await import("../demo/fake-inbox");
+        for (const email of DEMO_INBOX_EMAILS) {
+          saveEmail(email, "default");
         }
+        // Style seed emails are only in the DB (for style profiling), not shown in inbox
+        for (const email of DEMO_STYLE_SEED_EMAILS) {
+          saveEmail(email, "default");
+        }
+        log.info(
+          `[Demo] Saved ${DEMO_INBOX_EMAILS.length + DEMO_STYLE_SEED_EMAILS.length} demo emails to database`,
+        );
+
+        // Save demo analysis data for each email so archive-ready checks pass
+        const { DEMO_EXPECTED_ANALYSIS } = await import("../demo/fake-inbox");
+        for (const [emailId, analysis] of Object.entries(DEMO_EXPECTED_ANALYSIS)) {
+          saveAnalysis(emailId, analysis.needsReply, analysis.reason);
+        }
+
+        // Seed demo AI drafts so draft-edit learning can be tested
+        const { DEMO_DRAFT_RESPONSES } = await import("../demo/fake-inbox");
+        for (const [emailId, draftBody] of Object.entries(DEMO_DRAFT_RESPONSES)) {
+          saveDraft(emailId, draftBody, "pending");
+        }
+        log.info(
+          `[Demo] Saved ${Object.keys(DEMO_DRAFT_RESPONSES).length} demo drafts to database`,
+        );
+
+        // Save demo archive-ready data so the Archive Ready view has content
+        const demoArchiveReady = [
+          {
+            threadId: "thread-project-alpha",
+            reason:
+              "User confirmed availability and agreed on 7-week timeline - conversation is complete",
+          },
+          {
+            threadId: "thread-github-ci",
+            reason: "Automated CI notification - no response needed",
+          },
+          { threadId: "thread-newsletter", reason: "Newsletter subscription - informational only" },
+          { threadId: "thread-amazon-ship", reason: "Shipping confirmation - no response needed" },
+          { threadId: "thread-calendar", reason: "Calendar notification - no response needed" },
+          {
+            threadId: "thread-html-test",
+            reason: "Product update newsletter - informational only",
+          },
+        ];
+        for (const { threadId, reason } of demoArchiveReady) {
+          saveArchiveReady(threadId, "default", true, reason);
+        }
+        log.info(`[Demo] Saved ${demoArchiveReady.length} demo archive-ready records`);
+
+        // Clear stale snooze data (e.g. from previous e2e test runs sharing this DB)
+        clearSnoozedEmails("default");
+
+        // Seed demo snoozed emails so the Snoozed tab has content
+        const demoSnoozed = [
+          {
+            id: "snooze-demo-1",
+            emailId: "demo-010",
+            threadId: "thread-lunch",
+            snoozeUntil: Date.now() + 4 * 60 * 60 * 1000,
+          },
+          {
+            id: "snooze-demo-2",
+            emailId: "demo-meeting",
+            threadId: "thread-meeting-request",
+            snoozeUntil: Date.now() + 24 * 60 * 60 * 1000,
+          },
+        ];
+        for (const s of demoSnoozed) {
+          snoozeEmail(s.id, s.emailId, s.threadId, "default", s.snoozeUntil);
+        }
+        log.info(`[Demo] Saved ${demoSnoozed.length} demo snoozed records`);
+
+        // Seed correspondent profiles for style testing contacts
+        saveCorrespondentProfile({
+          email: "dalton.caldwell@gmail.com",
+          accountId: "default",
+          displayName: "Dalton Caldwell",
+          emailCount: 10,
+          avgWordCount: 7,
+          dominantGreeting: "hey",
+          dominantSignoff: "none",
+          formalityScore: 0.12,
+          lastComputedAt: Date.now(),
+        });
+        saveCorrespondentProfile({
+          email: "g.ralston@whitfield-partners.com",
+          accountId: "default",
+          displayName: "Dr. Geoff Ralston",
+          emailCount: 10,
+          avgWordCount: 120,
+          dominantGreeting: "dear",
+          dominantSignoff: "regards",
+          formalityScore: 0.88,
+          lastComputedAt: Date.now(),
+        });
+        log.info("[Demo] Saved 2 demo correspondent profiles for style testing");
+
+        log.info(
+          `[PERF] sync:init #${invocation} END (demo) ${(performance.now() - t0).toFixed(1)}ms`,
+        );
+        return {
+          success: true,
+          data: [{ accountId: "default", email: "me@example.com", isConnected: true }],
+        };
       }
 
-      log.info(`[Sync] Found ${accounts.length} accounts in database`);
-      for (const account of accounts) {
-        const tAccount = performance.now();
-        log.info(`[PERF] sync:init connecting account ${account.id} START`);
+      try {
+        const t1 = performance.now();
+        let accounts = getAccounts();
+        log.info(`[PERF] sync:init getAccounts took ${(performance.now() - t1).toFixed(1)}ms`);
+        const connectedAccounts: AccountInfo[] = [];
 
-        // Skip accounts already set up by the onboarding flow — they're
-        // registered, synced, and have their sync loop running.
-        if (emailSyncService.isAccountRegistered(account.id)) {
-          const onboardingClient = getOnboardingClient(account.id);
-          if (onboardingClient) {
-            activeClients.set(account.id, onboardingClient);
-            clearOnboardingClient(account.id);
+        // If no accounts in database, try to connect with default account
+        // This handles the case where user completed OAuth before account saving was implemented
+        if (accounts.length === 0) {
+          try {
+            const client = new GmailClient("default");
+            await client.connect();
+
+            // Get profile and save account
+            const profile = await client.getProfile();
+            const displayName = await client.fetchDisplayName();
+            saveAccount("default", profile.emailAddress, displayName ?? undefined, true);
+            log.info(`[Sync] Migrated existing OAuth to account: ${profile.emailAddress}`);
+
+            // Refresh accounts list
+            accounts = getAccounts();
+          } catch (_err) {
+            // No valid tokens - user needs to complete setup
+            log.info("[Sync] No existing OAuth tokens found");
+          }
+        }
+
+        log.info(`[Sync] Found ${accounts.length} accounts in database`);
+        for (const account of accounts) {
+          const tAccount = performance.now();
+          log.info(`[PERF] sync:init connecting account ${account.id} START`);
+
+          // A healthy registered account belongs to the long-lived main process,
+          // not to a particular renderer. Reuse it when a renderer asks to
+          // initialize again instead of reconnecting and replacing its timer.
+          if (emailSyncService.isAccountRegistered(account.id)) {
+            const onboardingClient = getOnboardingClient(account.id);
+            const registeredAccount = emailSyncService
+              .getAccounts()
+              .find((registered) => registered.accountId === account.id);
+            const registeredClient =
+              onboardingClient ?? emailSyncService.getClientForAccount(account.id);
+
+            if (registeredAccount?.isConnected && registeredClient) {
+              activeClients.set(account.id, registeredClient);
+              if (onboardingClient) clearOnboardingClient(account.id);
+              // A registered account can outlive its timer when the network
+              // goes offline or a renderer-triggered stop leaves it idle.
+              // Reuse the client, but always restore the missing sync loop.
+              if (!emailSyncService.hasActiveSync(account.id)) {
+                emailSyncService.startSync(account.id);
+              }
+              connectedAccounts.push({
+                accountId: account.id,
+                email: account.email,
+                displayName: account.displayName,
+                isConnected: true,
+              });
+              log.info(
+                `[Sync] Account ${account.id} already registered, reusing main-process client`,
+              );
+              continue;
+            }
+
+            // An errored registration is intentionally replaced so a subsequent
+            // init can recover after credentials or connectivity change.
+            log.info(
+              `[Sync] Account ${account.id} registered but disconnected, reconnecting client`,
+            );
+          }
+
+          try {
+            // Create client for existing account
+            const client = new GmailClient(account.id);
+            const tConnect = performance.now();
+            await client.connect();
+            log.info(
+              `[PERF] sync:init client.connect took ${(performance.now() - tConnect).toFixed(1)}ms`,
+            );
+
+            // Register and start syncing
+            const tRegister = performance.now();
+            const accountInfo = await emailSyncService.registerAccount(client);
+            log.info(
+              `[PERF] sync:init registerAccount took ${(performance.now() - tRegister).toFixed(1)}ms`,
+            );
+            activeClients.set(account.id, client);
+
+            // Backfill display name for existing accounts that don't have one
+            if (!account.displayName && accountInfo.displayName) {
+              updateAccountDisplayName(account.id, accountInfo.displayName);
+              client.clearAccountInfoCache();
+              log.info(
+                `[Sync] Backfilled display name for ${account.email}: ${accountInfo.displayName}`,
+              );
+            }
+
+            const tStartSync = performance.now();
+            emailSyncService.startSync(account.id);
+            log.info(
+              `[PERF] sync:init startSync took ${(performance.now() - tStartSync).toFixed(1)}ms`,
+            );
+
+            connectedAccounts.push(accountInfo);
+            log.info(
+              `[PERF] sync:init account ${account.id} total ${(performance.now() - tAccount).toFixed(1)}ms`,
+            );
+          } catch (err) {
+            log.error({ err: err }, `[Sync] Failed to connect account ${account.id}`);
+
+            // Still store the client reference so reauth can use it
+            const client = new GmailClient(account.id);
+            activeClients.set(account.id, client);
+
             connectedAccounts.push({
               accountId: account.id,
               email: account.email,
-              isConnected: true,
+              isConnected: false,
             });
-            log.info(
-              `[Sync] Account ${account.id} already registered (onboarding), reusing client`,
-            );
-            continue;
+
+            // If this is an auth error, notify the renderer after init completes
+            if (isAuthError(err)) {
+              // Defer to after the response is sent so the renderer has set up listeners
+              setTimeout(() => {
+                const win = getMainWindow();
+                if (win) {
+                  log.info(`[Auth] Sending startup token-expired for ${account.email}`);
+                  win.webContents.send("auth:token-expired", {
+                    accountId: account.id,
+                    email: account.email,
+                    source: "gmail",
+                  });
+                }
+              }, 1000);
+            }
           }
-          // Onboarding client not found — fall through to create a new client
-          log.info(
-            `[Sync] Account ${account.id} registered but onboarding client missing, creating new client`,
-          );
         }
 
-        try {
-          // Create client for existing account
-          const client = new GmailClient(account.id);
-          const tConnect = performance.now();
-          await client.connect();
-          log.info(
-            `[PERF] sync:init client.connect took ${(performance.now() - tConnect).toFixed(1)}ms`,
-          );
+        // After all accounts are connected, run retryable background work on
+        // every successful initialization. Only the delayed prefetch scan is
+        // process-lifetime work; outbox/calendar operations are idempotent
+        // and must be retried after a transient failure or renderer reload.
+        if (connectedAccounts.some((a) => a.isConnected)) {
+          // Delay 3 seconds to let the UI fully load first
+          // Skip if any account is doing a first-time sync — fullSync with
+          // runTriage will handle queueing only the recent emails after triage.
+          // Calendar sync is time-sensitive — run immediately, not after the 3s delay
+          calendarSyncService.syncNow();
 
-          // Register and start syncing
-          const tRegister = performance.now();
-          const accountInfo = await emailSyncService.registerAccount(client);
-          log.info(
-            `[PERF] sync:init registerAccount took ${(performance.now() - tRegister).toFixed(1)}ms`,
-          );
-          activeClients.set(account.id, client);
+          // Process any queued outbox messages from previous session
+          outboxService.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
 
-          // Backfill display name for existing accounts that don't have one
-          if (!account.displayName && accountInfo.displayName) {
-            updateAccountDisplayName(account.id, accountInfo.displayName);
-            client.clearAccountInfoCache();
-            log.info(
-              `[Sync] Backfilled display name for ${account.email}: ${accountInfo.displayName}`,
-            );
-          }
-
-          const tStartSync = performance.now();
-          emailSyncService.startSync(account.id);
-          log.info(
-            `[PERF] sync:init startSync took ${(performance.now() - tStartSync).toFixed(1)}ms`,
-          );
-
-          connectedAccounts.push(accountInfo);
-          log.info(
-            `[PERF] sync:init account ${account.id} total ${(performance.now() - tAccount).toFixed(1)}ms`,
-          );
-        } catch (err) {
-          log.error({ err: err }, `[Sync] Failed to connect account ${account.id}`);
-
-          // Still store the client reference so reauth can use it
-          const client = new GmailClient(account.id);
-          activeClients.set(account.id, client);
-
-          connectedAccounts.push({
-            accountId: account.id,
-            email: account.email,
-            isConnected: false,
-          });
-
-          // If this is an auth error, notify the renderer after init completes
-          if (isAuthError(err)) {
-            // Defer to after the response is sent so the renderer has set up listeners
-            setTimeout(() => {
-              const win = getMainWindow();
-              if (win) {
-                log.info(`[Auth] Sending startup token-expired for ${account.email}`);
-                win.webContents.send("auth:token-expired", {
-                  accountId: account.id,
-                  email: account.email,
-                  source: "gmail",
+          if (!backgroundProcessingStarted) {
+            backgroundProcessingStarted = true;
+            setTimeout(async () => {
+              if (emailSyncService.hasFirstSyncPending()) {
+                log.info("[Prefetch] Skipping processAllPending — first-time sync in progress");
+                prefetchService.closeStartupCache();
+              } else {
+                log.info("[PERF] prefetch starting (3s after sync:init)");
+                await prefetchService.processAllPending().catch((error) => {
+                  log.error({ err: error }, "[Sync] Error starting prefetch");
                 });
               }
-            }, 1000);
+            }, 3000);
+          } else {
+            log.info("[Sync] Delayed prefetch already scheduled; retrying background work");
           }
         }
+
+        const diagnostics = emailSyncService.getDiagnostics();
+        log.info(
+          `[PERF] sync:init #${invocation} END total ${(performance.now() - t0).toFixed(1)}ms ` +
+            `(registered=${diagnostics.registeredAccounts}, intervals=${diagnostics.activeIntervals}, inFlight=${diagnostics.inFlightSyncs})`,
+        );
+        return { success: true, data: connectedAccounts };
+      } catch (error) {
+        log.info(`[PERF] sync:init #${invocation} ERROR ${(performance.now() - t0).toFixed(1)}ms`);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
       }
+    })();
 
-      // After all accounts are connected, start background processing
-      if (connectedAccounts.some((a) => a.isConnected)) {
-        // Delay 3 seconds to let the UI fully load first
-        // Skip if any account is doing a first-time sync — fullSync with
-        // runTriage will handle queueing only the recent emails after triage.
-        // Calendar sync is time-sensitive — run immediately, not after the 3s delay
-        calendarSyncService.syncNow();
-
-        setTimeout(async () => {
-          if (emailSyncService.hasFirstSyncPending()) {
-            log.info("[Prefetch] Skipping processAllPending — first-time sync in progress");
-            prefetchService.closeStartupCache();
-          } else {
-            log.info("[PERF] prefetch starting (3s after sync:init)");
-            await prefetchService.processAllPending().catch((error) => {
-              log.error({ err: error }, "[Sync] Error starting prefetch");
-            });
-          }
-        }, 3000);
-
-        // Process any queued outbox messages from previous session
-        outboxService.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
+    syncInitInFlight = initialization;
+    return initialization.finally(() => {
+      if (syncInitInFlight === initialization) {
+        syncInitInFlight = null;
       }
-
-      log.info(`[PERF] sync:init END total ${(performance.now() - t0).toFixed(1)}ms`);
-      return { success: true, data: connectedAccounts };
-    } catch (error) {
-      log.info(`[PERF] sync:init ERROR ${(performance.now() - t0).toFixed(1)}ms`);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
+    });
   });
 
   // Archive an email (offline-aware: queues when offline or on network error)
