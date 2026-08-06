@@ -1305,14 +1305,39 @@ export default function App() {
       (data: {
         id: string;
         kind?: "scheduled" | "undo";
+        accountId?: string;
         gmailId?: string;
         composeContext?: string;
+        archiveThreadId?: string;
       }) => {
         console.log(`[ScheduledSend] Message sent: ${data.id}`);
         if (data.kind !== "undo") return;
 
         const store = useAppStore.getState();
+        const queuedUndo = store.undoSendQueue.find((item) => item.id === data.id);
         store.removeUndoSend(data.id);
+
+        // Main owns the archive operation, but its offline/demo paths do not
+        // broadcast sync:emails-removed. Mirror the immediate-send path's
+        // optimistic removal after the send itself has succeeded.
+        if (data.archiveThreadId) {
+          const accountId = data.accountId ?? queuedUndo?.sendOptions.accountId;
+          if (accountId) {
+            const threadEmailIds = store.emails
+              .filter(
+                (email) => email.threadId === data.archiveThreadId && email.accountId === accountId,
+              )
+              .map((email) => email.id);
+            if (threadEmailIds.length > 0) {
+              if (store.selectedThreadId === data.archiveThreadId) {
+                store.removeEmailsAndAdvance(threadEmailIds, null, null);
+              } else {
+                store.removeEmails(threadEmailIds);
+              }
+            }
+          }
+          return;
+        }
 
         // Replace the optimistic "pending-*" email with the real Gmail ID so
         // background sync won't add a duplicate when it discovers the same
@@ -1344,10 +1369,54 @@ export default function App() {
         }));
       },
     );
-    window.api.scheduledSend.onFailed((data: { id: string; error: string }) => {
-      console.log(`[ScheduledSend] Message failed: ${data.id} - ${data.error}`);
-      setError(`Scheduled message failed: ${data.error}`);
-    });
+    window.api.scheduledSend.onFailed(
+      (data: {
+        id: string;
+        kind?: "scheduled" | "undo";
+        composeContext?: string;
+        error: string;
+      }) => {
+        console.log(`[ScheduledSend] Message failed: ${data.id} - ${data.error}`);
+        if (data.kind !== "undo") {
+          setError(`Scheduled message failed: ${data.error}`);
+          return;
+        }
+
+        const store = useAppStore.getState();
+        const queuedUndo = store.undoSendQueue.find((item) => item.id === data.id);
+        const context = parseComposeContext(data.composeContext) ?? queuedUndo?.composeContext;
+        store.removeUndoSend(data.id);
+
+        if (context?.optimisticEmailId) {
+          const optimisticId = context.optimisticEmailId;
+          useAppStore.setState((state) => ({
+            emails: state.emails.filter((email) => email.id !== optimisticId),
+            ...(state.focusedThreadEmailId === optimisticId ? { focusedThreadEmailId: null } : {}),
+            ...(state.inlineReplyToEmailId === optimisticId ? { inlineReplyToEmailId: null } : {}),
+          }));
+        }
+
+        if (context) {
+          if (context.threadId) store.setSelectedThreadId(context.threadId);
+          if (context.replyToEmailId) store.setSelectedEmailId(context.replyToEmailId);
+          store.setViewMode("full");
+          store.openCompose(context.mode, context.replyToEmailId, {
+            bodyHtml: context.bodyHtml,
+            bodyText: context.bodyText,
+            to: context.to,
+            cc: context.cc,
+            bcc: context.bcc,
+            subject: context.subject,
+          });
+        }
+
+        setError(
+          context
+            ? `Message failed to send: ${data.error}. Your draft has been reopened.`
+            : `Message failed to send: ${data.error}`,
+        );
+      },
+    );
 
     // Cleanup listeners and pending buffer flushes on unmount
     return () => {

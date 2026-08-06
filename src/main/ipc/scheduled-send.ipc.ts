@@ -116,6 +116,7 @@ export function registerScheduledSendIpc(): void {
             win.webContents.send("scheduled-send:sent", {
               id: msg.id,
               kind,
+              accountId: options.accountId,
               gmailId: `demo-sent-${msg.id}`,
               threadId: options.threadId,
               composeContext: options.composeContext,

@@ -60,7 +60,7 @@ class ScheduledSendService extends EventEmitter {
 
   /**
    * Recover after an unclean shutdown. Same work as start() — past-due rows fire
-   * now, future rows re-arm — but named for the call site in main/index.ts so the
+   * now, future rows re-arm — but named for the post-sync startup call so the
    * crash/force-kill recovery path is obvious at a glance.
    */
   recoverOnStartup(): void {
@@ -71,7 +71,11 @@ class ScheduledSendService extends EventEmitter {
         `[ScheduledSend] Recovering ${pending.length} pending message(s), ${overdue} already due`,
       );
     }
-    this.start();
+    if (this.started) {
+      void this.processDueMessages();
+    } else {
+      this.start();
+    }
   }
 
   /**
@@ -143,11 +147,11 @@ class ScheduledSendService extends EventEmitter {
   }
 
   /**
-   * Send every pending message immediately regardless of remaining delay.
-   * Used on quit so an in-flight undo delay isn't silently dropped.
+   * Send every pending undo-send immediately regardless of remaining delay.
+   * User-chosen send-later rows must retain their due time across app quits.
    */
   async flushPendingNow(): Promise<void> {
-    const pending = getScheduledMessages();
+    const pending = getScheduledMessages(undefined, "undo");
     if (pending.length === 0) return;
 
     log.info(`[ScheduledSend] Flushing ${pending.length} pending message(s) before quit`);
@@ -178,7 +182,13 @@ class ScheduledSendService extends EventEmitter {
     if (!client) {
       log.error(`[ScheduledSend] No client for account ${item.accountId}`);
       updateScheduledMessageStatus(item.id, "failed", "Account not connected");
-      this.emit("failed", { id: item.id, kind: item.kind, error: "Account not connected" });
+      this.emit("failed", {
+        id: item.id,
+        kind: item.kind,
+        accountId: item.accountId,
+        composeContext: item.composeContext,
+        error: "Account not connected",
+      });
       this.emit("statsChanged", this.getStats());
       return;
     }
@@ -219,6 +229,7 @@ class ScheduledSendService extends EventEmitter {
       this.emit("sent", {
         id: item.id,
         kind: item.kind,
+        accountId: item.accountId,
         gmailId: result.id,
         threadId: result.threadId,
         composeContext: item.composeContext,
@@ -229,7 +240,13 @@ class ScheduledSendService extends EventEmitter {
       const errorMessage = error instanceof Error ? error.message : "Send failed";
       updateScheduledMessageStatus(item.id, "failed", errorMessage);
       log.error(`[ScheduledSend] Failed to send ${item.id}: ${errorMessage}`);
-      this.emit("failed", { id: item.id, kind: item.kind, error: errorMessage });
+      this.emit("failed", {
+        id: item.id,
+        kind: item.kind,
+        accountId: item.accountId,
+        composeContext: item.composeContext,
+        error: errorMessage,
+      });
       this.emit("statsChanged", this.getStats());
     }
   }

@@ -5,6 +5,7 @@ import { prefetchService } from "../services/prefetch-service";
 import { getExtensionHost } from "../extensions";
 import { networkMonitor } from "../services/network-monitor";
 import { outboxService } from "../services/outbox-service";
+import { scheduledSendService } from "../services/scheduled-send-service";
 import { pendingActionsQueue } from "../services/pending-actions";
 import { isNetworkError } from "../services/network-errors";
 import {
@@ -59,6 +60,15 @@ let retryingConnections = false;
 // Email data saved before optimistic trash deletion, keyed by emailId.
 // Used to restore the email to DB if a queued trash action fails permanently.
 const trashedEmailData: Map<string, DashboardEmail> = new Map();
+
+function recoverScheduledSendsIfReady(): void {
+  const hasConnectedAccount = getAccounts().some((account) =>
+    emailSyncService.isAccountRegistered(account.id),
+  );
+  if (hasConnectedAccount) {
+    scheduledSendService.recoverOnStartup();
+  }
+}
 
 // Service wrapper for accessing sync functionality from other IPC handlers
 export const getEmailSyncService = () => ({
@@ -235,6 +245,7 @@ export function registerSyncIpc(): void {
   // When going online, reconnect failed accounts THEN process queues
   networkMonitor.on("online", async () => {
     await retryFailedConnections();
+    recoverScheduledSendsIfReady();
     outboxService.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
     pendingActionsQueue.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
   });
@@ -402,6 +413,7 @@ export function registerSyncIpc(): void {
         // Re-register with sync service and restart sync
         await emailSyncService.registerAccount(client);
         emailSyncService.startSync(accountId);
+        recoverScheduledSendsIfReady();
 
         log.info(`[Auth] Re-authenticated account ${accountId}, sync restarted`);
         return { success: true, data: undefined };
@@ -490,6 +502,7 @@ export function registerSyncIpc(): void {
 
         // Store client reference
         activeClients.set(id, client);
+        recoverScheduledSendsIfReady();
 
         // Start sync loop — fullSync will detect first-time sync (no history ID,
         // no stored emails) and run triage + progressive loading automatically.
@@ -1041,6 +1054,10 @@ export function registerSyncIpc(): void {
 
         // Process any queued outbox messages from previous session
         outboxService.processQueue().catch((err) => log.error({ err }, "Unhandled error"));
+
+        // Start only after account clients are ready. This also processes rows
+        // that became due while the app was closed.
+        recoverScheduledSendsIfReady();
       }
 
       log.info(`[PERF] sync:init END total ${(performance.now() - t0).toFixed(1)}ms`);

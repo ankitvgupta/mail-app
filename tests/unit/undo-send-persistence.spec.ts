@@ -249,17 +249,17 @@ test.describe("undo-send persistence — recovery and flush", () => {
     db.close();
   });
 
-  test("flush selects every pending row regardless of remaining delay", () => {
+  test("quit flush selects only undo-send rows regardless of remaining delay", () => {
     const db = freshDb();
     seed(db, { id: "f1", scheduledAt: Date.now() + 15_000 });
     seed(db, { id: "f2", scheduledAt: Date.now() + 3_600_000, kind: "scheduled" });
     seed(db, { id: "f3", scheduledAt: Date.now() - 1, status: "sent" });
 
-    // flushPendingNow() uses getScheduledMessages() — all pending, no time filter.
+    // User-chosen send-later rows retain their due time across app quits.
     const pending = db
-      .prepare("SELECT id FROM scheduled_messages WHERE status = 'scheduled'")
+      .prepare("SELECT id FROM scheduled_messages WHERE status = 'scheduled' AND kind = 'undo'")
       .all() as Array<{ id: string }>;
-    expect(pending.map((r) => r.id).sort()).toEqual(["f1", "f2"]);
+    expect(pending.map((r) => r.id)).toEqual(["f1"]);
     db.close();
   });
 

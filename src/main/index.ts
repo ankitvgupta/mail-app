@@ -461,17 +461,14 @@ app.whenReady().then(async () => {
     getEmailSyncService().getClientForAccount(accountId),
   );
 
-  // Set up scheduled send service client resolver and start background timer
+  // Set up scheduled send service dependencies. Recovery starts from sync:init,
+  // after Gmail clients exist and the renderer has installed IPC listeners.
   scheduledSendService.setClientResolver((accountId) =>
     getEmailSyncService().getClientForAccount(accountId),
   );
   scheduledSendService.setThreadArchiver(async (threadId, accountId) => {
     await archiveThreadInternal(accountId, threadId);
   });
-  // Recover before starting: rows that came due while the app was closed (or that
-  // were mid-undo-delay when it was killed) fire now instead of being lost.
-  scheduledSendService.recoverOnStartup();
-
   // NOTE: outbox processing on "online" is handled by sync.ipc.ts
   // after account reconnection completes, to avoid racing against client init.
   // Startup outbox processing is also deferred to sync:init completing.

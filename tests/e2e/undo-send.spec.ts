@@ -460,6 +460,84 @@ test.describe("Undo Send - Forward", () => {
   });
 });
 
+test.describe("Undo Send - Recovered Main-Process Events", () => {
+  test.describe.configure({ mode: "serial" });
+  let electronApp: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async ({}, testInfo) => {
+    const result = await launchElectronApp(testInfo.workerIndex);
+    electronApp = result.app;
+    page = result.page;
+  });
+
+  test.afterAll(async () => {
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
+  });
+
+  test("a failed recovered undo-send reopens its persisted draft", async () => {
+    const subject = "Recovered failed undo-send";
+    const body = "This draft should survive a failed background send.";
+    const composeContext = JSON.stringify({
+      mode: "new",
+      bodyHtml: `<p>${body}</p>`,
+      bodyText: body,
+      to: ["recipient@example.com"],
+      subject,
+    });
+
+    await electronApp.evaluate(
+      ({ BrowserWindow }, payload) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send("scheduled-send:failed", payload);
+      },
+      {
+        id: "recovered-failed-undo",
+        kind: "undo",
+        composeContext,
+        error: "Injected send failure",
+      },
+    );
+
+    await expect(page.getByText("New Message")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("[placeholder='Subject']")).toHaveValue(subject);
+    await expect(page.locator(".ProseMirror").first()).toContainText(body);
+    await expect(page.getByText(/Your draft has been reopened/)).toBeVisible();
+
+    await closeAnyOpenModal(page);
+  });
+
+  test("a completed delayed send-and-archive removes the thread", async () => {
+    const threadRow = page.locator("div[data-thread-id]").first();
+    await expect(threadRow).toBeVisible({ timeout: 5000 });
+    const threadId = await threadRow.getAttribute("data-thread-id");
+    expect(threadId).toBeTruthy();
+
+    const accountId = await page.evaluate(async () => {
+      const result = await window.api.accounts.list();
+      if (!result.success || !result.data?.[0]) {
+        throw new Error("Demo account was not available");
+      }
+      return result.data[0].id;
+    });
+
+    await electronApp.evaluate(
+      ({ BrowserWindow }, payload) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send("scheduled-send:sent", payload);
+      },
+      {
+        id: "recovered-send-and-archive",
+        kind: "undo",
+        accountId,
+        archiveThreadId: threadId,
+      },
+    );
+
+    await expect(page.locator(`div[data-thread-id="${threadId}"]`)).toHaveCount(0);
+  });
+});
+
 test.describe("Undo Send - Settings Configuration", () => {
   test.describe.configure({ mode: "serial" });
   let electronApp: ElectronApplication;

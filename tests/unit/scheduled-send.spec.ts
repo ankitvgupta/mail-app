@@ -322,9 +322,10 @@ test.describe("Scheduled Send - Schema Validation", () => {
     expect(mainCode).toContain("import { scheduledSendService }");
     expect(mainCode).toContain("import { registerScheduledSendIpc }");
     expect(mainCode).toContain("scheduledSendService.setClientResolver");
-    // recoverOnStartup() starts the scheduler and additionally fires rows that
-    // came due while the app was closed.
-    expect(mainCode).toContain("scheduledSendService.recoverOnStartup()");
+    // Recovery must not run in app.whenReady before sync:init connects clients.
+    expect(mainCode).not.toContain("scheduledSendService.recoverOnStartup()");
+    const syncCode = readFileSync(path.join(srcDir, "main/ipc/sync.ipc.ts"), "utf-8");
+    expect(syncCode).toContain("recoverScheduledSendsIfReady()");
     expect(mainCode).toContain("registerScheduledSendIpc()");
     // Pending sends must be flushed before quit, or an in-flight undo delay
     // would be stranded until the next launch.

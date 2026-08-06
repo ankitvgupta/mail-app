@@ -849,6 +849,7 @@ const api = {
       callback: (data: {
         id: string;
         kind?: "scheduled" | "undo";
+        accountId?: string;
         gmailId?: string;
         threadId?: string;
         composeContext?: string;
@@ -862,6 +863,7 @@ const api = {
           data: {
             id: string;
             kind?: "scheduled" | "undo";
+            accountId?: string;
             gmailId?: string;
             threadId?: string;
             composeContext?: string;
@@ -871,10 +873,27 @@ const api = {
       );
     },
 
-    onFailed: (callback: (data: { id: string; error: string }) => void): void => {
+    onFailed: (
+      callback: (data: {
+        id: string;
+        kind?: "scheduled" | "undo";
+        accountId?: string;
+        composeContext?: string;
+        error: string;
+      }) => void,
+    ): void => {
       ipcRenderer.on(
         "scheduled-send:failed",
-        (_: Electron.IpcRendererEvent, data: { id: string; error: string }) => callback(data),
+        (
+          _: Electron.IpcRendererEvent,
+          data: {
+            id: string;
+            kind?: "scheduled" | "undo";
+            accountId?: string;
+            composeContext?: string;
+            error: string;
+          },
+        ) => callback(data),
       );
     },
 
