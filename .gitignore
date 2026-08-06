@@ -58,6 +58,9 @@ tests/screenshots/
 # Dev mode data directory (isolated from production)
 .dev-data/
 
+# Packaged smoke-test data directory (tests/packaged/, isolated from production)
+.packaged-test-data/
+
 # Private extensions and agents (copied in at build time by mail-app)
 src/extensions-private/
 src/agents-private/

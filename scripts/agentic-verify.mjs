@@ -106,12 +106,14 @@ function flag(name, defaultValue = null) {
 
 const MODE = flag("mode", "verify-diff");
 // --data=auto|real|demo
-//   auto  : detect from the diff. Files matching DATA_REAL_PATTERNS push
-//           the run toward real-account mode; everything else is demo.
+//   auto  : real-mode-first (the default). Real mode is used unless the
+//           ENTIRE diff matches DATA_DEMO_SAFE_PATTERNS (docs/tests/
+//           scripts/config — provably non-behavioral), in which case demo
+//           is used. Any behavioral file in the diff → real.
 //   real  : force real mode (uses .dev-data/ tokens for the test account
 //           and sets EXO_DISABLE_PREFETCH so we don't burn API spend on
 //           background analysis).
-//   demo  : force demo mode (current default). Hermetic, no real Gmail.
+//   demo  : force demo mode. Hermetic, no real Gmail.
 const DATA_MODE_RAW = flag("data", "auto");
 const ACTION_BUDGET = Number(flag("action-budget", MODE === "explore" ? 100 : 40));
 const BUDGET_USD = Number(flag("budget-usd", MODE === "explore" ? 2 : 0.5));
@@ -129,9 +131,7 @@ if (!["verify-diff", "explore"].includes(MODE)) {
 }
 
 if (!process.env.ANTHROPIC_API_KEY) {
-  console.error(
-    `ANTHROPIC_API_KEY is required. Put it in .env.local (see .env.local.example).`,
-  );
+  console.error(`ANTHROPIC_API_KEY is required. Put it in .env.local (see .env.local.example).`);
   process.exit(1);
 }
 
@@ -164,9 +164,7 @@ function flushLog() {
 
 function gitDiffSummary() {
   try {
-    const base = execSync("git merge-base origin/main HEAD", { cwd: REPO_ROOT })
-      .toString()
-      .trim();
+    const base = execSync("git merge-base origin/main HEAD", { cwd: REPO_ROOT }).toString().trim();
     const files = execSync(`git diff --name-only ${base}..HEAD`, { cwd: REPO_ROOT })
       .toString()
       .trim();
@@ -199,43 +197,78 @@ function truncateForPrompt(text, maxChars) {
 }
 
 /**
- * Files whose changes warrant testing against the REAL test Gmail
- * account, not demo data. Anything matching these patterns means the
- * agent is more likely to find real bugs when it can interact with
- * actual Gmail-shaped state (multipart bodies, threading, labels,
- * send-as aliases, etc.) than with the curated demo fixtures.
+ * Files whose changes are unambiguously non-behavioral — docs, tests,
+ * scripts, infra config, type-only declarations. If the ENTIRE diff
+ * matches these patterns, demo mode is safe. Anything else routes to
+ * the real test Gmail account.
+ *
+ * The default flipped on 2026-05-27: previously the router defaulted
+ * to demo and only escalated to real for an allowlist of "risky" service
+ * files. That left almost every behavioral change running against
+ * curated demo fixtures, which can't expose agent runtimes, real Gmail
+ * threading quirks, or auth/token paths. The whole reason the
+ * `exoemailtest@gmail.com` test account exists is so agentic
+ * verification can hit real Gmail-shaped state — making demo the
+ * default defeats that.
  */
-const DATA_REAL_PATTERNS = [
-  /^src\/main\/services\/gmail-client\.ts$/,
-  /^src\/main\/services\/email-sync\.ts$/,
-  /^src\/main\/services\/prefetch-service\.ts$/,
-  /^src\/main\/services\/email-analyzer\.ts$/,
-  /^src\/main\/services\/draft-generator\.ts$/,
-  /^src\/main\/services\/calendaring-agent\.ts$/,
-  /^src\/main\/services\/archive-ready-analyzer\.ts$/,
-  /^src\/main\/services\/sender-lookup\.ts$/,
-  /^src\/main\/services\/style-profiler\.ts$/,
-  /^src\/main\/ipc\/gmail\.ipc\.ts$/,
-  /^src\/main\/ipc\/sync\.ipc\.ts$/,
-  /^src\/main\/ipc\/analysis\.ipc\.ts$/,
-  /^src\/main\/ipc\/drafts\.ipc\.ts$/,
-  /^src\/main\/ipc\/compose\.ipc\.ts$/,
+const DATA_DEMO_SAFE_PATTERNS = [
+  /^docs\//,
+  /^tests\//,
+  /^scripts\//,
+  /^benchmarks\//,
+  /^\.github\//,
+  /^\.claude\//,
+  /\.md$/,
+  /^CHANGELOG/,
+  /^README/,
+  /^LICENSE/,
+  /^TODOS/,
+  /^CONTRIBUTING/,
+  /^\.gitignore$/,
+  /^\.prettierrc/,
+  /^\.editorconfig$/,
+  /^eslint\.config\./,
+  /^prettier\.config\./,
+  /^postcss\.config\./,
+  /^tailwind\.config\./,
+  /^playwright.*\.config\./,
+  /^vite\.[^/]*\.config\./,
+  /^electron-vite\.config\./,
+  /^tsconfig[^/]*\.json$/,
+  /^package(-lock)?\.json$/,
+  /^src\/shared\/types\.ts$/,
 ];
 
 /**
  * Decide whether the agent should run against the real test account
  * or demo data, given the changed files and the user's explicit flag.
+ *
+ * Real-mode-first: if ANY changed file is not in the demo-safe
+ * allowlist, we run against the real test Gmail account. Demo mode is
+ * only used when the diff is provably non-behavioral (docs, tests,
+ * scripts, config). The test account exists for this; using demo by
+ * default wastes that infrastructure and produces false-pass verdicts
+ * for anything that depends on real Gmail or real agent execution.
  */
 function resolveDataMode(rawFlag, changedFiles) {
   if (rawFlag === "real" || rawFlag === "demo") return rawFlag;
-  // auto: any changed file matching a real-pattern → real
-  const realRelevant = changedFiles.filter((f) =>
-    DATA_REAL_PATTERNS.some((p) => p.test(f)),
-  );
-  if (realRelevant.length > 0) {
-    return { mode: "real", reason: `diff touches ${realRelevant.join(", ")}` };
+  if (changedFiles.length === 0) {
+    return { mode: "demo", reason: "no diff" };
   }
-  return { mode: "demo", reason: "diff is UI/scripts/tests only" };
+  const behavioral = changedFiles.filter((f) => !DATA_DEMO_SAFE_PATTERNS.some((p) => p.test(f)));
+  if (behavioral.length === 0) {
+    return {
+      mode: "demo",
+      reason: "diff is docs/tests/scripts/config only — no runtime surface to exercise",
+    };
+  }
+  // Truncate the reason if many files changed — keeps the log readable.
+  const sample = behavioral.slice(0, 5).join(", ");
+  const suffix = behavioral.length > 5 ? `, +${behavioral.length - 5} more` : "";
+  return {
+    mode: "real",
+    reason: `diff touches behavioral code (${sample}${suffix}) — running against test account`,
+  };
 }
 
 function headSha() {
@@ -296,9 +329,7 @@ async function waitForCdp(timeoutMs = 180_000) {
     await new Promise((res) => setTimeout(res, 500));
   }
   const actualMs = Date.now() - start;
-  throw new Error(
-    `CDP at ${CDP_URL} not ready after ${actualMs}ms (budget ${timeoutMs}ms)`,
-  );
+  throw new Error(`CDP at ${CDP_URL} not ready after ${actualMs}ms (budget ${timeoutMs}ms)`);
 }
 
 function launchElectron(dataMode) {
@@ -320,9 +351,7 @@ function launchElectron(dataMode) {
           EXO_HEADLESS: "true",
         }
       : { ...process.env, EXO_DEMO_MODE: "true", EXO_HEADLESS: "true" };
-  log(
-    `Launching Electron in ${dataMode} mode with --remote-debugging-port=${CDP_PORT}...`,
-  );
+  log(`Launching Electron in ${dataMode} mode with --remote-debugging-port=${CDP_PORT}...`);
   // `detached: true` makes the child the leader of a new process group.
   // We can then signal the whole tree at once via `process.kill(-pid, ...)`.
   // Without this, killing the npx wrapper leaves electron-vite and Electron
@@ -487,12 +516,13 @@ async function main() {
       DIFF_SUMMARY: diff.shortstat,
       DIFF_PATCH: diff.patch,
       CHANGED_FILES: diff.files,
+      DATA_MODE: dataMode,
       ACTION_BUDGET,
       BUDGET_USD,
     });
   } else {
     const template = loadPrompt("explore");
-    prompt = fillTemplate(template, { ACTION_BUDGET, BUDGET_USD });
+    prompt = fillTemplate(template, { DATA_MODE: dataMode, ACTION_BUDGET, BUDGET_USD });
   }
 
   const electron = launchElectron(dataMode);
@@ -609,9 +639,7 @@ async function main() {
 
     for await (const msg of result) {
       if (msg.type === "system" && msg.subtype === "init") {
-        const cdpTools = (msg.tools ?? []).filter((t) =>
-          t.startsWith("mcp__chrome-devtools__"),
-        );
+        const cdpTools = (msg.tools ?? []).filter((t) => t.startsWith("mcp__chrome-devtools__"));
         log(`session init — chrome-devtools tools: ${cdpTools.length}`);
       }
       if (msg.type === "assistant") {
@@ -641,7 +669,10 @@ async function main() {
                 : text;
             // Indent multi-line output so it's visually grouped with
             // the tool call in the log.
-            const indented = capped.split("\n").map((l) => `  ${l}`).join("\n");
+            const indented = capped
+              .split("\n")
+              .map((l) => `  ${l}`)
+              .join("\n");
             log(`${tag}#${idx}:\n${indented}`);
           }
         }
@@ -651,6 +682,12 @@ async function main() {
         log(
           `result: subtype=${msg.subtype} cost=${msg.total_cost_usd ?? "?"} turns=${msg.num_turns ?? "?"}`,
         );
+        // The result message is terminal by contract, but the SDK stream can
+        // stay open past it (observed with error_max_turns: the run sat until
+        // the 10-minute hard timeout, exit 124, and no report was written —
+        // which also left the Electron child alive to poison the next pre-pr
+        // phase). Break so cleanup + report happen promptly.
+        break;
       }
     }
 

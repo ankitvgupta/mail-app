@@ -60,6 +60,64 @@ export class AgentCoordinator {
     }
   >();
 
+  private buildBaseConfig(): AgentFrameworkConfig {
+    const appConfig = getConfig();
+    const apiKey = appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined;
+    const browser = appConfig.agentBrowser;
+    const ollamaConfig = resolveAgentOllamaConfig(appConfig);
+
+    return {
+      // When the resolver says the worker stays on Anthropic, force an Anthropic
+      // model name — even if featureProviders.agentDrafter is "ollama-cloud" alone,
+      // because getFeatureModelConfig would then return an Ollama model name and
+      // the worker (pointed at Anthropic) would 400 with invalid_model.
+      model: ollamaConfig?.model ?? getModelIdForFeature("agentDrafter"),
+      anthropicApiKey: apiKey,
+      ollamaCloud: ollamaConfig,
+      browserConfig: browser
+        ? {
+            enabled: browser.enabled,
+            chromeDebugPort: browser.chromeDebugPort,
+            chromeProfilePath: browser.chromeProfilePath,
+          }
+        : undefined,
+      mcpServers: appConfig.mcpServers,
+      cliTools: appConfig.cliTools,
+      providers: {
+        "openclaw-agent": {
+          enabled: appConfig.openclaw?.enabled ?? false,
+          gatewayUrl: appConfig.openclaw?.gatewayUrl ?? "",
+          gatewayToken: appConfig.openclaw?.gatewayToken ?? "",
+        },
+      },
+      opencode: appConfig.opencode
+        ? { enabled: appConfig.opencode.enabled, model: appConfig.opencode.model }
+        : { enabled: false },
+      hostler: appConfig.hostler
+        ? {
+            enabled: appConfig.hostler.enabled,
+            apiKey: appConfig.hostler.apiKey || undefined,
+            harness: appConfig.hostler.harness,
+            model: appConfig.hostler.model,
+            baseUrl: appConfig.hostler.baseUrl,
+          }
+        : { enabled: false },
+    };
+  }
+
+  private async buildEnrichedConfig(): Promise<AgentFrameworkConfig> {
+    const baseConfig = this.buildBaseConfig();
+    try {
+      return await populatePrivateProviderConfig(baseConfig);
+    } catch (err) {
+      log.error(
+        { err },
+        "[AgentCoordinator] populatePrivateProviderConfig failed; falling back to base config",
+      );
+      return baseConfig;
+    }
+  }
+
   // DB proxy methods available to the worker.
   // No explicit Record type — each method retains its specific signature.
   // In handleDbRequest we cast to a generic callable since the IPC boundary is untyped.
@@ -248,76 +306,21 @@ export class AgentCoordinator {
 
     // Auto-init the worker with framework config so it's ready for commands.
     // Config is enriched asynchronously by private provider modules before being sent.
-    // Read API key from app config first, fall back to env var; use undefined (not "")
-    // when neither exists so the SDK falls through to Claude Code's stored OAuth.
-    const appConfig = getConfig();
-    const apiKey = appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined;
-    const browser = appConfig.agentBrowser;
-    // Use provider-aware resolver so the model name matches the destination URL.
-    // getModelIdForFeature() always returns an Anthropic-tier ID, which 404s when
-    // the agent is routed to Ollama Cloud (the env-var remap sets the URL but
-    // query()'s explicit `model` param overrides the env vars).
-    // When Ollama is enabled (both agent features opted in via
-    // resolveAgentOllamaConfig), use that resolver's model rather than
-    // agentDrafter's per-feature model — guarantees the model passed to
-    // query() and the env-var remap reference the same Ollama model name.
-    const ollamaConfig = resolveAgentOllamaConfig(appConfig);
-    const baseConfig: AgentFrameworkConfig = {
-      // When the resolver says the worker stays on Anthropic, force an Anthropic
-      // model name — even if featureProviders.agentDrafter is "ollama-cloud" alone,
-      // because getFeatureModelConfig would then return an Ollama model name and
-      // the worker (pointed at Anthropic) would 400 with invalid_model.
-      model: ollamaConfig?.model ?? getModelIdForFeature("agentDrafter"),
-      anthropicApiKey: apiKey,
-      ollamaCloud: ollamaConfig,
-      browserConfig: browser
-        ? {
-            enabled: browser.enabled,
-            chromeDebugPort: browser.chromeDebugPort,
-            chromeProfilePath: browser.chromeProfilePath,
-          }
-        : undefined,
-      mcpServers: appConfig.mcpServers,
-      cliTools: appConfig.cliTools,
-      providers: {
-        "openclaw-agent": {
-          enabled: appConfig.openclaw?.enabled ?? false,
-          gatewayUrl: appConfig.openclaw?.gatewayUrl ?? "",
-          gatewayToken: appConfig.openclaw?.gatewayToken ?? "",
-        },
-      },
-      opencode: appConfig.opencode
-        ? { enabled: appConfig.opencode.enabled, model: appConfig.opencode.model }
-        : { enabled: false },
-    };
-    this.workerReady = populatePrivateProviderConfig(baseConfig).then(
-      (enrichedConfig) => {
-        this.initWorker(enrichedConfig);
-      },
-      () => {
-        this.initWorker(baseConfig);
-      }, // Fallback to base config on error
-    );
+    this.workerReady = this.buildEnrichedConfig().then((enrichedConfig) => {
+      this.initWorker(enrichedConfig);
+    });
 
     // After worker init, re-load any installed providers (respawn recovery)
     if (this.installedProviders.size > 0) {
-      this.workerReady = this.workerReady.then(() => {
+      this.workerReady = this.workerReady.then(async () => {
+        const providerConfig = await this.buildEnrichedConfig();
         for (const [providerId, providerPath] of this.installedProviders) {
           log.info(`[AgentCoordinator] Re-loading installed provider on respawn: ${providerId}`);
-          // Include ollamaCloud + provider-aware model so re-loaded providers
-          // pick up the same Ollama routing as the freshly-spawned worker.
-          const respawnConfig = getConfig();
-          const respawnOllama = resolveAgentOllamaConfig(respawnConfig);
           this.sendToWorker({
             type: "load_provider",
             providerId,
             providerPath,
-            config: {
-              model: respawnOllama?.model ?? getFeatureModelConfig("agentDrafter").model,
-              anthropicApiKey:
-                respawnConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined,
-              ollamaCloud: respawnOllama,
-            },
+            config: providerConfig,
           });
         }
       });
@@ -522,6 +525,10 @@ export class AgentCoordinator {
   updateConfig(config: Partial<AgentFrameworkConfig>): void {
     if (this.worker) {
       this.sendToWorker({ type: "config_update", config });
+      // Availability may have changed (e.g. a provider was just enabled with
+      // an API key). Re-broadcast the provider list so the renderer's agent
+      // picker updates without an app restart.
+      this.sendToWorker({ type: "list_providers" });
     }
   }
 
@@ -550,22 +557,10 @@ export class AgentCoordinator {
     }
     this.installedProviders.set(providerId, providerPath);
 
-    // Send config_update first so worker has latest config.
-    // Include ollamaCloud + provider-aware model so a runtime-loaded provider
-    // sees the same Ollama routing as a fresh worker spawn would (otherwise a
-    // newly-loaded provider would silently use Anthropic regardless of user
-    // config until the next worker respawn).
-    const appConfig = getConfig();
-    const ollamaConfig = resolveAgentOllamaConfig(appConfig);
-    const config: AgentFrameworkConfig = {
-      // When the resolver says the worker stays on Anthropic, force an Anthropic
-      // model name — even if featureProviders.agentDrafter is "ollama-cloud" alone,
-      // because getFeatureModelConfig would then return an Ollama model name and
-      // the worker (pointed at Anthropic) would 400 with invalid_model.
-      model: ollamaConfig?.model ?? getModelIdForFeature("agentDrafter"),
-      anthropicApiKey: appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined,
-      ollamaCloud: ollamaConfig,
-    };
+    // Send config_update first so worker and provider factory both see the
+    // latest app config plus installed-provider enrichment (endpoint, keys,
+    // provider-specific settings, etc.).
+    const config = await this.buildEnrichedConfig();
     this.sendToWorker({ type: "config_update", config });
 
     // Then send load_provider and wait for response

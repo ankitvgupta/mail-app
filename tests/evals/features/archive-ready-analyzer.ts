@@ -7,6 +7,7 @@
  */
 import { ArchiveReadyAnalyzer } from "../../../src/main/services/archive-ready-analyzer";
 import type { DashboardEmail } from "../../../src/shared/types";
+import { resolveModelId, DEFAULT_MODEL_CONFIG } from "../../../src/shared/types";
 
 interface ArchiveReadyFixtureInput {
   thread: DashboardEmail[];
@@ -28,7 +29,7 @@ export async function runArchiveReadyFixture(
       `[archive-ready] fixture ${fixtureId}: input must be { thread: DashboardEmail[], userEmail? }`,
     );
   }
-  const analyzer = new ArchiveReadyAnalyzer();
+  const analyzer = new ArchiveReadyAnalyzer(resolveModelId(DEFAULT_MODEL_CONFIG.archiveReady));
   const result = await analyzer.analyzeThread(input.thread, input.userEmail);
   return JSON.stringify(result, null, 2);
 }

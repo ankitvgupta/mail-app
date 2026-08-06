@@ -14,6 +14,7 @@ import {
   extractFinalJson,
   summarizeToolCalls,
   renderReportMd,
+  isNoUiSurfaceDiff,
   // @ts-expect-error — .mjs without type declarations; helpers are pure JS.
 } from "../../scripts/lib/agentic-helpers.mjs";
 
@@ -52,6 +53,91 @@ test.describe("extractFinalJson", () => {
     const r = extractFinalJson(text);
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0].type).toBe("layout");
+  });
+
+  // Regression: a live run in the managed-agents repo produced anomaly
+  // descriptions quoting API bodies — braces inside string values broke the
+  // old regex-based scanner, so a 6-anomaly "anomalies_found" verdict was
+  // silently read as inconclusive with 0 anomalies.
+  test("handles braces inside string values", () => {
+    const text =
+      `Found issues.\n` +
+      `{"verdict":"anomalies_found","summary":"x","anomalies":[` +
+      `{"type":"stuck_state","description":"dialog shows {error: 'failed'} and never closes",` +
+      `"repro":"click Send → observe {\\"error\\":\\"...\\"} toast"}],"actions_taken":12}`;
+    const r = extractFinalJson(text);
+    expect(r.verdict).toBe("anomalies_found");
+    expect(r.anomalies).toHaveLength(1);
+  });
+
+  test("handles pretty-printed (multi-line) JSON", () => {
+    const text = `prose first\n{\n  "verdict": "pass",\n  "summary": "ok",\n  "anomalies": []\n}`;
+    const r = extractFinalJson(text);
+    expect(r.verdict).toBe("pass");
+  });
+
+  test("handles JSON inside a markdown fence", () => {
+    const text = '```json\n{"verdict":"fail","summary":"x","anomalies":[]}\n```';
+    const r = extractFinalJson(text);
+    expect(r.verdict).toBe("fail");
+  });
+});
+
+test.describe("isNoUiSurfaceDiff", () => {
+  test("empty diff is not soft-passable", () => {
+    // An empty changed-file list must not be treated as "no UI surface" —
+    // there's nothing to verify either way, and a real run always has a diff.
+    expect(isNoUiSurfaceDiff([])).toBe(false);
+    expect(isNoUiSurfaceDiff(null)).toBe(false);
+  });
+
+  test("pure lockfile bump → true (the security-audit-fix case)", () => {
+    expect(isNoUiSurfaceDiff(["package-lock.json"])).toBe(true);
+  });
+
+  test("package.json alone → false (it carries scripts / main / build config)", () => {
+    // package.json is deliberately NOT in the no-UI-surface set: from the
+    // filename alone we can't tell a dependency-range bump from an edit to
+    // npm scripts, the `main` entry point, or the electron-builder `build`
+    // config — all behavioral. So a package.json change always stays on the
+    // real-verification path, including a direct-dep bump (package.json + lock).
+    expect(isNoUiSurfaceDiff(["package.json"])).toBe(false);
+    expect(isNoUiSurfaceDiff(["package.json", "package-lock.json"])).toBe(false);
+  });
+
+  test("infra paths (tests/scripts/docs/.github) → true", () => {
+    expect(
+      isNoUiSurfaceDiff([
+        "tests/unit/foo.spec.ts",
+        "scripts/pre-pr.mjs",
+        "docs/EVALS.md",
+        ".github/workflows/ci.yml",
+      ]),
+    ).toBe(true);
+  });
+
+  test("lockfile mixed with infra paths → true", () => {
+    expect(isNoUiSurfaceDiff(["package-lock.json", "scripts/lib/agentic-helpers.mjs"])).toBe(true);
+  });
+
+  test("repo-metadata files → true", () => {
+    expect(isNoUiSurfaceDiff([".gitignore", "CLAUDE.md", "README.md"])).toBe(true);
+  });
+
+  test("any src/ file present → false (a used dependency change has a surface)", () => {
+    // The safety property: if a bumped dependency is actually exercised by
+    // new behavior, the consuming src/ file is in the diff too, which takes
+    // it off the soft-pass path and routes it to real verification.
+    expect(isNoUiSurfaceDiff(["package-lock.json", "src/main/index.ts"])).toBe(false);
+    expect(isNoUiSurfaceDiff(["src/renderer/App.tsx"])).toBe(false);
+  });
+
+  test("build/config and type-only changes are NOT soft-passed", () => {
+    // Deliberately excluded — these can alter runtime/build output, so they
+    // stay on the real-verification path (mirrors the doc comment).
+    expect(isNoUiSurfaceDiff(["electron.vite.config.ts"])).toBe(false);
+    expect(isNoUiSurfaceDiff(["src/shared/types.ts"])).toBe(false);
+    expect(isNoUiSurfaceDiff(["tsconfig.json"])).toBe(false);
   });
 });
 

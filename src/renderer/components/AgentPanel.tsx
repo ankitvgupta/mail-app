@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAppStore } from "../store";
 import type { ScopedAgentEvent, AgentTaskState, AgentTaskInfo } from "../../shared/agent-types";
+import { DEFAULT_BACKGROUND_AGENT_PROVIDER } from "../../shared/types";
 import { AgentConfirmationDialog } from "./AgentConfirmationDialog";
 import { trackEvent } from "../services/posthog";
 
@@ -745,7 +746,7 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
 
       // Call backend to delete draft, clean up trace, and launch a new agent
       const result = (await window.api?.drafts?.rerunAgent?.(emailId)) as
-        | { success: boolean; data?: { taskId: string }; error?: string }
+        | { success: boolean; data?: { taskId: string; providerIds?: string[] }; error?: string }
         | undefined;
 
       if (result?.success && result.data) {
@@ -754,12 +755,19 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
         // The real context is built by buildAgentDraftContext on the backend — this
         // is only for the store's tracking entry.
         const email = useAppStore.getState().emails.find((e) => e.id === emailId);
+        // Drop providerConversationIds from the reused context: a regenerate is
+        // a fresh conversation (the backend deleted the old trace), and the new
+        // run may be on a different provider than the one that minted those ids
+        // — a stale id would make a later follow-up skip conversation history.
+        const reusedContext = task?.context
+          ? { ...task.context, providerConversationIds: undefined }
+          : undefined;
         startAgentTask(
           taskId,
           emailId,
-          ["claude"],
+          result.data.providerIds ?? [DEFAULT_BACKGROUND_AGENT_PROVIDER],
           task?.prompt || "",
-          task?.context || {
+          reusedContext ?? {
             accountId: email?.accountId || "",
             currentEmailId: emailId,
             currentThreadId: email?.threadId || "",
@@ -795,7 +803,12 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
 
     console.log("[AgentPanel] Follow-up providerConversationIds:", providerConversationIds);
 
-    const hasStatefulProvider = Object.keys(providerConversationIds).length > 0;
+    // Only count conversation ids belonging to a provider that will actually
+    // run this follow-up. The background provider is configurable, so a task
+    // context can carry a stale id from a previous provider (e.g. a hostler
+    // session id after a regenerate resolved to claude) — treating that as
+    // "stateful" would send Claude the bare prompt with no history.
+    const hasStatefulProvider = currentTask.providerIds.some((id) => providerConversationIds[id]);
 
     // Build conversation history for stateless providers (e.g. Claude)
     const history = buildConversationHistory(currentTask);

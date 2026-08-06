@@ -110,7 +110,11 @@ test.describe("createBlockFilter", () => {
       http.get(FILTERS_URL, () =>
         HttpResponse.json({
           filter: [
-            { id: "unrelated", criteria: { from: "other@x.com" }, action: { addLabelIds: ["TRASH"] } },
+            {
+              id: "unrelated",
+              criteria: { from: "other@x.com" },
+              action: { addLabelIds: ["TRASH"] },
+            },
             {
               id: "filter-existing",
               criteria: { from: "Spam@Example.com" },

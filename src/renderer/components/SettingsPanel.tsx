@@ -23,6 +23,10 @@ import {
   SENDER_LOOKUP_PROVIDERS,
   type SenderLookupProvider,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_BACKGROUND_AGENT_PROVIDER,
+  resolveBackgroundAgentProviderId,
+  applyAgentDrafterSelection,
+  isAgentRuntimeAvailable,
   type BlockedSender,
 } from "../../shared/types";
 import { useAppStore, type Account, type SettingsTab } from "../store";
@@ -31,6 +35,7 @@ import { SplitConfigEditor } from "./SplitConfigEditor";
 import { SnippetsEditor } from "./SnippetsEditor";
 import { MemoriesTab } from "./MemoriesTab";
 import { ExtensionsTab } from "./ExtensionsTab";
+import { OllamaModelSelect } from "./OllamaModelSelect";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -101,6 +106,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [featureProviders, setFeatureProviders] = useState<Record<string, LlmProvider>>({});
   const [ollamaModels, setOllamaModels] = useState<Record<string, string>>({});
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  // "saved" for transient success feedback, any other string is an error message
+  const [generalSaveResult, setGeneralSaveResult] = useState<string | null>(null);
   const [isExportingLogs, setIsExportingLogs] = useState(false);
   const [exportLogsError, setExportLogsError] = useState<string | null>(null);
   const [isDefaultMailApp, setIsDefaultMailApp] = useState(false);
@@ -147,11 +154,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [chromeProfilePath, setChromeProfilePath] = useState("");
   const [isSavingBrowser, setIsSavingBrowser] = useState(false);
 
+  // Which agent provider runs background auto-drafts (new-email drafter + regenerate).
+  // Provider gates (opencode/hostler enabled state) are derived from generalConfig.
+  const [backgroundAgentProvider, setBackgroundAgentProvider] = useState(
+    DEFAULT_BACKGROUND_AGENT_PROVIDER,
+  );
+
   // PostHog analytics state — initialized once from config, not clobbered by react-query refetch
   const [posthogEnabled, setPosthogEnabled] = useState(false);
   const [isSavingAnalytics, setIsSavingAnalytics] = useState(false);
   const [analyticsSaveResult, setAnalyticsSaveResult] = useState<string | null>(null);
-  const analyticsInitialized = useRef(false);
 
   // Custom MCP servers state
   const [mcpServers, setMcpServers] = useState<Record<string, McpServerConfig>>({});
@@ -200,8 +212,14 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     },
   });
 
-  // Fetch general config
-  const { data: generalConfig } = useQuery({
+  // Fetch general config. The key is shared with other observers (e.g.
+  // useSignature) whose cached copy can be minutes old — force a fresh fetch
+  // per panel open since the once-only hydration below snapshots what it sees.
+  const {
+    data: generalConfig,
+    isError: generalConfigLoadError,
+    isFetchedAfterMount: generalConfigFresh,
+  } = useQuery({
     queryKey: ["general-config"],
     queryFn: async () => {
       const result = await window.api.settings.get();
@@ -210,7 +228,23 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       }
       throw new Error(result.error);
     },
+    refetchOnMount: "always",
   });
+
+  // What the main process will actually launch for background drafts, given
+  // the current provider gates — the same resolver prefetch/rerun use, so the
+  // fallback warning under the Agent Drafter row can't drift from real behavior.
+  const runtimeGates = {
+    opencode: generalConfig?.opencode,
+    hostler: generalConfig?.hostler,
+    openclaw: generalConfig?.openclaw,
+  };
+  const effectiveBackgroundProvider = resolveBackgroundAgentProviderId({
+    backgroundAgentProvider,
+    ...runtimeGates,
+  });
+  const opencodeRuntimeAvailable = isAgentRuntimeAvailable("opencode", runtimeGates);
+  const hostlerRuntimeAvailable = isAgentRuntimeAvailable("hostler", runtimeGates);
 
   useEffect(() => {
     if (prompts) {
@@ -240,8 +274,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       .catch(() => {});
   }, []);
 
+  // Hydrate staged General-tab state ONCE from the first config load. Later
+  // refetches (Extensions-tab saves invalidate general-config; window-focus
+  // refetch after staleTime) must not rewrite staged fields — that silently
+  // reverts unsaved edits, which the user then persists without noticing.
+  // Live gate reads (e.g. the Agent Drafter runtime options) use generalConfig
+  // directly, so they stay fresh without this effect re-running.
+  const generalInitialized = useRef(false);
   useEffect(() => {
-    if (generalConfig) {
+    if (generalConfig && generalConfigFresh && !generalInitialized.current) {
+      generalInitialized.current = true;
       setEnableSenderLookup(generalConfig.enableSenderLookup ?? true);
       setSenderLookupProvider(generalConfig.senderLookupProvider ?? "anthropic");
       setExaApiKey(generalConfig.exaApiKey ?? "");
@@ -264,16 +306,18 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setMcpServers(generalConfig.mcpServers ?? {});
       setCliTools((generalConfig.cliTools ?? []).map((t) => ({ ...t, _key: nextCliToolKey() })));
       setExtraPathDirs(generalConfig.extraPathDirs ?? []);
-      // PostHog analytics config — only set once to avoid clobbering unsaved edits on refetch
-      if (!analyticsInitialized.current) {
-        analyticsInitialized.current = true;
-        const ph = generalConfig.posthog;
-        if (ph) {
-          setPosthogEnabled(ph.enabled);
-        }
+      setBackgroundAgentProvider(
+        generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
+      );
+      const ph = generalConfig.posthog;
+      if (ph) {
+        setPosthogEnabled(ph.enabled);
       }
     }
-  }, [generalConfig]);
+    // generalConfigFresh must be a dep: structural sharing can keep the same
+    // data reference across the mount refetch, so the freshness flip is the
+    // only signal that re-runs this effect when cached and fresh data match.
+  }, [generalConfig, generalConfigFresh]);
 
   useEffect(() => {
     if (generalConfig) {
@@ -312,7 +356,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     return cleanup;
   }, []);
 
-  // Check Claude CLI availability and auth status when Agents tab is shown
+  // Check Claude CLI availability and auth status when Agents tab is shown.
   useEffect(() => {
     if (activeTab !== "agents") return;
     setClaudeAuthStatus("checking");
@@ -408,14 +452,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
   const handleSaveGeneral = async () => {
     setIsSavingGeneral(true);
+    setGeneralSaveResult(null);
     try {
-      await window.api.settings.set({
+      const result = (await window.api.settings.set({
         enableSenderLookup,
         senderLookupProvider,
         exaApiKey: exaApiKey || undefined,
         syncDraftsToGmail,
         modelConfig,
         featureProviders,
+        backgroundAgentProvider,
         // Only send featureModels here — apiKey and defaultModel are owned by the
         // ExtensionsTab. Spreading the cached ollamaCloud here can carry a stale
         // empty apiKey from before the user saved one in ExtensionsTab; the backend
@@ -425,8 +471,17 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         ollamaCloud: { featureModels: ollamaModels },
         githubToken: githubToken || undefined,
         allowPrereleaseUpdates,
-      });
+      })) as { success: boolean; error?: string } | undefined;
+      if (result?.success) {
+        setGeneralSaveResult("saved");
+        // Functional clear so a later save's error can't be wiped by this timer
+        setTimeout(() => setGeneralSaveResult((v) => (v === "saved" ? null : v)), 2000);
+      } else {
+        setGeneralSaveResult(result?.error || "Could not save settings.");
+      }
       queryClient.invalidateQueries({ queryKey: ["general-config"] });
+    } catch (error) {
+      setGeneralSaveResult(error instanceof Error ? error.message : "Could not save settings.");
     } finally {
       setIsSavingGeneral(false);
     }
@@ -1286,8 +1341,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 <div className="mb-3">
                   <h3 className="font-semibold text-gray-900 dark:text-gray-100">AI Models</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Choose which Claude model to use for each feature. Haiku is fastest and
-                    cheapest, Opus is most capable.
+                    Choose which provider and model runs each feature. For Anthropic, Haiku is
+                    fastest and cheapest, Opus is most capable.
                   </p>
                 </div>
                 <div className="space-y-3">
@@ -1325,7 +1380,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     {
                       key: "agentDrafter" as const,
                       label: "Agent Drafter",
-                      description: "Background auto-draft generation",
+                      description: "Background auto-drafts for new emails and “Regenerate draft”",
                     },
                     {
                       key: "agentChat" as const,
@@ -1334,73 +1389,147 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     },
                   ].map(({ key, label, description }) => {
                     const provider = featureProviders[key] ?? "anthropic";
+                    // The Agent Drafter row doubles as the background-agent runtime
+                    // picker: OpenCode/Hostler route background drafts to that agent
+                    // provider (backgroundAgentProvider, model configured in the
+                    // Extensions tab), while Anthropic/Ollama keep the built-in
+                    // Claude agent and pick which model it uses. While an external
+                    // runtime is selected, featureProviders.agentDrafter is hidden
+                    // but still saved — it keeps gating resolveAgentOllamaConfig
+                    // (the shared agent worker's Ollama routing) alongside agentChat.
+                    const isBackgroundAgentRow = key === "agentDrafter";
+                    const externalRuntime =
+                      isBackgroundAgentRow &&
+                      backgroundAgentProvider !== DEFAULT_BACKGROUND_AGENT_PROVIDER;
                     return (
                       <div
                         key={key}
-                        className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
+                        className="py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
                       >
-                        <div className="flex-1 min-w-0 mr-4">
-                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {label}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">{description}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={provider}
-                            onChange={(e) => {
-                              const p = e.target.value;
-                              if ((LLM_PROVIDERS as readonly string[]).includes(p)) {
-                                setFeatureProviders((prev) => ({
-                                  ...prev,
-                                  [key]: p as LlmProvider,
-                                }));
-                              }
-                            }}
-                            aria-label={`Provider for ${label}`}
-                            className="px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          >
-                            <option value="anthropic">Anthropic</option>
-                            {/* For senderLookup, the Ollama option is only honored when
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0 mr-4">
+                            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {label}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={externalRuntime ? backgroundAgentProvider : provider}
+                              onChange={(e) => {
+                                const p = e.target.value;
+                                if (isBackgroundAgentRow) {
+                                  const sel = applyAgentDrafterSelection(p);
+                                  if (!sel) return;
+                                  setBackgroundAgentProvider(sel.backgroundAgentProvider);
+                                  const llm = sel.agentDrafterProvider;
+                                  if (llm) {
+                                    setFeatureProviders((prev) => ({ ...prev, [key]: llm }));
+                                  }
+                                  return;
+                                }
+                                if ((LLM_PROVIDERS as readonly string[]).includes(p)) {
+                                  setFeatureProviders((prev) => ({
+                                    ...prev,
+                                    [key]: p as LlmProvider,
+                                  }));
+                                }
+                              }}
+                              aria-label={`Provider for ${label}`}
+                              className="px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              <option value="anthropic">Anthropic</option>
+                              {/* For senderLookup, the Ollama option is only honored when
                                 the search backend is Exa — the Anthropic backend bundles
                                 search + parse into one web_search tool call, which doesn't
                                 exist on Ollama. Hide it on the Anthropic backend to avoid
                                 saving a route that can't be honored at call time. */}
-                            {(key !== "senderLookup" || senderLookupProvider === "exa") && (
-                              <option value="ollama-cloud">Ollama Cloud</option>
-                            )}
-                          </select>
-                          {provider === "anthropic" ? (
-                            <select
-                              value={modelConfig[key]}
-                              onChange={(e) => {
-                                const tier = e.target.value;
-                                if ((MODEL_TIERS as readonly string[]).includes(tier)) {
-                                  setModelConfig((prev) => ({ ...prev, [key]: tier as ModelTier }));
-                                }
-                              }}
-                              aria-label={`Model tier for ${label}`}
-                              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              {MODEL_TIERS.map((tier) => (
-                                <option key={tier} value={tier}>
-                                  {MODEL_TIER_LABELS[tier]}
-                                </option>
-                              ))}
+                              {(key !== "senderLookup" || senderLookupProvider === "exa") && (
+                                <option value="ollama-cloud">Ollama Cloud</option>
+                              )}
+                              {isBackgroundAgentRow && (
+                                <>
+                                  <option value="opencode" disabled={!opencodeRuntimeAvailable}>
+                                    OpenCode
+                                  </option>
+                                  <option value="hostler" disabled={!hostlerRuntimeAvailable}>
+                                    Hostler (cloud)
+                                  </option>
+                                  {/* A hand-edited or installed provider id has no fixed
+                                      option — render it so the select reflects the saved
+                                      value the fallback warning references, instead of
+                                      showing a blank control. */}
+                                  {externalRuntime &&
+                                    backgroundAgentProvider !== "opencode" &&
+                                    backgroundAgentProvider !== "hostler" && (
+                                      <option value={backgroundAgentProvider} disabled>
+                                        {backgroundAgentProvider}
+                                      </option>
+                                    )}
+                                </>
+                              )}
                             </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={ollamaModels[key] ?? DEFAULT_OLLAMA_MODEL}
-                              onChange={(e) =>
-                                setOllamaModels((prev) => ({ ...prev, [key]: e.target.value }))
-                              }
-                              placeholder={DEFAULT_OLLAMA_MODEL}
-                              aria-label={`Ollama model for ${label}`}
-                              className="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                          )}
+                            {externalRuntime ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab("extensions")}
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                Model set in Extensions
+                              </button>
+                            ) : provider === "anthropic" ? (
+                              <select
+                                value={modelConfig[key]}
+                                onChange={(e) => {
+                                  const tier = e.target.value;
+                                  if ((MODEL_TIERS as readonly string[]).includes(tier)) {
+                                    setModelConfig((prev) => ({
+                                      ...prev,
+                                      [key]: tier as ModelTier,
+                                    }));
+                                  }
+                                }}
+                                aria-label={`Model tier for ${label}`}
+                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              >
+                                {MODEL_TIERS.map((tier) => (
+                                  <option key={tier} value={tier}>
+                                    {MODEL_TIER_LABELS[tier]}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <OllamaModelSelect
+                                value={ollamaModels[key] ?? DEFAULT_OLLAMA_MODEL}
+                                onChange={(v) => setOllamaModels((prev) => ({ ...prev, [key]: v }))}
+                                ariaLabel={`Ollama model for ${label}`}
+                                selectClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                inputClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            )}
+                          </div>
                         </div>
+                        {isBackgroundAgentRow &&
+                          effectiveBackgroundProvider !== backgroundAgentProvider && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                              {backgroundAgentProvider === "opencode"
+                                ? "OpenCode is disabled — background drafts fall back to the built-in agent until it's re-enabled."
+                                : backgroundAgentProvider === "hostler"
+                                  ? `Hostler is ${generalConfig?.hostler?.enabled ? "missing an API key" : "disabled"} — background drafts fall back to the built-in agent until it's configured.`
+                                  : `"${backgroundAgentProvider}" isn't available — background drafts fall back to the built-in agent until it's configured.`}
+                            </p>
+                          )}
+                        {isBackgroundAgentRow &&
+                          generalConfig &&
+                          !opencodeRuntimeAvailable &&
+                          !hostlerRuntimeAvailable && (
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                              Enable OpenCode or Hostler in Settings → Extensions to run background
+                              drafts through them.
+                            </p>
+                          )}
                       </div>
                     );
                   })}
@@ -1678,14 +1807,32 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 )}
               </div>
 
-              {/* Save button */}
-              <div className="flex justify-end">
+              {/* Save button — disabled until config has loaded so a failed or
+                  slow settings:get can't be overwritten with staged defaults */}
+              <div className="flex justify-end items-center gap-3">
+                {generalConfigLoadError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    Could not load settings — close and reopen Settings to retry. Saving is disabled
+                    so stored settings aren't overwritten.
+                  </p>
+                )}
+                {generalSaveResult && generalSaveResult !== "saved" && (
+                  <p className="text-sm text-red-600 dark:text-red-400">{generalSaveResult}</p>
+                )}
                 <button
                   onClick={handleSaveGeneral}
-                  disabled={isSavingGeneral}
-                  className="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-50"
+                  disabled={isSavingGeneral || !generalConfigFresh}
+                  className={`px-6 py-2 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
+                    generalSaveResult === "saved"
+                      ? "bg-green-600 dark:bg-green-500"
+                      : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+                  }`}
                 >
-                  {isSavingGeneral ? "Saving..." : "Save Changes"}
+                  {isSavingGeneral
+                    ? "Saving..."
+                    : generalSaveResult === "saved"
+                      ? "Saved"
+                      : "Save Changes"}
                 </button>
               </div>
             </div>
@@ -3429,7 +3576,23 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
           </div>
         )}
 
-        {activeTab === "extensions" && <ExtensionsTab />}
+        {activeTab === "extensions" && (
+          <ExtensionsTab
+            onOllamaCloudDisabled={() => {
+              // Mirror the persisted featureProviders reset in the staged copy
+              // (hydrated once per session) so Save Changes can't republish
+              // ollama-cloud routes whose API key was just cleared.
+              setFeatureProviders((prev) =>
+                Object.fromEntries(
+                  Object.entries(prev).map(([feature, provider]) => [
+                    feature,
+                    provider === "ollama-cloud" ? "anthropic" : provider,
+                  ]),
+                ),
+              );
+            }}
+          />
+        )}
 
         {activeTab === "analytics" && (
           <div className="max-w-3xl mx-auto space-y-6">

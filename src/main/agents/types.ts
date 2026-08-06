@@ -177,6 +177,15 @@ export interface AgentFrameworkConfig {
   /** OpenCode-specific settings. Kept top-level (not under providers) so the
    *  provider can read it without going through ProviderSettings's narrow shape. */
   opencode?: { enabled: boolean; model?: string };
+  /** Hostler-specific settings (hosted cloud agent backend). Kept top-level
+   *  for the same reason as opencode — harness/model don't fit ProviderSettings. */
+  hostler?: {
+    enabled: boolean;
+    apiKey?: string;
+    harness?: string;
+    model?: string;
+    baseUrl?: string;
+  };
   browserConfig?: {
     enabled: boolean;
     chromeDebugPort: number;

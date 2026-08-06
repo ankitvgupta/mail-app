@@ -15,6 +15,7 @@ import { AgentProviderRegistry } from "./providers/registry";
 import { ClaudeAgentProvider } from "./providers/claude-agent-provider";
 import { OpenClawAgentProvider } from "./providers/openclaw/openclaw-agent-provider";
 import { OpenCodeAgentProvider } from "./providers/opencode/opencode-agent-provider";
+import { HostlerAgentProvider } from "./providers/hostler/hostler-agent-provider";
 import { PermissionGate } from "./permission-gate";
 import type { ToolRegistry } from "./tools/registry";
 import type { ProxyContext } from "./tools/types";
@@ -72,6 +73,11 @@ export class AgentOrchestrator {
     // harness alternative to Claude Agent SDK. Off by default; user enables
     // in Settings → AI / Agents.
     this.providerRegistry.register(new OpenCodeAgentProvider(deps.config));
+
+    // Register the Hostler provider — hosted cloud agent backend; the harness
+    // runs in a hostler.dev sandbox while tool calls execute locally. Off by
+    // default; user enables in Settings → Extensions.
+    this.providerRegistry.register(new HostlerAgentProvider(deps.config));
 
     // Register any auto-discovered private providers
     for (const provider of discoverPrivateProviders(deps.config)) {

@@ -16,6 +16,7 @@ import { mkdirSync, readdirSync, unlinkSync, statSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { Writable } from "stream";
 import { createRequire } from "module";
+import { getUserDataOverride } from "../user-data-override";
 
 // This file uses CommonJS `require` to defer-load Electron so it can be
 // imported in non-Electron test contexts. In ESM mode `require` is undefined
@@ -72,6 +73,15 @@ function getLogDir(): string {
     // Resolve the data directory inline to avoid a circular dependency
     // with data-dir.ts (which imports createLogger at module scope).
     // NOTE: Keep this path logic in sync with getDataDir() in data-dir.ts.
+    // EXO_USER_DATA_DIR must be honored here too: loggers created at module
+    // import time run before index.ts re-anchors userData via app.setPath,
+    // so without this a packaged smoke run would write its first log lines
+    // into the real install's data dir. Shared with getDataDir() via the
+    // leaf helper so validation can't drift; a relative override throws,
+    // lands in the catch below, and falls back to tmpdir — the app then
+    // crashes with the real error when data-dir.ts validates it.
+    const override = getUserDataOverride();
+    if (override) return join(override, "logs");
     const { app } = requireFromHere("electron");
     // Use app.isPackaged directly — the previous isDev() wrapper used
     // require("@electron-toolkit/utils") which could fail and fall back

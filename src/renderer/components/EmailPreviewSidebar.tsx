@@ -2,6 +2,7 @@ import { memo, useMemo, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
 import { useExtensionPanels, ExtensionPanelSlot } from "../extensions";
 import { AgentTabContent } from "./AgentPanel";
+import { deriveTraceProviderIds } from "../../shared/agent-types";
 import type { ScopedAgentEvent } from "../../shared/agent-types";
 
 // SVG icon components for sidebar tabs
@@ -264,10 +265,13 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
           if (!email) return;
 
           // Replay entire trace in a single store update (avoids O(n²) from N appendAgentEvent calls)
+          // Derive provider ids from the persisted events — the background
+          // provider is configurable, and replayAgentTrace drops events whose
+          // providerId isn't in this list.
           replayAgentTrace(
             taskId,
             email.id,
-            ["claude"],
+            deriveTraceProviderIds(result.data.events),
             "",
             {
               accountId: email.accountId || "",

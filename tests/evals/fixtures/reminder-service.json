@@ -1,6 +1,6 @@
 {
   "id": "reminder-service-001",
-  "description": "Boomerang reminder service email — automated follow-up reminder, no reply needed",
+  "description": "Boomerang reminder service email — surfaces an unreplied thread from the director; the reminder exists because a reply IS needed on the original conversation",
   "email": {
     "id": "fixture-008",
     "threadId": "thread-008",
@@ -12,6 +12,6 @@
     "snippet": "This is a reminder from Boomerang. You asked to be reminded about..."
   },
   "expected": {
-    "needs_reply": false
+    "needs_reply": true
   }
 }

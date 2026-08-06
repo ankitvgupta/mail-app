@@ -10,6 +10,7 @@
  */
 
 import { DraftGenerator } from "../../../src/main/services/draft-generator";
+import { resolveModelId, DEFAULT_MODEL_CONFIG } from "../../../src/shared/types";
 import type { Email, AnalysisResult } from "../../../src/shared/types";
 
 interface DraftGeneratorFixtureInput {
@@ -42,7 +43,7 @@ export async function runDraftGeneratorFixture(
   // ships, not a test-only configuration. EA + sender lookup are off so
   // we isolate the draft-generation behavior; those flows have their
   // own (TODO) eval suites.
-  const generator = new DraftGenerator();
+  const generator = new DraftGenerator(resolveModelId(DEFAULT_MODEL_CONFIG.drafts));
   const response = await generator.generateDraft(input.email, input.analysis, undefined, {
     enableSenderLookup: false,
   });

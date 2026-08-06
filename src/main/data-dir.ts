@@ -1,11 +1,15 @@
 /**
  * Centralized data directory resolution.
  *
- * Non-packaged runs (`!app.isPackaged`) use a project-local `.dev-data/`
- * directory so development never touches production data in
- * `~/Library/Application Support/exo/`.
- *
- * Only packaged (released) builds use `app.getPath("userData")`.
+ * Resolution order:
+ * 1. `EXO_USER_DATA_DIR` (absolute path) — explicit override, honored in ALL
+ *    modes including packaged builds. Used by the packaged smoke tests so a
+ *    locally-built .app (same productName as the real install) never shares
+ *    the production data dir. See user-data-override.ts.
+ * 2. Non-packaged runs (`!app.isPackaged`) use a project-local `.dev-data/`
+ *    directory so development never touches production data in
+ *    `~/Library/Application Support/exo/`.
+ * 3. Only packaged (released) builds use `app.getPath("userData")`.
  *
  * As of 2026-05-20, dev runs start with an empty `.dev-data/` and
  * authenticate fresh against the dedicated test Gmail account (set via
@@ -25,6 +29,7 @@ import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { existsSync } from "fs";
 import { createRequire } from "module";
+import { getUserDataOverride } from "./user-data-override";
 
 const requireFromHere = createRequire(import.meta.url);
 
@@ -80,6 +85,9 @@ function findProjectRoot(start: string): string | null {
 }
 
 export function getDataDir(): string {
+  const override = getUserDataOverride();
+  if (override) return override;
+
   const electron = tryLoadElectron();
   if (!electron) {
     // Non-Electron caller (eval runner, unit test under tsx, etc.).

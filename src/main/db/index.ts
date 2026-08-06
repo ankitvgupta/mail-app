@@ -19,6 +19,7 @@ import type {
 import { createLogger } from "../services/logger";
 import { parseAutoDraftTaskId, AUTO_DRAFT_TASK_ID_LIKE_PATTERN } from "../agents/task-id";
 import { runMigrations } from "./migrations";
+import { stripLargeDataUris } from "../../shared/body-sanitizer";
 
 const log = createLogger("db");
 
@@ -288,7 +289,12 @@ export function getAllEmailIds(accountId?: string): string[] {
 
 export function saveEmail(email: Email, accountId: string = "default"): void {
   const db = getDatabase();
-  const bodyText = stripHtmlForSearch(email.body);
+  // Strip oversized inline data: URIs at the write boundary. The renderer
+  // replaces them with placeholders before display anyway; storing them made
+  // the emails table ~30x larger than its useful content and turned every
+  // synchronous main-process scan into a multi-second freeze (see migration 8).
+  const body = stripLargeDataUris(email.body);
+  const bodyText = stripHtmlForSearch(body);
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO emails (id, account_id, thread_id, subject, from_address, to_address, cc_address, bcc_address, body, body_text, snippet, date, fetched_at, label_ids, attachments, message_id, in_reply_to)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -302,7 +308,7 @@ export function saveEmail(email: Email, accountId: string = "default"): void {
     email.to,
     email.cc || null,
     email.bcc || null,
-    email.body,
+    body,
     bodyText,
     email.snippet || null,
     email.date,
@@ -1051,38 +1057,6 @@ export function isThreadFullyAnalyzed(threadId: string, accountId?: string): boo
   return row.unanalyzed === 0;
 }
 
-/**
- * Strip inline data: URIs larger than ~50KB from email HTML bodies.
- * These are typically multi-MB base64-encoded images or videos that bloat IPC
- * transfer, Zustand store memory, and DOM rendering in the renderer process.
- * The original bodies remain in the DB; this only affects what crosses IPC.
- */
-function stripLargeDataUris(body: string): string {
-  if (!body || !body.includes("data:")) return body;
-  // If the body is under 50KB total, no substring can exceed the 50KB data URI threshold
-  if (body.length < 50_000) return body;
-
-  return body.replace(
-    /(<img\b[^>]*?\bsrc\s*=\s*["'])(data:[^"']+)(["'][^>]*>)/gi,
-    (match, before: string, dataUri: string, after: string) => {
-      if (dataUri.length < 50_000) return match;
-      const mimeMatch = dataUri.match(/^data:([^;,]+)/);
-      const mime = mimeMatch?.[1] ?? "image";
-      const sizeKB = Math.round((dataUri.length * 3) / 4 / 1024);
-      const sizeLabel = sizeKB >= 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
-      // Theme-neutral colors: the main process doesn't know the renderer's theme,
-      // so use mid-tone grays that are legible on both light and dark backgrounds.
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60">` +
-        `<rect width="400" height="60" rx="8" fill="#d1d5db"/>` +
-        `<text x="200" y="35" text-anchor="middle" fill="#4b5563" font-family="system-ui" font-size="13">` +
-        `Inline ${mime} (${sizeLabel}) — too large to display inline` +
-        `</text></svg>`;
-      return `${before}data:image/svg+xml,${encodeURIComponent(svg)}${after}`;
-    },
-  );
-}
-
 function rowToDashboardEmail(row: Record<string, unknown>): DashboardEmail {
   // Parse labelIds from JSON string if present
   let labelIds: string[] | undefined;
@@ -1114,6 +1088,8 @@ function rowToDashboardEmail(row: Record<string, unknown>): DashboardEmail {
     to: row.to as string,
     ...(row.cc ? { cc: row.cc as string } : {}),
     ...(row.bcc ? { bcc: row.bcc as string } : {}),
+    // Backstop: rows written by saveEmail / migration 8 are already stripped,
+    // but rows from older builds (pre-migration-8) may still hold full bodies.
     body: stripLargeDataUris(row.body as string),
     snippet: row.snippet as string | undefined,
     date: row.date as string,

@@ -38,6 +38,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { injectIntoPrBody } from "./lib/pr-body-splice.mjs";
 import { upsertPrComment } from "./lib/pr-comment-upsert.mjs";
+import { isNoUiSurfaceDiff } from "./lib/agentic-helpers.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
@@ -188,20 +189,11 @@ function findLatestVerifyReport(sinceMs) {
 // Subprocess runner — captures output, tags with phase name.
 // ============================================================
 
-// Paths whose changes can't be exercised through the Electron UI:
-// test scaffolding, build/CI scripts, documentation, repo metadata.
-// When a diff touches ONLY these paths, agentic-verify will correctly
-// return "inconclusive" (exit 3) because there's nothing UI-reachable
-// to verify — we treat that as a soft pass instead of a hard failure.
-const INFRA_PATH_PREFIXES = ["tests/", "scripts/", "docs/", ".github/"];
-const INFRA_PATH_FILES = new Set([".gitignore", "CLAUDE.md", "README.md"]);
-
-function isInfraOnlyDiff(changedFiles) {
-  if (changedFiles.length === 0) return false;
-  return changedFiles.every(
-    (f) => INFRA_PATH_PREFIXES.some((p) => f.startsWith(p)) || INFRA_PATH_FILES.has(f),
-  );
-}
+// Whether a diff has no UI-reachable surface for agentic-verify to drive
+// (test scaffolding, build/CI scripts, docs, repo metadata, or a
+// lockfile-only dependency bump) lives in agentic-helpers.mjs so it's unit
+// tested. When the whole diff is in that set, agentic-verify correctly
+// returns "inconclusive" (exit 3) and we treat it as a soft pass.
 
 function runPhase(name, cmd, argv, opts = {}) {
   const start = Date.now();
@@ -221,10 +213,11 @@ function runPhase(name, cmd, argv, opts = {}) {
   const status = res.status ?? -1;
   console.log(`  → exit=${status} (${(ms / 1000).toFixed(1)}s)`);
   // agentic-verify exit 3 = inconclusive ("couldn't reach the
-  // diff-affected flow"). For infra-only diffs (tests/scripts/docs),
-  // the diff is structurally unreachable from the UI, so inconclusive
-  // is the right answer and shouldn't fail the gate. opts.softExits
-  // lets the caller widen `ok` for known-non-fatal exit codes.
+  // diff-affected flow"). For no-UI-surface diffs (tests/scripts/docs or
+  // a lockfile-only dependency bump), the diff is structurally unreachable
+  // from the UI, so inconclusive is the right answer and shouldn't fail
+  // the gate. opts.softExits lets the caller widen `ok` for known-non-fatal
+  // exit codes.
   const softExits = opts.softExits ?? [];
   const ok = status === 0 || softExits.includes(status);
   return { name, status, ms, stdout, stderr, ok };
@@ -278,20 +271,20 @@ async function main() {
   // Phase 2 — Agentic verify (diff-scoped)
   // ============================================================
   //
-  // For infra-only diffs (tests/scripts/docs), the agent has no
-  // UI-reachable code path to exercise and will correctly report
-  // "inconclusive" (exit 3). We still run the phase to confirm the
-  // app boots clean, but accept inconclusive as a soft pass in that
-  // case so eval-infra-only PRs aren't blocked.
+  // For no-UI-surface diffs (tests/scripts/docs or a lockfile-only
+  // dependency bump), the agent has no UI-reachable code path to exercise
+  // and will correctly report "inconclusive" (exit 3). We still run the
+  // phase to confirm the app boots clean, but accept inconclusive as a
+  // soft pass in that case so those PRs aren't blocked.
   //
   // verifyStartMs captures wall-clock so the PR-comment upsert step
   // can pick out THIS run's agentic-verify report file from RUNS_DIR
   // and skip stale ones from prior sessions.
   const verifyStartMs = Date.now();
-  const infraOnly = isInfraOnlyDiff(changed);
-  if (infraOnly) {
+  const noUiSurface = isNoUiSurfaceDiff(changed);
+  if (noUiSurface) {
     console.log(
-      `\n[agentic-verify] diff is infra-only (tests/scripts/docs); will accept "inconclusive" verdict.`,
+      `\n[agentic-verify] diff has no UI surface (tests/scripts/docs/lockfile); will accept "inconclusive" verdict.`,
     );
   }
   // Budget bump: the default $0.50 in agentic-verify.mjs is enough for shallow
@@ -307,6 +300,11 @@ async function main() {
   // completed the verification (filter created, email removed) but hit the
   // hard timeout before emitting its verdict (exit 124). 20 min covers the
   // observed worst case (~16 min) with headroom.
+  //
+  // Action budget likewise: the default 40 turns starves multi-thousand-line
+  // diffs — observed a run that completed every verification probe and hit
+  // error_max_turns on the turn that would have emitted the verdict JSON. 70
+  // gives finish-line headroom while the dollar budget still caps spend.
   const verifyResult = runPhase(
     "agentic-verify",
     "node",
@@ -315,8 +313,9 @@ async function main() {
       "--mode=verify-diff",
       "--budget-usd=1.5",
       "--timeout-ms=1200000",
+      "--action-budget=70",
     ],
-    infraOnly ? { softExits: [3] } : {},
+    noUiSurface ? { softExits: [3] } : {},
   );
 
   // Promote "inconclusive + zero anomalies + non-trivial exploration" to a
@@ -326,11 +325,7 @@ async function main() {
   // verifying the surrounding flows are healthy. Treating that as a hard
   // failure blocked legitimate Ollama-only fixes (PR #160). The action
   // floor (≥10) ensures the agent actually explored before bailing.
-  if (
-    verifyResult.status === 3 &&
-    !verifyResult.ok &&
-    !infraOnly
-  ) {
+  if (verifyResult.status === 3 && !verifyResult.ok && !noUiSurface) {
     const report = findLatestVerifyReport(verifyStartMs);
     if (report?.json) {
       try {
@@ -489,7 +484,9 @@ function buildPrCommentBody({ verdict, phases, sha, mode, verifyReport }) {
   headerLines.push("|---|---|---|");
   for (const p of phases) {
     const statusEmoji = p.ok ? "✅" : "❌";
-    headerLines.push(`| ${p.name} | ${statusEmoji} exit ${p.status} | ${(p.ms / 1000).toFixed(1)}s |`);
+    headerLines.push(
+      `| ${p.name} | ${statusEmoji} exit ${p.status} | ${(p.ms / 1000).toFixed(1)}s |`,
+    );
   }
   headerLines.push("");
   const header = headerLines.join("\n");

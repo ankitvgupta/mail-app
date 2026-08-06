@@ -13,6 +13,7 @@ import { readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { EmailAnalyzer } from "../../src/main/services/email-analyzer";
 import type { Email, AnalysisResult } from "../../src/shared/types";
+import { resolveModelId, DEFAULT_MODEL_CONFIG } from "../../src/shared/types";
 import {
   scoreDeterministic,
   type DeterministicResult,
@@ -74,7 +75,9 @@ function saveBaseline(scores: Record<string, number>): void {
 // --- Runner ---
 
 async function runEval(fixtures: EvalFixture[]): Promise<EvalReport> {
-  const analyzer = new EmailAnalyzer();
+  // Pass the app's actual default analysis model. Constructing with no args
+  // falls back to the retired legacy default (claude-sonnet-4-20250514 → 404).
+  const analyzer = new EmailAnalyzer(resolveModelId(DEFAULT_MODEL_CONFIG.analysis));
   const results: EvalReport["results"] = [];
   const regressions: string[] = [];
   const baseline = loadBaseline();

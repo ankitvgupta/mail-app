@@ -2,6 +2,7 @@
  * Renderer-safe agent types. No Node.js or Electron imports.
  * These are the types used by the Zustand store and React components.
  */
+import { DEFAULT_BACKGROUND_AGENT_PROVIDER } from "./types";
 
 // Re-export event types that are safe for renderer
 export type AgentTaskState =
@@ -123,4 +124,19 @@ export interface RemoteConversationView {
   status: AgentTaskState;
   lastSyncedAt: number;
   messages: ScopedAgentEvent[];
+}
+
+/**
+ * Unique provider ids present in a persisted agent trace, in first-seen order.
+ * Used to rebuild the per-provider run map when replaying a trace —
+ * replayAgentTrace drops events whose providerId isn't in this list. Traces
+ * that predate provider stamping (no event carries a providerId) ran under
+ * the claude provider, so fall back to it.
+ */
+export function deriveTraceProviderIds(events: ScopedAgentEvent[]): string[] {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (typeof event.providerId === "string") ids.add(event.providerId);
+  }
+  return ids.size > 0 ? [...ids] : [DEFAULT_BACKGROUND_AGENT_PROVIDER];
 }

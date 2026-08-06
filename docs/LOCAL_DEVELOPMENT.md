@@ -120,12 +120,23 @@ Catches PATH / native-module / asar bugs that dev never sees.
 npm run build
 npm run pack
 # On macOS:
-EXO_PACKAGED_BINARY="dist/mac-arm64/Exo.app/Contents/MacOS/Exo" \
+EXO_PACKAGED_BINARY="release/mac-arm64/Exo.app/Contents/MacOS/Exo" \
   npx playwright test --project=packaged
 # On Linux (also what CI does):
-EXO_PACKAGED_BINARY="dist/linux-unpacked/exo" \
+EXO_PACKAGED_BINARY="release/linux-unpacked/exo" \
   npx playwright test --project=packaged
 ```
+
+(electron-builder outputs to `release/`, per `build.directories.output` in
+package.json.)
+
+The smoke spec launches the binary with `EXO_USER_DATA_DIR` pointing at the
+project-local `.packaged-test-data/`. This is critical on macOS: a
+locally-built .app has the same productName as the real install, so without
+the override the packaged test would read and write the user's production
+data dir. Never launch a locally-built packaged binary against production
+data — if you need to run it by hand, set `EXO_USER_DATA_DIR` to an absolute
+scratch path.
 
 ### Soak test
 
