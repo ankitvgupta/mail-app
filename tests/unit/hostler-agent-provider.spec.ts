@@ -859,7 +859,8 @@ test("ambiguous session-create response recovers the caller-assigned session", a
     create: async (options) => {
       creates += 1;
       assignedId = options.sessionId;
-      created = new FakeSession(options.sessionId!, simpleAnswer);
+      if (!assignedId) throw new Error("Provider did not assign a session id");
+      created = new FakeSession(assignedId, simpleAnswer);
       // Simulate a lost HTTP response after Hostler persisted the session.
       throw new Error("socket closed after request was sent");
     },
