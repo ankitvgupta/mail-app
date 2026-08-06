@@ -649,8 +649,9 @@ app.on("before-quit", (event) => {
   // A message inside its undo-send delay has been persisted but not sent yet.
   // Quitting would strand it until the next launch, so take one async pass to
   // flush pending sends. before-quit is synchronous, hence the standard
-  // preventDefault → await → quit again dance; the flush caps itself so a hung
-  // network can't block quit (survivors are recovered by recoverOnStartup).
+  // preventDefault → await → quit again dance. The service aborts requests
+  // that exceed its grace period and waits for their rows to be restored before
+  // this handler runs again and closes SQLite.
   if (!isQuitting) {
     event.preventDefault();
     scheduledSendService

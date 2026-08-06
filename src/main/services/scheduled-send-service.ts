@@ -10,6 +10,8 @@ import {
 } from "../db";
 import type { GmailClient } from "./gmail-client";
 import { createLogger } from "./logger";
+import { isNetworkError } from "./network-errors";
+import { networkMonitor } from "./network-monitor";
 
 const log = createLogger("scheduled-send");
 
@@ -17,18 +19,60 @@ const log = createLogger("scheduled-send");
 // at least this often so clock changes and suspend/resume can't strand them.
 const MAX_SLEEP = 30_000;
 
-// Cap on how long a quit may be delayed while flushing pending sends. Anything
-// unsent stays 'scheduled' and is recovered by recoverOnStartup() next launch.
+// Grace period for active sends during quit. Once it expires, their HTTP
+// requests are aborted and the rows are put back into 'scheduled' before the DB
+// is closed, so startup recovery can retry them safely.
 const QUIT_FLUSH_TIMEOUT = 5_000;
+
+// A connected account can briefly have no client while sync/re-authentication
+// is rebuilding it. Keep the message pending without hot-looping the scheduler.
+const CLIENT_RETRY_DELAY = 30_000;
+
+type SendOutcome = "completed" | "deferred" | "offline";
+
+export type ScheduledSendDependencies = {
+  getDueScheduledMessages: typeof getDueScheduledMessages;
+  getNextScheduledMessageTime: typeof getNextScheduledMessageTime;
+  getScheduledMessages: typeof getScheduledMessages;
+  claimScheduledMessage: typeof claimScheduledMessage;
+  updateScheduledMessageStatus: typeof updateScheduledMessageStatus;
+  getScheduledMessageStats: typeof getScheduledMessageStats;
+  network: Pick<typeof networkMonitor, "isOnline" | "setOffline">;
+  isNetworkError: typeof isNetworkError;
+  now: () => number;
+  quitFlushTimeout: number;
+};
+
+const defaultDependencies: ScheduledSendDependencies = {
+  getDueScheduledMessages,
+  getNextScheduledMessageTime,
+  getScheduledMessages,
+  claimScheduledMessage,
+  updateScheduledMessageStatus,
+  getScheduledMessageStats,
+  network: networkMonitor,
+  isNetworkError,
+  now: Date.now,
+  quitFlushTimeout: QUIT_FLUSH_TIMEOUT,
+};
 
 type ScheduledSendEvent = "sending" | "sent" | "failed" | "statsChanged";
 
-class ScheduledSendService extends EventEmitter {
+export class ScheduledSendService extends EventEmitter {
   private clientResolver?: (accountId: string) => GmailClient | null;
   private threadArchiver?: (threadId: string, accountId: string) => Promise<void>;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private processing = false;
   private started = false;
+  private drainingForQuit = false;
+  private retryNotBefore = 0;
+  private readonly activeSends = new Map<Promise<SendOutcome>, AbortController>();
+  private readonly dependencies: ScheduledSendDependencies;
+
+  constructor(dependencies: Partial<ScheduledSendDependencies> = {}) {
+    super();
+    this.dependencies = { ...defaultDependencies, ...dependencies };
+  }
 
   /**
    * Set the function to resolve GmailClient for an account ID.
@@ -64,7 +108,8 @@ class ScheduledSendService extends EventEmitter {
    * crash/force-kill recovery path is obvious at a glance.
    */
   recoverOnStartup(): void {
-    const pending = getScheduledMessages();
+    this.retryNotBefore = 0;
+    const pending = this.dependencies.getScheduledMessages();
     if (pending.length > 0) {
       const overdue = pending.filter((r) => r.scheduledAt <= Date.now()).length;
       log.info(
@@ -94,7 +139,7 @@ class ScheduledSendService extends EventEmitter {
    * Get stats for scheduled messages.
    */
   getStats(accountId?: string) {
-    return getScheduledMessageStats(accountId);
+    return this.dependencies.getScheduledMessageStats(accountId);
   }
 
   /**
@@ -103,6 +148,7 @@ class ScheduledSendService extends EventEmitter {
    */
   reschedule(): void {
     if (!this.started) return;
+    this.retryNotBefore = 0;
     this.armTimer();
   }
 
@@ -111,12 +157,13 @@ class ScheduledSendService extends EventEmitter {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (!this.started) return;
+    if (!this.started || this.drainingForQuit || !this.dependencies.network.isOnline) return;
 
-    const next = getNextScheduledMessageTime();
+    const next = this.dependencies.getNextScheduledMessageTime();
     if (next === null) return;
 
-    const delay = Math.min(Math.max(next - Date.now(), 0), MAX_SLEEP);
+    const wakeAt = Math.max(next, this.retryNotBefore);
+    const delay = Math.min(Math.max(wakeAt - this.dependencies.now(), 0), MAX_SLEEP);
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.processDueMessages();
@@ -127,15 +174,17 @@ class ScheduledSendService extends EventEmitter {
    * Process all due messages (scheduled_at <= now), then re-arm for the next one.
    */
   async processDueMessages(): Promise<void> {
-    if (this.processing) return;
+    if (this.processing || this.drainingForQuit || !this.dependencies.network.isOnline) return;
     this.processing = true;
 
     try {
-      const due = getDueScheduledMessages(10);
+      const due = this.dependencies.getDueScheduledMessages(10);
       if (due.length > 0) {
         log.info(`[ScheduledSend] ${due.length} message(s) due for sending`);
         for (const item of due) {
-          await this.sendMessage(item);
+          if (this.drainingForQuit) break;
+          const outcome = await this.sendTracked(item);
+          if (outcome === "offline") break;
         }
       }
     } catch (error) {
@@ -151,66 +200,94 @@ class ScheduledSendService extends EventEmitter {
    * User-chosen send-later rows must retain their due time across app quits.
    */
   async flushPendingNow(): Promise<void> {
-    const pending = getScheduledMessages(undefined, "undo");
-    if (pending.length === 0) return;
+    this.drainingForQuit = true;
+    this.stop();
 
-    log.info(`[ScheduledSend] Flushing ${pending.length} pending message(s) before quit`);
-    const flush = (async () => {
-      for (const item of pending) {
-        await this.sendMessage(item);
+    const pending = this.dependencies.getScheduledMessages(undefined, "undo");
+    if (pending.length > 0) {
+      log.info(`[ScheduledSend] Flushing ${pending.length} pending message(s) before quit`);
+    }
+
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      if (this.activeSends.size > 0) {
+        log.warn(`[ScheduledSend] Aborting ${this.activeSends.size} in-flight send(s) before quit`);
       }
-    })();
+      for (const controller of this.activeSends.values()) controller.abort();
+    }, this.dependencies.quitFlushTimeout);
 
-    // Never block quit indefinitely — survivors are recovered on next launch.
-    await Promise.race([
-      flush,
-      new Promise<void>((resolve) => setTimeout(resolve, QUIT_FLUSH_TIMEOUT)),
-    ]);
+    try {
+      for (const item of pending) {
+        if (timedOut) break;
+        await this.sendTracked(item);
+      }
+
+      // processDueMessages() may already have claimed a row when quit begins.
+      // Wait for every such request to finish or observe the abort before the
+      // caller closes SQLite.
+      while (this.activeSends.size > 0) {
+        await Promise.allSettled([...this.activeSends.keys()]);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private sendTracked(item: ScheduledMessageRow): Promise<SendOutcome> {
+    const controller = new AbortController();
+    const send = this.sendMessage(item, controller.signal);
+    this.activeSends.set(send, controller);
+    void send.then(
+      () => this.activeSends.delete(send),
+      () => this.activeSends.delete(send),
+    );
+    return send;
   }
 
   /**
    * Send a single scheduled message via Gmail API.
    */
-  private async sendMessage(item: ScheduledMessageRow): Promise<void> {
-    // Claim before doing any work: this is what makes cancel-vs-fire safe. The
-    // conditional UPDATE is indivisible, so if the user hit Undo first the row is
-    // already 'cancelled', we get null here, and no message goes out.
-    const claimed = claimScheduledMessage(item.id, "sending");
-    if (!claimed) return;
+  private async sendMessage(item: ScheduledMessageRow, signal: AbortSignal): Promise<SendOutcome> {
+    if (!this.dependencies.network.isOnline) return "offline";
 
     const client = this.clientResolver?.(item.accountId);
     if (!client) {
-      log.error(`[ScheduledSend] No client for account ${item.accountId}`);
-      updateScheduledMessageStatus(item.id, "failed", "Account not connected");
-      this.emit("failed", {
-        id: item.id,
-        kind: item.kind,
-        accountId: item.accountId,
-        composeContext: item.composeContext,
-        error: "Account not connected",
-      });
-      this.emit("statsChanged", this.getStats());
-      return;
+      log.warn(`[ScheduledSend] Client unavailable for account ${item.accountId}; will retry`);
+      this.retryNotBefore = Math.max(
+        this.retryNotBefore,
+        this.dependencies.now() + CLIENT_RETRY_DELAY,
+      );
+      return "deferred";
     }
+
+    // Claim before doing any work: this is what makes cancel-vs-fire safe. The
+    // conditional UPDATE is indivisible, so if the user hit Undo first the row is
+    // already 'cancelled', we get null here, and no message goes out.
+    const claimed = this.dependencies.claimScheduledMessage(item.id, "sending");
+    if (!claimed) return "completed";
 
     this.emit("sending", { id: item.id, kind: item.kind });
 
     try {
-      const result = await client.sendMessage({
-        from: item.from,
-        to: item.to,
-        cc: item.cc,
-        bcc: item.bcc,
-        subject: item.subject,
-        bodyHtml: item.bodyHtml,
-        bodyText: item.bodyText,
-        threadId: item.threadId,
-        inReplyTo: item.inReplyTo,
-        references: item.references,
-        attachments: item.attachments,
-      });
+      const result = await client.sendMessage(
+        {
+          from: item.from,
+          to: item.to,
+          cc: item.cc,
+          bcc: item.bcc,
+          subject: item.subject,
+          bodyHtml: item.bodyHtml,
+          bodyText: item.bodyText,
+          threadId: item.threadId,
+          inReplyTo: item.inReplyTo,
+          references: item.references,
+          attachments: item.attachments,
+        },
+        { signal },
+      );
 
-      updateScheduledMessageStatus(item.id, "sent");
+      this.dependencies.updateScheduledMessageStatus(item.id, "sent");
       log.info(`[ScheduledSend] Sent message ${item.id}, Gmail ID: ${result.id}`);
 
       if (item.archiveThreadId && this.threadArchiver) {
@@ -236,9 +313,22 @@ class ScheduledSendService extends EventEmitter {
         archiveThreadId: item.archiveThreadId,
       });
       this.emit("statsChanged", this.getStats());
+      return "completed";
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Send failed";
-      updateScheduledMessageStatus(item.id, "failed", errorMessage);
+      if (signal.aborted || this.dependencies.isNetworkError(error)) {
+        this.dependencies.updateScheduledMessageStatus(item.id, "scheduled", errorMessage);
+        if (!signal.aborted) {
+          log.info(`[ScheduledSend] Network error sending ${item.id}; will retry when online`);
+          this.dependencies.network.setOffline();
+        } else {
+          log.info(`[ScheduledSend] Send ${item.id} aborted during quit; left scheduled`);
+        }
+        this.emit("statsChanged", this.getStats());
+        return signal.aborted ? "deferred" : "offline";
+      }
+
+      this.dependencies.updateScheduledMessageStatus(item.id, "failed", errorMessage);
       log.error(`[ScheduledSend] Failed to send ${item.id}: ${errorMessage}`);
       this.emit("failed", {
         id: item.id,
@@ -248,6 +338,7 @@ class ScheduledSendService extends EventEmitter {
         error: errorMessage,
       });
       this.emit("statsChanged", this.getStats());
+      return "completed";
     }
   }
 
