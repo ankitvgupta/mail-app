@@ -275,9 +275,6 @@ class EmailSyncService {
       account.status = "idle";
       log.info(`[Sync] Stopped sync for ${account.email}`);
     }
-    // A stopped account must not make a later explicit refresh await a stale
-    // promise from before the stop (for example after auth recovery).
-    this.syncPromises.delete(accountId);
   }
 
   /**
