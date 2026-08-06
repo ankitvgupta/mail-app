@@ -19,6 +19,7 @@ import type {
   SendAsAlias,
 } from "../../shared/types";
 import { getAccounts } from "../db";
+import { DATA_URI_STRIP_THRESHOLD, inlineImagePlaceholder } from "../../shared/body-sanitizer";
 import { getDataDir } from "../data-dir";
 import { extractEmail } from "../utils/address-formatting";
 import { createLogger } from "./logger";
@@ -140,6 +141,15 @@ export function isAuthError(error: unknown): boolean {
     return true;
   }
   return false;
+}
+
+/** An inline (cid:) image referenced by an email body. `size` is the decoded
+ *  byte count reported by Gmail, used to skip downloading oversized images. */
+interface InlineImageInfo {
+  mimeType: string;
+  data?: string;
+  attachmentId?: string;
+  size?: number;
 }
 
 export class GmailClient {
@@ -738,10 +748,8 @@ export class GmailClient {
    * Collect inline image parts from MIME tree (parts with Content-ID headers).
    * Returns a map from Content-ID (without angle brackets) to image metadata.
    */
-  private collectInlineImages(
-    payload: gmail_v1.Schema$MessagePart,
-  ): Map<string, { mimeType: string; data?: string; attachmentId?: string }> {
-    const images = new Map<string, { mimeType: string; data?: string; attachmentId?: string }>();
+  private collectInlineImages(payload: gmail_v1.Schema$MessagePart): Map<string, InlineImageInfo> {
+    const images = new Map<string, InlineImageInfo>();
 
     const walk = (part: gmail_v1.Schema$MessagePart) => {
       const headers = part.headers || [];
@@ -754,6 +762,7 @@ export class GmailClient {
           mimeType: part.mimeType,
           data: part.body?.data ?? undefined,
           attachmentId: part.body?.attachmentId ?? undefined,
+          size: part.body?.size ?? undefined,
         });
       }
 
@@ -823,7 +832,7 @@ export class GmailClient {
    */
   private async resolveInlineImages(
     html: string,
-    inlineImages: Map<string, { mimeType: string; data?: string; attachmentId?: string }>,
+    inlineImages: Map<string, InlineImageInfo>,
     messageId: string,
   ): Promise<string> {
     if (inlineImages.size === 0) return html;
@@ -845,6 +854,22 @@ export class GmailClient {
       [...cidRefs].map(async (cid) => {
         const imageInfo = inlineImages.get(cid);
         if (!imageInfo) return;
+
+        // Oversized images would be stripped to a placeholder by saveEmail
+        // anyway (see shared/body-sanitizer.ts) — resolve them to the
+        // placeholder directly so we never download multi-MB attachments just
+        // to discard them. The stored data URI is `data:<mime>;base64,<b64>`:
+        // base64 is 4/3 of the decoded size, plus the `data:...;base64,` prefix.
+        const estimatedDataUriLength = imageInfo.size
+          ? Math.ceil(imageInfo.size / 3) * 4 + imageInfo.mimeType.length + 13
+          : undefined;
+        if (estimatedDataUriLength && estimatedDataUriLength >= DATA_URI_STRIP_THRESHOLD) {
+          replacements.set(
+            `cid:${cid}`,
+            inlineImagePlaceholder(imageInfo.mimeType, estimatedDataUriLength),
+          );
+          return;
+        }
 
         let base64Data = imageInfo.data;
 
