@@ -316,8 +316,12 @@ test.describe("Scheduled Send - Schema Validation", () => {
     expect(preloadCode).toContain("removeAllListeners");
   });
 
-  test("service is registered and started in main/index.ts", () => {
+  test("service is registered in main and starts after sync initializes", () => {
     const mainCode = readFileSync(path.join(srcDir, "main/index.ts"), "utf-8");
+    const serviceCode = readFileSync(
+      path.join(srcDir, "main/services/scheduled-send-service.ts"),
+      "utf-8",
+    );
 
     expect(mainCode).toContain("import { scheduledSendService }");
     expect(mainCode).toContain("import { registerScheduledSendIpc }");
@@ -330,6 +334,8 @@ test.describe("Scheduled Send - Schema Validation", () => {
     // Pending sends must be flushed before quit, or an in-flight undo delay
     // would be stranded until the next launch.
     expect(mainCode).toContain("flushPendingNow()");
+    // The quit flush must never pull user-selected send-later rows forward.
+    expect(serviceCode).toContain('getScheduledMessages(undefined, "undo")');
   });
 
   test("store has scheduled message stats state", () => {
