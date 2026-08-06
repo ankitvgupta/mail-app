@@ -1,4 +1,5 @@
 import DOMPurify from "dompurify";
+import { stripLargeDataUris as stripLargeDataUrisShared } from "../../shared/body-sanitizer";
 
 /**
  * Checks if content appears to be HTML.
@@ -73,29 +74,15 @@ export function hasRichBackground(html: string): boolean {
  * Exported so EmailDetail can strip once and pass the light body to both
  * splitQuotedContent and EmailBodyRenderer.
  */
-const MAX_DATA_URI_LEN = 50_000; // ~37KB decoded
-
 export function stripLargeDataUris(body: string, useLightMode = true): string {
-  if (!body.includes("data:")) return body;
-
-  return body.replace(
-    /(<img\b[^>]*?\bsrc\s*=\s*["'])(data:[^"']+)(["'][^>]*>)/gi,
-    (_match, before: string, dataUri: string, after: string) => {
-      if (dataUri.length < MAX_DATA_URI_LEN) return _match;
-      const mimeMatch = dataUri.match(/^data:([^;,]+)/);
-      const mime = mimeMatch?.[1] ?? "image";
-      const sizeKB = Math.round((dataUri.length * 3) / 4 / 1024);
-      const sizeLabel = sizeKB >= 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
-      const fill = useLightMode ? "#f3f4f6" : "#374151";
-      const textFill = useLightMode ? "#6b7280" : "#9ca3af";
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60">` +
-        `<rect width="400" height="60" rx="8" fill="${fill}"/>` +
-        `<text x="200" y="35" text-anchor="middle" fill="${textFill}" font-family="system-ui" font-size="13">` +
-        `Inline ${mime} (${sizeLabel}) — too large to display inline` +
-        `</text></svg>`;
-      return `${before}data:image/svg+xml,${encodeURIComponent(svg)}${after}`;
-    },
+  // Delegates to the shared (linear, case-insensitive) matcher — see
+  // shared/body-sanitizer.ts — passing theme-aware placeholder colors so the
+  // display placeholder matches the current light/dark mode.
+  return stripLargeDataUrisShared(
+    body,
+    useLightMode
+      ? { fill: "#f3f4f6", textFill: "#6b7280" }
+      : { fill: "#374151", textFill: "#9ca3af" },
   );
 }
 
