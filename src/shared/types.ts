@@ -508,10 +508,9 @@ export const ConfigSchema = z.object({
       // work without an app update — unknown ones fail fast with a 400 that
       // lists the supported set.
       harness: z.string().default(DEFAULT_HOSTLER_HARNESS),
-      // "provider/model" (e.g. "openai/kimi-k2.5") or a bare model id, which
-      // pairs with "anthropic". Blank uses glm-5.2 from Hostler's brokered
-      // catalog (GET /v1/models) — the same model family as the app's own
-      // Ollama Cloud default.
+      // "provider/model" (e.g. "openai/kimi-k2.6") or a bare model id, which
+      // pairs with "anthropic". Blank uses Kimi K2.6 through Hostler's
+      // OpenAI-compatible broker route.
       model: z.string().optional(),
       // Dev/test escape hatch (e.g. scripts/mock-hostler-server.mjs); no UI,
       // and the settings IPC only accepts loopback values (see settings.ipc).

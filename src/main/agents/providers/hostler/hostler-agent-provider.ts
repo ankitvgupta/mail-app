@@ -6,11 +6,13 @@ import type {
   AgentConfig,
   CreateSessionOptions,
   ModelConfig,
+  RecoverySafety,
   SessionEvent,
   SessionInfo,
   StreamOptions,
   ToolResult,
 } from "@hostler/sdk";
+import { randomUUID } from "node:crypto";
 import type {
   AgentContext,
   AgentEvent,
@@ -34,16 +36,13 @@ import { DEFAULT_HOSTLER_HARNESS } from "../../../../shared/types";
 
 const log = createLogger("hostler-agent");
 
-/** Default pairing: the opencode harness driving GLM 5.2 through Hostler's
- *  own model broker (GET /v1/models catalog id "glm-5.2", provider "openai" —
- *  open-weights models ride the broker's openai wire shape). GLM 5.2 is the
- *  same model the app's Ollama Cloud integration defaults to
- *  (DEFAULT_OLLAMA_MODEL), chosen there after a 16-task agent benchmark.
- *  Model ids are validated against the catalog at session create, so a
- *  mistyped id fails fast rather than after the sandbox starts billing. */
+/** Default pairing: the opencode harness driving Kimi K2.6 through Hostler's
+ *  model broker. Kimi uses the broker's OpenAI-compatible wire shape.
+ *  Model ids are validated by Hostler at session create, so a mistyped or
+ *  unavailable id fails fast rather than after the sandbox starts billing. */
 export const DEFAULT_HOSTLER_MODEL: ModelConfig = {
   provider: "openai",
-  id: "glm-5.2",
+  id: "kimi-k2.6",
 };
 
 /**
@@ -73,6 +72,7 @@ export function resolveHostlerModel(selector: string | undefined): ModelConfig {
 export interface HostlerSessionLike {
   readonly id: string;
   info(): Promise<SessionInfo>;
+  recoverySafety(options?: { afterSeq?: number; timeoutMs?: number }): Promise<RecoverySafety>;
   send(text: string, options?: { signal?: AbortSignal }): Promise<void>;
   interrupt(): Promise<void>;
   terminate(): Promise<SessionInfo>;
@@ -429,7 +429,17 @@ export class HostlerAgentProvider implements AgentProvider {
           };
           break;
         } else if (ev.type === "session.status_terminated") {
-          yield { type: "error", message: `Hostler session terminated: ${ev.reason}` };
+          const recovery = await session
+            .recoverySafety({ afterSeq: ev.seq })
+            .catch((): null => null);
+          const failureCode = ev.failure?.code ? ` [${ev.failure.code}]` : "";
+          const recoveryMessage = recovery
+            ? ` Recovery safety: ${recovery.classification.replaceAll("_", " ")} — ${recovery.explanation.slice(0, 1_000)}`
+            : "";
+          yield {
+            type: "error",
+            message: `Hostler session terminated${failureCode}: ${ev.reason}.${recoveryMessage}`,
+          };
           this.sessionSeq.delete(session.id);
           cleanup();
           return { state: "failed", providerTaskId: session.id };
@@ -542,15 +552,31 @@ export class HostlerAgentProvider implements AgentProvider {
     agentRef: { id: string; version: number },
     taskId: string,
   ): Promise<HostlerSessionLike> {
+    // SDK 0.2 lets the caller allocate the id. If session creation succeeds
+    // server-side but its HTTP response is lost, we can recover the exact
+    // sandbox instead of leaking it and launching a duplicate.
+    const sessionId = `ses_${randomUUID().replaceAll("-", "")}`;
     const options: CreateSessionOptions = {
+      sessionId,
       agentId: agentRef.id,
       // Pin the version we just synced — deterministic even if another
       // device publishes a newer version mid-run.
       agentVersion: agentRef.version,
       title: `mail-app:${taskId}`,
     };
+    const createOrRecover = async (): Promise<HostlerSessionLike> => {
+      try {
+        return await client.sessions.create(options);
+      } catch (err) {
+        if (!isAmbiguousCreateError(err)) throw err;
+        const recovered = await client.sessions.get(sessionId).catch(() => null);
+        if (!recovered) throw err;
+        log.info(`Recovered Hostler session ${sessionId} after an ambiguous create response`);
+        return recovered;
+      }
+    };
     try {
-      return await client.sessions.create(options);
+      return await createOrRecover();
     } catch (err) {
       if (errorStatus(err) !== 402) throw err;
       // Reservations may be held by our own warm sessions OR by orphans the
@@ -559,7 +585,7 @@ export class HostlerAgentProvider implements AgentProvider {
       log.info("Session create hit a credit reservation (402); freeing our sessions and retrying");
       await this.orphanSweep?.catch(() => undefined);
       await this.terminateWarmSessions();
-      return await client.sessions.create(options);
+      return await createOrRecover();
     }
   }
 
@@ -608,6 +634,7 @@ export class HostlerAgentProvider implements AgentProvider {
       const staleBefore = Date.now() - STALE_RUNNING_SESSION_MS;
       const orphans = rows.filter((row) => {
         if (!(row.title ?? "").startsWith("mail-app:")) return false;
+        if (row.status === "terminated") return false;
         if (row.status === "idle") return true;
         const created = Date.parse(row.createdAt);
         return Number.isFinite(created) && created < staleBefore;
@@ -820,6 +847,15 @@ function isConflict(err: unknown): boolean {
   const status = errorStatus(err);
   // 409: session exists but is not live. 404: session row is gone entirely.
   return status === 409 || status === 404;
+}
+
+/** A timeout, connection loss, conflict, or server failure can happen after
+ *  Hostler persisted the caller-assigned session id but before the create
+ *  response reached us. Definitive client/auth/billing errors are not
+ *  ambiguous and should surface without a follow-up lookup. */
+function isAmbiguousCreateError(err: unknown): boolean {
+  const status = errorStatus(err);
+  return status === null || status === 408 || status === 409 || status >= 500;
 }
 
 function describeHostlerError(err: unknown, doing: string): string {
