@@ -22,6 +22,7 @@ import { getAccounts } from "../db";
 import { DATA_URI_STRIP_THRESHOLD, inlineImagePlaceholder } from "../../shared/body-sanitizer";
 import { getDataDir } from "../data-dir";
 import { extractEmail } from "../utils/address-formatting";
+import { createBlockFilter } from "./gmail-block-filter";
 import { createLogger } from "./logger";
 
 const log = createLogger("gmail");
@@ -1783,29 +1784,12 @@ export class GmailClient {
   }
 
   /**
-   * Create a Gmail filter that routes all future mail from `senderEmail` to Trash
-   * (mirrors Gmail's native "Block sender"). Why Trash and not Spam: the Filters
-   * API rejects "SPAM" in addLabelIds — only TRASH/IMPORTANT/STARRED/UNREAD plus
-   * user labels are allowed there. TRASH matches the user intent ("make this go
-   * away") and Gmail's UI block flow uses the same approach. Returns the new
+   * Create the block-sender Gmail filter (see gmail-block-filter.ts for the
+   * Trash-vs-Spam rationale and transient-500 retry behavior). Returns the
    * filter's ID so we can delete it on unblock.
    */
   async createBlockFilter(senderEmail: string): Promise<string> {
-    const gmail = this.gmail!;
-    const response = await gmail.users.settings.filters.create({
-      userId: "me",
-      requestBody: {
-        criteria: { from: senderEmail },
-        action: {
-          addLabelIds: ["TRASH"],
-          removeLabelIds: ["INBOX", "UNREAD"],
-        },
-      },
-    });
-    if (!response.data.id) {
-      throw new Error("Gmail filter creation did not return an ID");
-    }
-    return response.data.id;
+    return createBlockFilter(this.gmail!, senderEmail);
   }
 
   /** Delete a Gmail filter by ID. Idempotent — swallows 404 (filter already gone). */

@@ -1,5 +1,6 @@
 import { app, ipcMain, BrowserWindow } from "electron";
 import { GmailClient, isAuthError } from "../services/gmail-client";
+import { httpErrorStatus } from "../services/gmail-block-filter";
 import { emailSyncService, type SyncStatus, type AccountInfo } from "../services/email-sync";
 import { prefetchService } from "../services/prefetch-service";
 import { getExtensionHost } from "../extensions";
@@ -1734,7 +1735,16 @@ export function registerSyncIpc(): void {
         filterId = await client.createBlockFilter(normalized);
       } catch (error) {
         log.error({ err: error, sender: normalized }, "[Block] Failed to create Gmail filter");
-        const msg = error instanceof Error ? error.message : "Unknown error";
+        // Gmail's raw 5xx message is "Internal error encountered." — useless in
+        // a toast. We've already retried with backoff by this point, so tell
+        // the user the truth: it's transient on Gmail's side, try again.
+        const status = httpErrorStatus(error);
+        const msg =
+          status !== null && status >= 500
+            ? "Gmail temporary server error — please try again"
+            : error instanceof Error
+              ? error.message
+              : "Unknown error";
         return { success: false, error: `Failed to create Gmail filter: ${msg}` };
       }
 
