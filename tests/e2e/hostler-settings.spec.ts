@@ -62,8 +62,13 @@ test.describe("Settings - Hostler", () => {
       const apiKeyInput = card.getByPlaceholder("cpk_...");
       await apiKeyInput.fill("");
       await apiKeyInput.fill("cpk_e2e_test");
+      if (process.env.E2E_SCREENSHOTS === "true") {
+        await card.getByPlaceholder("opencode").fill("");
+        await card.getByPlaceholder("openai/kimi-k3").fill("");
+        await card.screenshot({ path: "docs/images/hostler/settings-card.png" });
+      }
       await card.getByPlaceholder("opencode").fill("codex");
-      await card.getByPlaceholder("openai/glm-5.2").fill("openai/test-model");
+      await card.getByPlaceholder("openai/kimi-k3").fill("openai/test-model");
 
       await card.getByRole("button", { name: "Save", exact: true }).click();
       await expect(card.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
@@ -93,7 +98,7 @@ test.describe("Settings - Hostler", () => {
 
       await expect(card.getByPlaceholder("cpk_...")).toHaveValue("cpk_e2e_test");
       await expect(card.getByPlaceholder("opencode")).toHaveValue("codex");
-      await expect(card.getByPlaceholder("openai/glm-5.2")).toHaveValue("openai/test-model");
+      await expect(card.getByPlaceholder("openai/kimi-k3")).toHaveValue("openai/test-model");
     } finally {
       const restored = (await page.evaluate(
         (hostler) => window.api.settings.set({ hostler }),
@@ -149,7 +154,7 @@ test.describe("Settings - Hostler", () => {
     await expect(toggle).toBeDisabled();
     await expect(card.getByPlaceholder("cpk_...")).toBeDisabled();
     await expect(card.getByPlaceholder("opencode")).toBeDisabled();
-    await expect(card.getByPlaceholder("openai/glm-5.2")).toBeDisabled();
+    await expect(card.getByPlaceholder("openai/kimi-k3")).toBeDisabled();
     await expect
       .poll(() =>
         electronApp.evaluate(() => {

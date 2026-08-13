@@ -16,6 +16,7 @@ import { test, expect } from "@playwright/test";
 import { z } from "zod";
 import type {
   CreateSessionOptions,
+  RecoverySafety,
   SessionEvent,
   SessionInfo,
   ToolConfirmation,
@@ -66,6 +67,18 @@ class FakeSession implements HostlerSessionLike {
   terminated = false;
   streamOptions: { since?: number; signal?: AbortSignal } | undefined;
   history: SessionEvent[] = [];
+  recoveryVerdict: RecoverySafety = {
+    classification: "safe",
+    observedThroughSeq: null,
+    checkpointSeq: null,
+    settledThroughSeq: null,
+    ambiguousTools: [],
+    completedActionIds: [],
+    lastSettledEvent: null,
+    missingArtifacts: [],
+    explanation: "The last checkpoint is settled.",
+  };
+  recoverySafetyOptions: { afterSeq?: number; timeoutMs?: number } | undefined;
   private script: StreamScript;
   private toolResultWaiters: ((r: ToolResult) => void)[] = [];
   private postedResults: ToolResult[] = [];
@@ -87,7 +100,12 @@ class FakeSession implements HostlerSessionLike {
       environmentId: null,
       vaultIds: [],
       deploymentId: null,
+      recoverySafety: this.recoveryVerdict,
     });
+  }
+  recoverySafety(options?: { afterSeq?: number; timeoutMs?: number }): Promise<RecoverySafety> {
+    this.recoverySafetyOptions = options;
+    return Promise.resolve(this.recoveryVerdict);
   }
   send(text: string): Promise<void> {
     this.sentMessages.push(text);
@@ -194,6 +212,17 @@ function sessionRow(overrides: Partial<SessionInfo> & { id: string }): SessionIn
     environmentId: null,
     vaultIds: [],
     deploymentId: null,
+    recoverySafety: {
+      classification: "safe",
+      observedThroughSeq: null,
+      checkpointSeq: null,
+      settledThroughSeq: null,
+      ambiguousTools: [],
+      completedActionIds: [],
+      lastSettledEvent: null,
+      missingArtifacts: [],
+      explanation: "Settled.",
+    },
     ...overrides,
   };
 }
@@ -335,6 +364,7 @@ test("happy path: syncs agent, runs a client tool locally, completes", async () 
 
   // Session pinned to the synced agent version; first message carries context.
   expect(createdWith[0]).toMatchObject({ agentId: "agt_1", agentVersion: 1 });
+  expect(createdWith[0].sessionId).toMatch(/^ses_[a-f0-9]{32}$/);
   expect(session.sentMessages).toHaveLength(1);
   expect(session.sentMessages[0]).toContain("Context for this conversation");
   expect(session.sentMessages[0]).toContain("User request: How many unread emails do I have?");
@@ -790,8 +820,10 @@ test("402 on session create reaps warm sessions and retries once", async () => {
   const warmSession = new FakeSession("ses_warm", answer);
   const freshSession = new FakeSession("ses_fresh", answer);
   let creates = 0;
+  const createOptions: CreateSessionOptions[] = [];
   const client = makeClient({
-    create: async () => {
+    create: async (options) => {
+      createOptions.push(options);
       creates += 1;
       if (creates === 1) return warmSession;
       if (creates === 2) throw new FakeHostlerError("insufficient credit balance", 402);
@@ -816,6 +848,39 @@ test("402 on session create reaps warm sessions and retries once", async () => {
   expect(second.result).toEqual({ state: "completed", providerTaskId: "ses_fresh" });
   expect(warmSession.terminated).toBe(true);
   expect(creates).toBe(3);
+  expect(createOptions[1].sessionId).toBe(createOptions[2].sessionId);
+});
+
+test("ambiguous session-create response recovers the caller-assigned session", async () => {
+  let created: FakeSession | null = null;
+  let assignedId: string | undefined;
+  let creates = 0;
+  const client = makeClient({
+    create: async (options) => {
+      creates += 1;
+      assignedId = options.sessionId;
+      if (!assignedId) throw new Error("Provider did not assign a session id");
+      // SDK 0.2.10 documents sessionId as a team-scoped route alias; the
+      // returned session keeps its separate server-generated internal id.
+      created = new FakeSession("ses_internal", simpleAnswer);
+      // Simulate a lost HTTP response after Hostler persisted the session.
+      throw new Error("socket closed after request was sent");
+    },
+    get: async (id) => {
+      if (created && id === assignedId) return created;
+      throw new FakeHostlerError("not found", 404);
+    },
+  });
+  const provider = new HostlerAgentProvider(
+    makeFrameworkConfig({ enabled: true, apiKey: "cpk_test" }),
+  );
+  provider._setSdkForTesting(makeSdk(client));
+
+  const { result } = await drain(provider.run(makeRunParams()));
+
+  expect(creates).toBe(1);
+  expect(assignedId).toMatch(/^ses_[a-f0-9]{32}$/);
+  expect(result).toEqual({ state: "completed", providerTaskId: "ses_internal" });
 });
 
 async function* simpleAnswer(): AsyncGenerator<SessionEvent, void, void> {
@@ -827,11 +892,13 @@ test("boot sweep reaps idle and stale-running mail-app sessions, spares live and
   const idleOrphan = new FakeSession("ses_idle", simpleAnswer);
   const staleRunning = new FakeSession("ses_stale", simpleAnswer);
   const freshRunning = new FakeSession("ses_fresh_run", simpleAnswer);
+  const alreadyTerminated = new FakeSession("ses_terminated", simpleAnswer);
   const foreign = new FakeSession("ses_foreign", simpleAnswer);
   const byId = new Map<string, FakeSession>([
     ["ses_idle", idleOrphan],
     ["ses_stale", staleRunning],
     ["ses_fresh_run", freshRunning],
+    ["ses_terminated", alreadyTerminated],
     ["ses_foreign", foreign],
   ]);
   const runSession = new FakeSession("ses_run", simpleAnswer);
@@ -850,6 +917,11 @@ test("boot sweep reaps idle and stale-running mail-app sessions, spares live and
         createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
       }),
       sessionRow({ id: "ses_fresh_run", status: "running" }),
+      sessionRow({
+        id: "ses_terminated",
+        status: "terminated",
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      }),
       sessionRow({ id: "ses_foreign", status: "idle", title: "someone-elses-session" }),
     ],
   });
@@ -866,6 +938,7 @@ test("boot sweep reaps idle and stale-running mail-app sessions, spares live and
   expect(idleOrphan.terminated).toBe(true);
   expect(staleRunning.terminated).toBe(true);
   expect(freshRunning.terminated).toBe(false);
+  expect(alreadyTerminated.terminated).toBe(false);
   expect(foreign.terminated).toBe(false);
 });
 
@@ -981,10 +1054,25 @@ test("mcp-locale parks are never executed locally", async () => {
 test("session terminated mid-stream fails the run without a done event", async () => {
   async function* script(): AsyncGenerator<SessionEvent, void, void> {
     yield { ...base(), type: "agent.message_delta", text: "partial…" };
-    yield { ...base(), type: "session.status_terminated", reason: "platform maintenance" };
+    yield {
+      ...base(),
+      type: "session.status_terminated",
+      reason: "platform maintenance",
+      failure: {
+        code: "sandbox_unavailable",
+        source: "sandbox",
+        retryable: true,
+        recoveryHint: "new_session",
+      },
+    };
   }
 
   const session = new FakeSession("ses_1", script);
+  session.recoveryVerdict = {
+    ...session.recoveryVerdict,
+    classification: "confirmation_required",
+    explanation: "Confirm whether an external action completed before continuing.",
+  };
   const client = makeClient({
     create: async () => session,
     get: async () => {
@@ -1001,7 +1089,11 @@ test("session terminated mid-stream fails the run without a done event", async (
   expect(result.state).toBe("failed");
   expect(events.some((e) => e.type === "done")).toBe(false);
   const error = events.find((e) => e.type === "error");
-  expect(error && "message" in error ? error.message : "").toContain("platform maintenance");
+  const message = error && "message" in error ? error.message : "";
+  expect(message).toContain("platform maintenance");
+  expect(message).toContain("sandbox_unavailable");
+  expect(message).toContain("confirmation required");
+  expect(session.recoverySafetyOptions).toMatchObject({ afterSeq: expect.any(Number) });
 });
 
 test("events() failure on session reuse fails the run and executes nothing", async () => {
@@ -1212,7 +1304,8 @@ test("idle reaper terminates a warm session after the TTL", async () => {
 });
 
 test("resolveHostlerModel parses selectors", () => {
-  expect(resolveHostlerModel(undefined)).toEqual(DEFAULT_HOSTLER_MODEL);
+  expect(DEFAULT_HOSTLER_MODEL).toEqual({ provider: "openai", id: "kimi-k3" });
+  expect(resolveHostlerModel(undefined)).toEqual({ provider: "openai", id: "kimi-k3" });
   expect(resolveHostlerModel("  ")).toEqual(DEFAULT_HOSTLER_MODEL);
   expect(resolveHostlerModel("claude-sonnet-4-5")).toEqual({
     provider: "anthropic",
