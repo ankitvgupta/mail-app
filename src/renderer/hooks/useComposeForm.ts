@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "../store";
 import { useSignature } from "./useSignature";
-import { formatAlias } from "../utils/alias-formatting";
+import { excludeEmailAddress, formatAlias } from "../utils/alias-formatting";
 import type { ComposeAttachmentItem } from "../components/AttachmentList";
 import type {
   ReplyInfo,
@@ -205,6 +205,15 @@ export function useComposeForm({
   // Effective "from": user's explicit pick wins, otherwise use derived default
   const from = fromOverride ?? derivedFrom;
   const setFrom = setFromOverride;
+
+  // Reply-all is initially built with only the account's primary address, so a
+  // send-as alias may be present in CC until aliases load and `from` resolves.
+  // Remove the selected From address from state so the editor, send validation,
+  // outgoing payload, and undo-send snapshot all agree on the recipient list.
+  useEffect(() => {
+    if (!from) return;
+    setCc((previousCc) => excludeEmailAddress(previousCc, from));
+  }, [from]);
 
   // --- Send state ---
   const [isSending, setIsSending] = useState(false);

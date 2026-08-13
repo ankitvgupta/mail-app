@@ -14,3 +14,22 @@ export function formatAlias(alias: SendAsAlias, fallbackName?: string): string {
   const name = alias.displayName || (alias.isDefault ? fallbackName : undefined);
   return name ? `${name} <${alias.email}>` : alias.email;
 }
+
+/** Extract the email portion of a bare or formatted address. */
+function extractBareEmail(address: string): string {
+  const match = address.match(/<([^>]+)>$/);
+  return match ? match[1] : address;
+}
+
+/**
+ * Remove an address from a recipient list using case-insensitive email matching.
+ * Returns the original array when there is no match so React state is not updated
+ * unnecessarily.
+ */
+export function excludeEmailAddress(addresses: string[], excludedAddress: string): string[] {
+  const excludedEmail = extractBareEmail(excludedAddress).toLowerCase();
+  const filtered = addresses.filter(
+    (address) => extractBareEmail(address).toLowerCase() !== excludedEmail,
+  );
+  return filtered.length === addresses.length ? addresses : filtered;
+}
