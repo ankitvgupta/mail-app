@@ -860,12 +860,14 @@ test("ambiguous session-create response recovers the caller-assigned session", a
       creates += 1;
       assignedId = options.sessionId;
       if (!assignedId) throw new Error("Provider did not assign a session id");
-      created = new FakeSession(assignedId, simpleAnswer);
+      // SDK 0.2.10 documents sessionId as a team-scoped route alias; the
+      // returned session keeps its separate server-generated internal id.
+      created = new FakeSession("ses_internal", simpleAnswer);
       // Simulate a lost HTTP response after Hostler persisted the session.
       throw new Error("socket closed after request was sent");
     },
     get: async (id) => {
-      if (created && id === created.id) return created;
+      if (created && id === assignedId) return created;
       throw new FakeHostlerError("not found", 404);
     },
   });
@@ -878,7 +880,7 @@ test("ambiguous session-create response recovers the caller-assigned session", a
 
   expect(creates).toBe(1);
   expect(assignedId).toMatch(/^ses_[a-f0-9]{32}$/);
-  expect(result).toEqual({ state: "completed", providerTaskId: assignedId });
+  expect(result).toEqual({ state: "completed", providerTaskId: "ses_internal" });
 });
 
 async function* simpleAnswer(): AsyncGenerator<SessionEvent, void, void> {
@@ -1302,8 +1304,8 @@ test("idle reaper terminates a warm session after the TTL", async () => {
 });
 
 test("resolveHostlerModel parses selectors", () => {
-  expect(DEFAULT_HOSTLER_MODEL).toEqual({ provider: "openai", id: "kimi-k2.6" });
-  expect(resolveHostlerModel(undefined)).toEqual({ provider: "openai", id: "kimi-k2.6" });
+  expect(DEFAULT_HOSTLER_MODEL).toEqual({ provider: "openai", id: "kimi-k3" });
+  expect(resolveHostlerModel(undefined)).toEqual({ provider: "openai", id: "kimi-k3" });
   expect(resolveHostlerModel("  ")).toEqual(DEFAULT_HOSTLER_MODEL);
   expect(resolveHostlerModel("claude-sonnet-4-5")).toEqual({
     provider: "anthropic",

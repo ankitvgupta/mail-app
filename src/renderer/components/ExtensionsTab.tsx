@@ -1023,7 +1023,7 @@ export function ExtensionsTab({ onOllamaCloudDisabled }: { onOllamaCloudDisabled
                 <input
                   type="text"
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400"
-                  placeholder="openai/kimi-k2.6"
+                  placeholder="openai/kimi-k3"
                   value={hostlerModel}
                   disabled={hostlerSaveState === "saving"}
                   onChange={(e) => {
@@ -1034,7 +1034,7 @@ export function ExtensionsTab({ onOllamaCloudDisabled }: { onOllamaCloudDisabled
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Bare model id (pairs with Anthropic) or &quot;provider/model&quot; from
-                  Hostler&apos;s catalog. Blank uses Kimi K2.6.
+                  Hostler&apos;s catalog. Blank uses Kimi K3.
                 </p>
               </div>
             </div>

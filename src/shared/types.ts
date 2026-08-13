@@ -508,8 +508,8 @@ export const ConfigSchema = z.object({
       // work without an app update — unknown ones fail fast with a 400 that
       // lists the supported set.
       harness: z.string().default(DEFAULT_HOSTLER_HARNESS),
-      // "provider/model" (e.g. "openai/kimi-k2.6") or a bare model id, which
-      // pairs with "anthropic". Blank uses Kimi K2.6 through Hostler's
+      // "provider/model" (e.g. "openai/kimi-k3") or a bare model id, which
+      // pairs with "anthropic". Blank uses Kimi K3 through Hostler's
       // OpenAI-compatible broker route.
       model: z.string().optional(),
       // Dev/test escape hatch (e.g. scripts/mock-hostler-server.mjs); no UI,

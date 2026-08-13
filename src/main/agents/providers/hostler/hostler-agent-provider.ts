@@ -36,13 +36,13 @@ import { DEFAULT_HOSTLER_HARNESS } from "../../../../shared/types";
 
 const log = createLogger("hostler-agent");
 
-/** Default pairing: the opencode harness driving Kimi K2.6 through Hostler's
+/** Default pairing: the opencode harness driving Kimi K3 through Hostler's
  *  model broker. Kimi uses the broker's OpenAI-compatible wire shape.
  *  Model ids are validated by Hostler at session create, so a mistyped or
  *  unavailable id fails fast rather than after the sandbox starts billing. */
 export const DEFAULT_HOSTLER_MODEL: ModelConfig = {
   provider: "openai",
-  id: "kimi-k2.6",
+  id: "kimi-k3",
 };
 
 /**
@@ -552,9 +552,11 @@ export class HostlerAgentProvider implements AgentProvider {
     agentRef: { id: string; version: number },
     taskId: string,
   ): Promise<HostlerSessionLike> {
-    // SDK 0.2 lets the caller allocate the id. If session creation succeeds
-    // server-side but its HTTP response is lost, we can recover the exact
-    // sandbox instead of leaking it and launching a duplicate.
+    // SDK 0.2 lets the caller allocate a team-scoped alias. If session
+    // creation succeeds server-side but its HTTP response is lost, we can
+    // recover the exact sandbox through that alias instead of leaking it and
+    // launching a duplicate. The returned session.id may be a distinct,
+    // server-generated internal id; both identities work on session routes.
     const sessionId = `ses_${randomUUID().replaceAll("-", "")}`;
     const options: CreateSessionOptions = {
       sessionId,
