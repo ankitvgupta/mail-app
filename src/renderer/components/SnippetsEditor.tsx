@@ -162,7 +162,8 @@ export function SnippetsEditor() {
   if (!currentAccountId) {
     return (
       <div className="text-sm text-gray-500 dark:text-gray-400">
-        Select an account to manage snippets.
+        Switch from <span className="font-medium">All Inboxes</span> to a single account in the
+        title bar to manage that account's snippets.
       </div>
     );
   }

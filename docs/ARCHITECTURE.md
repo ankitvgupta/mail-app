@@ -135,6 +135,9 @@ src/main/agents/
 ├── providers/
 │   ├── registry.ts                    # Provider registry
 │   ├── claude-agent-provider.ts       # Claude Agent SDK provider
+│   ├── opencode/                      # OpenCode provider (local `opencode serve` + MCP bridge)
+│   ├── hostler/                       # Hostler provider (hosted cloud sandbox via hostler.dev;
+│   │                                  #   tools execute locally via Hostler's client-tools loop)
 │   └── remote-conversation-provider.ts # Remote provider protocol
 ├── private-providers.ts     # import.meta.glob for private providers
 ├── private-providers-main.ts

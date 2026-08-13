@@ -5,7 +5,7 @@
  *   import { mockAnthropicResponse, mockAnthropicError, resetAnthropicMock } from "../mocks/anthropic-api-mock";
  *
  *   // Set up a canned response
- *   mockAnthropicResponse({ text: '{"needs_reply": true, "reason": "Direct question", "priority": "high"}' });
+ *   mockAnthropicResponse({ text: '{"needs_reply": true, "reason": "Direct question"}' });
  *
  *   // Now any service that calls `anthropic.messages.create(...)` will get this response.
  */

@@ -1,10 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import { useAppStore, useThreadedEmails, type EmailThread } from "../store";
+import { threadMatchesSplit as threadMatchesSplitShared } from "../utils/split-conditions";
 import type { InboxSplit } from "../../shared/types";
-import { emailMatchesSplit } from "../utils/split-conditions";
 
+// Thin wrapper around the shared util so the rest of the file can pass
+// EmailThread objects directly. The shared util takes the latestEmail to
+// avoid an import cycle with the store's EmailThread type.
 function threadMatchesSplit(thread: EmailThread, split: InboxSplit): boolean {
-  return emailMatchesSplit(thread.latestEmail, split);
+  return threadMatchesSplitShared(thread.latestEmail, split);
 }
 
 interface TabProps {
@@ -31,7 +34,7 @@ function Tab({ active, onClick, count, children }: TabProps) {
       {children}
       {count !== undefined && (
         <span
-          className={`ml-1.5 text-xs ${active ? "text-blue-500 dark:text-blue-400" : "text-gray-400"}`}
+          className={`ml-1.5 text-xs ${active ? "text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400"}`}
         >
           {count}
         </span>
@@ -40,7 +43,12 @@ function Tab({ active, onClick, count, children }: TabProps) {
   );
 }
 
-export function SplitTabs() {
+// memo: SplitTabs takes no props, so parent-triggered renders are wasted
+// work. EmailList is the parent; under bursts (sync events, prefetch
+// progress) it re-renders frequently, and SplitTabs's counts useMemo
+// recomputes a regex test per (700 threads × N splits) on each render.
+export const SplitTabs = memo(SplitTabsImpl);
+function SplitTabsImpl() {
   const allSplits = useAppStore((state) => state.splits);
   const currentAccountId = useAppStore((state) => state.currentAccountId);
   const currentSplitId = useAppStore((state) => state.currentSplitId);
@@ -50,9 +58,14 @@ export function SplitTabs() {
   const localDrafts = useAppStore((state) => state.localDrafts);
   const { threads, needsReply, done, snoozedCount } = useThreadedEmails();
 
-  // Filter splits for current account
+  // Filter splits for current account. In unified mode (currentAccountId
+  // === null) include every account's splits — threadMatchesSplit enforces
+  // per-account scoping so they don't cross-pollinate.
   const splits = useMemo(
-    () => allSplits.filter((s) => s.accountId === currentAccountId),
+    () =>
+      currentAccountId === null
+        ? allSplits
+        : allSplits.filter((s) => s.accountId === currentAccountId),
     [allSplits, currentAccountId],
   );
 
@@ -86,7 +99,7 @@ export function SplitTabs() {
 
     const inboxCount = threads.filter(isNonExclusive).length;
     map.set(null, inboxCount); // "All" tab
-    // "Priority" tab: only emails with a priority (needsReply + done)
+    // "Priority" tab: emails classified as Priority (needsReply + done)
     const priorityThreads = [...needsReply, ...done].filter(isNonExclusive);
     const priorityCount = priorityThreads.length;
     map.set("__priority__", priorityCount);
@@ -105,8 +118,19 @@ export function SplitTabs() {
     return map;
   }, [threads, needsReply, done, splits, isNonExclusive]);
 
-  // Sort splits by order
-  const sortedSplits = useMemo(() => [...splits].sort((a, b) => a.order - b.order), [splits]);
+  // Sort splits by order. In unified mode, two accounts may have splits with
+  // the same name (e.g. both have "Newsletter") — disambiguate with a "(2)",
+  // "(3)" suffix on subsequent occurrences (sort order is preserved).
+  const sortedSplits = useMemo(() => {
+    const sorted = [...splits].sort((a, b) => a.order - b.order);
+    if (currentAccountId !== null) return sorted.map((s) => ({ split: s, displayName: s.name }));
+    const seen = new Map<string, number>();
+    return sorted.map((s) => {
+      const n = (seen.get(s.name) ?? 0) + 1;
+      seen.set(s.name, n);
+      return { split: s, displayName: n === 1 ? s.name : `${s.name} (${n})` };
+    });
+  }, [splits, currentAccountId]);
 
   // Always show the tab bar — Priority, Other, Archive Ready always visible; All on the far right
   return (
@@ -147,7 +171,7 @@ export function SplitTabs() {
       </Tab>
 
       {/* Custom splits */}
-      {sortedSplits.map((split) => (
+      {sortedSplits.map(({ split, displayName }) => (
         <Tab
           key={split.id}
           active={currentSplitId === split.id}
@@ -155,7 +179,7 @@ export function SplitTabs() {
           count={counts.get(split.id)}
         >
           {split.icon && <span className="mr-1">{split.icon}</span>}
-          {split.name}
+          {displayName}
         </Tab>
       ))}
 

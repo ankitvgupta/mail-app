@@ -1,4 +1,4 @@
-import { createMessage } from "./anthropic-service";
+import { createMessage } from "./llm-service";
 import { stripJsonFences } from "../../shared/strip-json-fences";
 import {
   DEFAULT_CALENDARING_PROMPT,
@@ -6,6 +6,7 @@ import {
   type CalendaringResult,
   type EAConfig,
   type Email,
+  type LlmProvider,
 } from "../../shared/types";
 import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/prompt-safety";
 import { createLogger } from "./logger";
@@ -15,10 +16,12 @@ const log = createLogger("calendaring");
 export class CalendaringAgent {
   private model: string;
   private prompt: string;
+  private provider?: LlmProvider;
 
-  constructor(model: string = "claude-sonnet-4-20250514", prompt?: string) {
+  constructor(model: string = "claude-sonnet-4-20250514", prompt?: string, provider?: LlmProvider) {
     this.model = model;
     this.prompt = prompt || DEFAULT_CALENDARING_PROMPT;
+    this.provider = provider;
   }
 
   async analyze(email: Email): Promise<CalendaringResult> {
@@ -36,7 +39,7 @@ ${wrapUntrustedEmail(`From: ${email.from}\nTo: ${email.to}\nSubject: ${email.sub
           },
         ],
       },
-      { caller: "calendaring-agent", emailId: email.id },
+      { caller: "calendaring-agent", emailId: email.id, provider: this.provider },
     );
 
     const textBlock = response.content.find((block) => block.type === "text");

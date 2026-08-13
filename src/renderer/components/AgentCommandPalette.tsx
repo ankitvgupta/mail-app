@@ -107,20 +107,11 @@ function getSuggestedActions(
 
   const analysis = email.analysis;
   if (analysis?.needsReply && !email.draft) {
-    // High-priority email with no draft — suggest drafting
-    if (analysis.priority === "high") {
-      suggestions.push({
-        id: "suggest-urgent-reply",
-        label: "Draft an urgent reply to this email",
-        icon: "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-      });
-    } else {
-      suggestions.push({
-        id: "suggest-reply",
-        label: "Draft a reply",
-        icon: "M3 10l9-7 9 7M3 10v10a1 1 0 001 1h16a1 1 0 001-1V10",
-      });
-    }
+    suggestions.push({
+      id: "suggest-reply",
+      label: "Draft a reply",
+      icon: "M3 10l9-7 9 7M3 10v10a1 1 0 001 1h16a1 1 0 001-1V10",
+    });
   }
 
   if (analysis && !analysis.needsReply) {
@@ -273,11 +264,21 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
       const effectiveProviderIds = selectedAgentIds;
       const effectivePrompt = prompt;
 
-      // Build context — include email metadata only when an email is selected
+      // Build context — include email metadata only when an email is selected.
+      // In unified ("All Inboxes") mode currentAccountId is null; prefer the
+      // selected email's account, else fall back to primary so the agent
+      // always has a concrete account scope.
+      const fallbackAccountId =
+        currentAccountId ??
+        selectedEmail?.accountId ??
+        accounts.find((a) => a.isPrimary)?.id ??
+        accounts[0]?.id ??
+        "";
+      const fallbackAccount = accounts.find((a) => a.id === fallbackAccountId);
       const context: AgentContext = {
-        accountId: currentAccountId ?? "",
-        userEmail: currentAccount?.email ?? "",
-        userName: currentAccount?.displayName,
+        accountId: fallbackAccountId,
+        userEmail: fallbackAccount?.email ?? currentAccount?.email ?? "",
+        userName: fallbackAccount?.displayName ?? currentAccount?.displayName,
       };
 
       // The task key is the emailId when an email is selected, draft key for

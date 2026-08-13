@@ -12,7 +12,6 @@
     "snippet": "Hey! I was reviewing our project roadmap and noticed we're a bit behind..."
   },
   "expected": {
-    "needs_reply": true,
-    "priority": "medium"
+    "needs_reply": true
   }
 }

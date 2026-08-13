@@ -54,7 +54,12 @@ export function registerGmailIpc(): void {
   ipcMain.handle(
     "gmail:check-auth",
     async (): Promise<
-      IpcResponse<{ hasCredentials: boolean; hasTokens: boolean; hasAnthropicKey: boolean }>
+      IpcResponse<{
+        hasCredentials: boolean;
+        hasTokens: boolean;
+        hasAnthropicKey: boolean;
+        hasLlmProvider: boolean;
+      }>
     > => {
       // In demo/test mode, always return authenticated
       if (useFakeData) {
@@ -64,19 +69,23 @@ export function registerGmailIpc(): void {
             hasCredentials: true,
             hasTokens: true,
             hasAnthropicKey: true,
+            hasLlmProvider: true,
           },
         };
       }
 
       try {
         const client = new GmailClient();
-        const hasAnthropicKey = !!(process.env.ANTHROPIC_API_KEY || getConfig().anthropicApiKey);
+        const config = getConfig();
+        const hasAnthropicKey = !!(process.env.ANTHROPIC_API_KEY || config.anthropicApiKey);
+        const hasOllamaCloudKey = !!config.ollamaCloud?.apiKey;
         return {
           success: true,
           data: {
             hasCredentials: client.hasCredentials(),
             hasTokens: client.hasTokens(),
             hasAnthropicKey,
+            hasLlmProvider: hasAnthropicKey || hasOllamaCloudKey,
           },
         };
       } catch (error) {
@@ -189,7 +198,6 @@ export function registerGmailIpc(): void {
                   ? {
                       needsReply: expectedAnalysis.needsReply,
                       reason: expectedAnalysis.reason,
-                      priority: expectedAnalysis.priority,
                       analyzedAt: Date.now(),
                     }
                   : undefined),
@@ -257,7 +265,6 @@ export function registerGmailIpc(): void {
               ? {
                   needsReply: expectedAnalysis.needsReply,
                   reason: expectedAnalysis.reason,
-                  priority: expectedAnalysis.priority,
                   analyzedAt: Date.now(),
                 }
               : undefined,

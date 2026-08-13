@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp , closeApp } from "./launch-helpers";
+import { launchElectronApp, closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the Settings panel.
@@ -426,5 +426,123 @@ test.describe("Settings Panel - Persistence", () => {
     const defaultButton = page.locator("button:has-text('Default')").first();
     await defaultButton.click();
     await page.waitForTimeout(300);
+  });
+});
+
+// These tests use ONLY the opencode + backgroundAgentProvider config keys.
+// The electron-store config is shared across parallel e2e workers (only the
+// DB is per-worker), and tests/e2e/hostler-settings.spec.ts owns the hostler
+// key — touching it here would let fullyParallel workers race on it.
+test.describe("Settings Panel - Agent Drafter runtime picker", () => {
+  test.describe.configure({ mode: "serial" });
+  let electronApp: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async ({}, testInfo) => {
+    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    electronApp = result.app;
+    page = result.page;
+    // Gate state must exist before Settings first mounts — the General tab
+    // reads it from the general-config query fetched on mount.
+    await page.evaluate(() =>
+      window.api.settings.set({
+        backgroundAgentProvider: "claude",
+        opencode: { enabled: true },
+      }),
+    );
+  });
+
+  test.afterAll(async () => {
+    if (page) {
+      await page.evaluate(() =>
+        window.api.settings.set({
+          backgroundAgentProvider: "claude",
+          opencode: { enabled: false },
+        }),
+      );
+    }
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
+  });
+
+  test("an enabled runtime is selectable in the Agent Drafter row", async () => {
+    await page.locator("button[title='Settings']").click();
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
+
+    const select = page.getByLabel("Provider for Agent Drafter");
+    await select.scrollIntoViewIfNeeded();
+    await expect(select.locator("option[value='opencode']")).toBeEnabled();
+  });
+
+  test("selecting an external runtime persists only after Save Changes", async () => {
+    const select = page.getByLabel("Provider for Agent Drafter");
+    await select.selectOption("opencode");
+
+    // The model column is replaced by the Extensions hint while an external
+    // runtime is selected.
+    await expect(page.getByRole("button", { name: "Model set in Extensions" })).toBeVisible();
+
+    // Old UI persisted on change; the consolidated row stages until Save.
+    const before = (await page.evaluate(() => window.api.settings.get())) as {
+      data?: { backgroundAgentProvider?: string };
+    };
+    expect(before.data?.backgroundAgentProvider ?? "claude").toBe("claude");
+
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect
+      .poll(async () => {
+        const cfg = (await page.evaluate(() => window.api.settings.get())) as {
+          data?: { backgroundAgentProvider?: string };
+        };
+        return cfg.data?.backgroundAgentProvider;
+      })
+      .toBe("opencode");
+  });
+
+  test("selecting an LLM provider returns the runtime to Claude and restores the model select", async () => {
+    const select = page.getByLabel("Provider for Agent Drafter");
+    await select.selectOption("anthropic");
+
+    await expect(page.getByLabel("Model tier for Agent Drafter")).toBeVisible();
+
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect
+      .poll(async () => {
+        const cfg = (await page.evaluate(() => window.api.settings.get())) as {
+          data?: { backgroundAgentProvider?: string };
+        };
+        return cfg.data?.backgroundAgentProvider;
+      })
+      .toBe("claude");
+  });
+
+  // Same serial describe (same worker) as the tests above: they all mutate
+  // the shared backgroundAgentProvider/opencode keys.
+  test("shows the fallback warning and keeps the saved runtime selected when gated off", async ({}, testInfo) => {
+    // A saved runtime whose Extensions gates are no longer met — the row must
+    // surface the fallback instead of silently misrepresenting where drafts
+    // run. The state must exist before Settings first mounts, so relaunch.
+    await page.evaluate(() =>
+      window.api.settings.set({
+        backgroundAgentProvider: "opencode",
+        opencode: { enabled: false },
+      }),
+    );
+    await closeApp(electronApp);
+    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    electronApp = result.app;
+    page = result.page;
+
+    await page.locator("button[title='Settings']").click();
+    await expect(page.locator("h1:has-text('Settings')")).toBeVisible({ timeout: 5000 });
+
+    const select = page.getByLabel("Provider for Agent Drafter");
+    await select.scrollIntoViewIfNeeded();
+    await expect(select).toHaveValue("opencode");
+    await expect(select.locator("option[value='opencode']")).toBeDisabled();
+    await expect(
+      page.getByText(/OpenCode is disabled — background drafts fall back to the built-in agent/),
+    ).toBeVisible();
   });
 });

@@ -1,0 +1,19 @@
+{
+  "id": "ca-2-not-scheduling",
+  "description": "A direct question with NO scheduling component — should detect hasSchedulingContext=false.",
+  "input": {
+    "email": {
+      "id": "ca-2-msg",
+      "thread_id": "ca-2-thread",
+      "from": "Bob Patel <bob.patel@northwind.test>",
+      "to": "you@example.test",
+      "subject": "Do you have the FY26 budget numbers?",
+      "snippet": "Finance is asking for the FY26 ops budget breakdown by EOD.",
+      "body": "Hi,\n\nFinance is asking for the FY26 ops budget breakdown by EOD. I have everything except your team's headcount projections. Can you send those over?\n\nBob",
+      "date": "2026-05-18T11:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    }
+  },
+  "rubric": "Good output:\n- `hasSchedulingContext` is false\n- This is a doc/data request with a deadline (EOD), but no MEETING is being scheduled — the deadline alone shouldn't trigger scheduling detection\n\nBad output:\n- `hasSchedulingContext: true` (false positive — there's a deadline but no meeting proposal)\n- Mistaking 'EOD' for a scheduling request",
+  "expectedMinScore": 7
+}

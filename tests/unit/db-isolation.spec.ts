@@ -174,11 +174,11 @@ test.describe("Database isolation between demo and production modes", () => {
     demoDb
       .prepare(
         `
-      INSERT OR REPLACE INTO analyses (email_id, needs_reply, reason, priority, analyzed_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO analyses (email_id, needs_reply, reason, analyzed_at)
+      VALUES (?, ?, ?, ?)
     `,
       )
-      .run("demo-1", 1, "Demo analysis", "high", Date.now());
+      .run("demo-1", 1, "Demo analysis", Date.now());
 
     const demoAnalysis = demoDb.prepare("SELECT * FROM analyses WHERE email_id = ?").get("demo-1");
     expect(demoAnalysis).toBeTruthy();

@@ -123,21 +123,15 @@ test.describe("Inbox Tabs - Default and Ordering", () => {
   });
 
   test("Priority tab shows only priority emails (needsReply + done)", async () => {
-    // Priority should be active by default — verify we see priority emails
+    // Priority should be active by default — verify we see threads. The per-row
+    // pill was suppressed in the Priority tab by issue #143 (every row in this
+    // tab is implicitly priority, so the pill would be noise), so this test
+    // now relies on the tab count + non-empty thread list instead of pill text.
     const threadCount = await getVisibleThreadCount(page);
     expect(threadCount).toBeGreaterThan(0);
 
-    // At least one visible thread should have a priority badge (HIGH, MEDIUM, or LOW).
-    // "Done" threads (with a draft) show "Done" instead of a priority badge, so we
-    // check for at least one rather than requiring all rows to match.
-    const threads = page.locator("div[data-thread-id]");
-    const count = await threads.count();
-    let hasPriorityBadge = false;
-    for (let i = 0; i < count; i++) {
-      const text = await threads.nth(i).innerText();
-      if (/HIGH|MEDIUM|LOW|DONE/i.test(text)) hasPriorityBadge = true;
-    }
-    expect(hasPriorityBadge).toBe(true);
+    const priorityCount = await getTabCount(page, "Priority");
+    expect(threadCount).toBe(priorityCount);
   });
 
   test("clicking Other tab shows non-priority emails", async () => {

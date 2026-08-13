@@ -44,7 +44,6 @@ export type EmailSearchResult = z.infer<typeof EmailSearchResultSchema>;
 export const AnalysisResultSchema = z.object({
   needs_reply: z.boolean(),
   reason: z.string(),
-  priority: z.enum(["high", "medium", "low", "skip"]).optional(),
 });
 
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
@@ -78,7 +77,15 @@ export type ProcessingResult = z.infer<typeof ProcessingResultSchema>;
 // The JSON output format is appended automatically by EmailAnalyzer.
 export const DEFAULT_ANALYSIS_PROMPT = `Analyze this email and decide if it requires a reply from me.
 
-SKIP (no reply needed):
+NEEDS REPLY (Priority):
+- Direct questions addressed to me
+- Requests requiring my response or decision
+- Meeting coordination needing my input
+- Business/personal emails expecting a reply
+- Action items assigned to me
+- Anything that requires me to do external work (update a doc, send an invite, etc.)
+
+OTHER (no reply needed):
 - Newsletters, marketing, promotions
 - Automated notifications (GitHub, CI/CD, receipts, shipping, alerts)
 - Calendar invites (handled by calendar app)
@@ -86,24 +93,7 @@ SKIP (no reply needed):
 - FYI-only messages with no question or action
 - Transactional emails (order confirmations, password resets, etc.)
 - Social media notifications
-- Mailing list digests
-
-HIGH priority:
-- Urgent requests with deadlines
-- Direct questions from important contacts
-- Time-sensitive business decisions
-
-MEDIUM priority:
-- Direct questions addressed to me
-- Requests requiring my response
-- Meeting coordination needing my input
-- Business/personal emails expecting a reply
-- Action items assigned to me
-
-LOW priority:
-- Nice-to-reply but not urgent
-- Casual follow-ups
-- Informational threads where a brief acknowledgment would be polite`;
+- Mailing list digests`;
 
 // JSON format suffix appended automatically — never shown to the user
 export const ANALYSIS_JSON_FORMAT = `
@@ -111,8 +101,7 @@ export const ANALYSIS_JSON_FORMAT = `
 RESPOND WITH ONLY VALID JSON (no markdown, no code blocks):
 {
   "needs_reply": true or false,
-  "reason": "brief explanation",
-  "priority": "high" or "medium" or "low" (only if needs_reply is true)
+  "reason": "brief explanation"
 }`;
 
 // The user-editable draft prompt contains only the behavioral guidelines.
@@ -135,7 +124,7 @@ If the email requires a decision or action that I must take personally (like rev
 // Output format suffix appended automatically — never shown to the user
 export const DRAFT_FORMAT_SUFFIX = `
 
-Output ONLY the email body text - no subject line, no "Dear X" if not needed, no signature (I have one set up). Just the reply content.
+Output ONLY the email body text - no subject line, no "Dear X" if not needed, no signature (I have one set up). Just the reply content. Do NOT include any signature like "--Sent by Exo" or "Sent from Exo" — the app appends its own signature automatically.
 
 FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTML tags of any kind (<p>, <br>, <div>, <b>, <i>, <ul>, <ol>, etc.). For bold, wrap text in double asterisks like **bold text**. For italic, wrap text in single asterisks like *italic text*. For bullet lists, use lines starting with "- ". For numbered lists, use "1. ", "2. ", etc. The email client converts plain text structure to rich formatting automatically.`;
 
@@ -246,7 +235,6 @@ export type GeneratedDraftResponse = z.infer<typeof GeneratedDraftResponseSchema
 // Auto-draft configuration
 export const AutoDraftConfigSchema = z.object({
   enabled: z.boolean(),
-  priorities: z.array(z.enum(["high", "medium", "low"])),
 });
 
 export type AutoDraftConfig = z.infer<typeof AutoDraftConfigSchema>;
@@ -338,6 +326,10 @@ export const ModelConfigSchema = z.object({
   senderLookup: ModelTierSchema.default("haiku"),
   agentDrafter: ModelTierSchema.default("sonnet"),
   agentChat: ModelTierSchema.default("opus"),
+  // styleInference defaults to opus because the task (analyzing 100 sent
+  // emails to extract a writing style) benefits from a more capable model
+  // and runs rarely (once per recipient profile build, then cached).
+  styleInference: ModelTierSchema.default("opus"),
 });
 
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
@@ -351,12 +343,78 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   senderLookup: "haiku",
   agentDrafter: "sonnet",
   agentChat: "opus",
+  styleInference: "opus",
 };
 
 /** Resolve a model tier to its concrete model ID string. */
 export function resolveModelId(tier: ModelTier): string {
   return MODEL_TIER_IDS[tier];
 }
+
+// LLM Provider types — supports routing features to different backends
+export const LLM_PROVIDERS = ["anthropic", "ollama-cloud"] as const;
+export const LlmProviderSchema = z.enum(["anthropic", "ollama-cloud"]);
+export type LlmProvider = z.infer<typeof LlmProviderSchema>;
+
+// Search backends for sender lookup. "anthropic" uses Claude's built-in
+// web_search tool (search + extraction in one LLM call). "exa" hits Exa's
+// /search REST endpoint and then sends the results to the configured
+// senderLookup LLM for extraction — which means the parsing LLM can be
+// any provider (Anthropic or Ollama Cloud), unlike the bundled path.
+export const SENDER_LOOKUP_PROVIDERS = ["anthropic", "exa"] as const;
+export const SenderLookupProviderSchema = z.enum(["anthropic", "exa"]);
+export type SenderLookupProvider = z.infer<typeof SenderLookupProviderSchema>;
+
+/**
+ * Default Ollama Cloud model when none is configured.
+ *
+ * glm-5.2:cloud (z.ai, 744B MoE, 1M context). Chosen after a 16-task
+ * agent-sidebar benchmark against kimi-k2.7-code:cloud: GLM 5.2 was
+ * consistently the faster model at parity final-answer quality (both clearly
+ * beat the prior kimi-k2.6 default). Reasoning is returned in proper
+ * `thinking` blocks on Ollama's Anthropic-compat endpoint (the agent path),
+ * so chain-of-thought does not leak into drafts; non-agent features use the
+ * native /api/chat path with think:true, which likewise keeps CoT out of
+ * parsed JSON. Note: GLM emits brief inter-turn progress text in agent loops
+ * (visible as status lines in the sidebar) — suppressible via the agent
+ * system prompt if undesired.
+ *
+ * Note: cloud models may occasionally return overloaded_error during peak
+ * traffic — llm-service.ts retry logic catches this via Anthropic.APIError
+ * status 529 (rate_limit category) and backs off automatically.
+ */
+export const DEFAULT_OLLAMA_MODEL = "glm-5.2:cloud";
+
+/**
+ * Curated list of common Ollama Cloud models for the settings dropdown, so
+ * users don't have to hand-type model ids. The first entry is the default
+ * (glm-5.2:cloud — kept in sync with DEFAULT_OLLAMA_MODEL). This is a
+ * convenience list, NOT an allowlist — new models ship on Ollama Cloud
+ * regularly, so the UI also offers a "Custom…" escape hatch for any other id.
+ * Ids use the ":cloud" tag to match how the app addresses Ollama Cloud models
+ * (see DEFAULT_OLLAMA_MODEL); each was confirmed to resolve against
+ * https://ollama.com/v1.
+ */
+export const COMMON_OLLAMA_MODELS: readonly { id: string; label: string }[] = [
+  { id: "glm-5.2:cloud", label: "GLM 5.2 — z.ai (default)" },
+  { id: "minimax-m3:cloud", label: "MiniMax M3 — newest, agentic" },
+  { id: "minimax-m2.7:cloud", label: "MiniMax M2.7" },
+  { id: "kimi-k2.6:cloud", label: "Kimi K2.6 — Moonshot" },
+  { id: "kimi-k2-thinking:cloud", label: "Kimi K2 Thinking" },
+  { id: "qwen3-coder:480b-cloud", label: "Qwen3 Coder 480B" },
+  { id: "deepseek-v3.2:cloud", label: "DeepSeek V3.2" },
+] as const;
+
+export const OllamaCloudConfigSchema = z.object({
+  apiKey: z.string().default(""),
+  defaultModel: z.string().default(DEFAULT_OLLAMA_MODEL),
+  featureModels: z.record(z.string(), z.string()).optional(),
+});
+
+/** Default Hostler harness. Single source of truth for the zod default below,
+ *  the provider's fallback, the settings-IPC deep-merge fallback, and the
+ *  Extensions card — renderer-safe (same pattern as DEFAULT_OLLAMA_MODEL). */
+export const DEFAULT_HOSTLER_HARNESS = "opencode";
 
 // Config schema
 export const ConfigSchema = z.object({
@@ -375,9 +433,17 @@ export const ConfigSchema = z.object({
   autoDraft: AutoDraftConfigSchema.optional(),
   agentDrafterPrompt: z.string().optional(),
   enableSenderLookup: z.boolean().default(true),
+  // Search backend for sender lookup. Default "anthropic" (Claude web_search
+  // tool) preserves existing behavior; users can switch to Exa to use a
+  // dedicated search API + a configurable parsing model (which can be Ollama).
+  senderLookupProvider: SenderLookupProviderSchema.default("anthropic"),
+  // Exa API key. Only consulted when senderLookupProvider === "exa".
+  exaApiKey: z.string().optional(),
+  syncDraftsToGmail: z.boolean().default(false),
   theme: z.enum(["light", "dark", "system"]).default("system"),
   inboxDensity: z.enum(["default", "compact"]).default("compact"),
   undoSendDelay: z.number().min(0).max(30).default(5), // seconds; 0 = disabled
+  sendAndArchive: z.boolean().default(false),
   signatures: z.array(SignatureSchema).optional(),
   showExoBranding: z.boolean().default(true),
   stylePrompt: z.string().optional(),
@@ -393,13 +459,22 @@ export const ConfigSchema = z.object({
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   cliTools: z.array(CliToolConfigSchema).optional(),
   extraPathDirs: z.array(z.string()).optional(),
+  // Defaults intentionally not declared here: ConfigSchema is only used for
+  // type inference + validation. Runtime defaults are applied in getConfig()
+  // because they depend on configVersion (legacy installs opt out, fresh
+  // installs opt in).
   posthog: z
     .object({
-      enabled: z.boolean().default(false),
-      sessionReplay: z.boolean().default(false),
+      enabled: z.boolean(),
+      sessionReplay: z.boolean(),
     })
     .optional(),
   keyboardBindings: z.enum(["superhuman", "gmail"]).default("superhuman"),
+  // Persists the last-selected inbox view across restarts.
+  //   string id  → that specific account
+  //   null       → unified "All Inboxes" view
+  //   undefined  → first run; renderer falls back to primary account
+  lastSelectedAccountId: z.string().nullable().optional(),
   openclaw: z
     .object({
       enabled: z.boolean().default(false),
@@ -407,10 +482,189 @@ export const ConfigSchema = z.object({
       gatewayToken: z.string().default(""),
     })
     .optional(),
+  // OpenCode provider settings — experimental open-source agent harness
+  // alternative to the Claude Agent SDK. Disabled by default; users opt in
+  // via Settings → AI / Agents. When enabled, the worker registers an
+  // OpenCodeAgentProvider that spawns the local `opencode` binary on first run.
+  opencode: z
+    .object({
+      enabled: z.boolean().default(false),
+      // Optional override; empty = use whatever the framework's Ollama or
+      // Anthropic resolution produces. Stored as "provider/model" or just the
+      // model name — see OpenCodeAgentProvider.resolveModel().
+      model: z.string().optional(),
+    })
+    .optional(),
+  // Hostler provider settings — hosted cloud agent backend (hostler.dev).
+  // The agent harness runs in a Hostler sandbox; tool calls still execute
+  // locally in the app via Hostler's client-tools loop. Disabled by default;
+  // users opt in via Settings → Extensions with a Hostler API key.
+  hostler: z
+    .object({
+      enabled: z.boolean().default(false),
+      apiKey: z.string().default(""),
+      // Which agent harness runs in the sandbox. Hostler hosts "pi",
+      // "opencode", and "codex" (July 2026); kept free-text so new harnesses
+      // work without an app update — unknown ones fail fast with a 400 that
+      // lists the supported set.
+      harness: z.string().default(DEFAULT_HOSTLER_HARNESS),
+      // "provider/model" (e.g. "openai/kimi-k2.5") or a bare model id, which
+      // pairs with "anthropic". Blank uses glm-5.2 from Hostler's brokered
+      // catalog (GET /v1/models) — the same model family as the app's own
+      // Ollama Cloud default.
+      model: z.string().optional(),
+      // Dev/test escape hatch (e.g. scripts/mock-hostler-server.mjs); no UI,
+      // and the settings IPC only accepts loopback values (see settings.ipc).
+      // Every request carries the Bearer API key and tool results carry email
+      // content, so anything non-loopback must at least be https.
+      baseUrl: z
+        .string()
+        .refine(
+          (value) => {
+            if (value === "") return true;
+            try {
+              const url = new URL(value);
+              return (
+                url.protocol === "https:" ||
+                url.hostname === "127.0.0.1" ||
+                url.hostname === "localhost" ||
+                url.hostname === "[::1]"
+              );
+            } catch {
+              return false;
+            }
+          },
+          { message: "hostler.baseUrl must be a valid https:// URL (or a local loopback URL)" },
+        )
+        .optional(),
+    })
+    .optional(),
+  // Which agent provider runs background auto-draft tasks — the agent that
+  // fires on every new email needing a reply, plus the "Regenerate draft"
+  // rerun path. "claude" (default), "opencode", or "hostler" today; kept
+  // free-text so future providers work without a schema change. Resolution
+  // (including fallback when the chosen provider is disabled) happens in
+  // resolveBackgroundAgentProviderId below.
+  backgroundAgentProvider: z.string().optional(),
+  ollamaCloud: OllamaCloudConfigSchema.optional(),
+  featureProviders: z.record(z.string(), LlmProviderSchema).optional(),
   configVersion: z.number().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+/**
+ * Resolve the Ollama Cloud config the agent framework should use, or `undefined`
+ * if Ollama isn't configured for the agent. Two independent conditions must hold:
+ *  1. The user has actually configured an Ollama API key.
+ *  2. featureProviders.agentChat === "ollama-cloud" (per-feature opt-in — having
+ *     a key alone isn't enough, the user may want agent on Anthropic while routing
+ *     other features to Ollama).
+ *
+ * Both `agent-coordinator.spawnWorker` (initial config at boot) and
+ * `settings:set` (config changes at runtime) call this so the rules stay in sync.
+ */
+export function resolveAgentOllamaConfig(
+  cfg: Pick<Config, "ollamaCloud" | "featureProviders">,
+): { enabled: true; apiKey: string; model: string } | undefined {
+  const oc = cfg.ollamaCloud;
+  // The agent worker is a single shared subprocess pointed at one URL via env
+  // vars at spawn time. Both agentChat (sidebar chat) and agentDrafter (auto-
+  // draft background tasks) flow through it. We can't satisfy two different
+  // destinations simultaneously, so require BOTH features to opt into Ollama
+  // before routing the worker there. Mismatched configs default to Anthropic
+  // — better than silently sending Claude model names to ollama.com (404) or
+  // Ollama model names to api.anthropic.com (invalid_model).
+  const agentChatProvider = cfg.featureProviders?.agentChat ?? "anthropic";
+  const agentDrafterProvider = cfg.featureProviders?.agentDrafter ?? "anthropic";
+  const bothOllama =
+    agentChatProvider === "ollama-cloud" && agentDrafterProvider === "ollama-cloud";
+  if (!oc?.apiKey || !bothOllama) return undefined;
+  return {
+    enabled: true,
+    apiKey: oc.apiKey,
+    // Use agentDrafter's per-feature model since the coordinator's `model` field
+    // is also derived from agentDrafter — keeps the env-var remap and the
+    // explicit query() model param in sync.
+    model: oc.featureModels?.agentDrafter ?? oc.defaultModel ?? DEFAULT_OLLAMA_MODEL,
+  };
+}
+
+/** Provider id used for background auto-drafts when nothing else is configured. */
+export const DEFAULT_BACKGROUND_AGENT_PROVIDER = "claude";
+
+/**
+ * Resolve which agent provider runs background auto-draft tasks (the agent
+ * that fires on every new email needing a reply, and the "Regenerate draft"
+ * rerun path).
+ *
+ * Falls back to "claude" when the configured provider's config-level gates
+ * aren't met — mirroring each provider's isAvailable() check, which runs in
+ * the agent worker where the main process can't call it. Without the
+ * fallback, disabling e.g. Hostler while it's selected would make every
+ * background draft fail until the user also updated this setting.
+ *
+ * Unknown provider ids (e.g. an installed provider) pass through unchanged:
+ * we can't know their config gates here, and the orchestrator fails
+ * explicitly for unregistered ids.
+ */
+export function resolveBackgroundAgentProviderId(
+  cfg: Pick<Config, "backgroundAgentProvider" | "opencode" | "hostler" | "openclaw">,
+): string {
+  // `||` (not `??`) so an empty string in a hand-edited config counts as
+  // unset instead of reaching the orchestrator as an unknown provider id.
+  const requested = cfg.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER;
+  if (requested === "opencode" && !cfg.opencode?.enabled) {
+    return DEFAULT_BACKGROUND_AGENT_PROVIDER;
+  }
+  if (requested === "hostler" && !(cfg.hostler?.enabled && cfg.hostler.apiKey)) {
+    return DEFAULT_BACKGROUND_AGENT_PROVIDER;
+  }
+  if (requested === "openclaw-agent" && !(cfg.openclaw?.enabled && cfg.openclaw.gatewayUrl)) {
+    return DEFAULT_BACKGROUND_AGENT_PROVIDER;
+  }
+  return requested;
+}
+
+/** Agent runtimes selectable for background drafts besides the built-in Claude agent. */
+export const EXTERNAL_AGENT_RUNTIMES = ["opencode", "hostler"] as const;
+
+/**
+ * Whether selecting `id` as the background agent provider would actually take
+ * effect, derived from the same resolver that routes background drafts — so
+ * UI enablement can't drift from runtime fallback behavior.
+ */
+export function isAgentRuntimeAvailable(
+  id: string,
+  cfg: Pick<Config, "opencode" | "hostler" | "openclaw">,
+): boolean {
+  return resolveBackgroundAgentProviderId({ ...cfg, backgroundAgentProvider: id }) === id;
+}
+
+/**
+ * Interpret a selection from the Agent Drafter provider dropdown, which mixes
+ * agent runtimes (EXTERNAL_AGENT_RUNTIMES) with LLM providers for the built-in
+ * Claude runtime (LLM_PROVIDERS). Picking a runtime routes background drafts
+ * there and leaves the Claude-runtime model choice untouched; picking an LLM
+ * provider returns the runtime to the built-in Claude agent and selects its
+ * model source. Returns null for values that are neither, so unknown option
+ * values are an explicit no-op rather than a silent misroute.
+ */
+export function applyAgentDrafterSelection(
+  selected: string,
+): { backgroundAgentProvider: string; agentDrafterProvider?: LlmProvider } | null {
+  if ((EXTERNAL_AGENT_RUNTIMES as readonly string[]).includes(selected)) {
+    return { backgroundAgentProvider: selected };
+  }
+  const llmParse = LlmProviderSchema.safeParse(selected);
+  if (llmParse.success) {
+    return {
+      backgroundAgentProvider: DEFAULT_BACKGROUND_AGENT_PROVIDER,
+      agentDrafterProvider: llmParse.data,
+    };
+  }
+  return null;
+}
 
 // Dashboard-specific types
 
@@ -435,7 +689,6 @@ export type DashboardEmail = {
   analysis?: {
     needsReply: boolean;
     reason: string;
-    priority?: "high" | "medium" | "low" | "skip";
     analyzedAt: number;
   };
   draft?: {
@@ -721,6 +974,7 @@ export type IpcChannels = {
 
   // Style operations
   "style:get-context": { toAddress: string };
+  "style:infer": void;
 
   // Settings operations
   "settings:get": void;
@@ -829,6 +1083,14 @@ export type ScheduledMessage = {
 export type ScheduledMessageStats = {
   scheduled: number;
   total: number;
+};
+
+// Blocked sender (mirrors a Gmail filter that routes a sender to Spam)
+export type BlockedSender = {
+  senderEmail: string;
+  accountId: string;
+  gmailFilterId: string | null;
+  blockedAt: number;
 };
 
 // App state for Zustand

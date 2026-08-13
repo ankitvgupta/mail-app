@@ -134,7 +134,7 @@ function getEmail(db: DB, emailId: string) {
     SELECT e.id, e.account_id as accountId, e.thread_id as threadId, e.subject,
       e.from_address as "from", e.to_address as "to", e.cc_address as cc, e.bcc_address as bcc,
       e.body, e.snippet, e.date, e.label_ids as labelIds, e.attachments as attachmentsJson,
-      a.needs_reply as needsReply, a.reason, a.priority, a.analyzed_at as analyzedAt,
+      a.needs_reply as needsReply, a.reason, a.analyzed_at as analyzedAt,
       d.draft_body as draftBody, d.gmail_draft_id as gmailDraftId, d.status as draftStatus,
       d.created_at as draftCreatedAt, d.agent_task_id as agentTaskId, d.cc as draftCc, d.bcc as draftBcc
     FROM emails e
@@ -150,7 +150,7 @@ function getEmail(db: DB, emailId: string) {
 const DASHBOARD_EMAIL_SELECT = `
     e.id, e.account_id as accountId, e.thread_id as threadId, e.subject, e.from_address as "from",
     e.to_address as "to", e.cc_address as "cc", e.bcc_address as "bcc", e.body, e.snippet, e.date, e.label_ids as labelIds, e.attachments as attachmentsJson,
-    a.needs_reply as needsReply, a.reason, a.priority, a.analyzed_at as analyzedAt,
+    a.needs_reply as needsReply, a.reason, a.analyzed_at as analyzedAt,
     d.draft_body as draftBody, d.gmail_draft_id as gmailDraftId, d.status as draftStatus, d.created_at as draftCreatedAt, d.agent_task_id as agentTaskId, d.cc as draftCc, d.bcc as draftBcc`;
 
 const DASHBOARD_EMAIL_FROM_JOINS = `
@@ -220,19 +220,13 @@ function updateEmailLabelIds(db: DB, emailId: string, labelIds: string[]) {
   db.prepare("UPDATE emails SET label_ids = ? WHERE id = ?").run(JSON.stringify(labelIds), emailId);
 }
 
-function saveAnalysis(
-  db: DB,
-  emailId: string,
-  needsReply: boolean,
-  reason: string,
-  priority?: string,
-) {
+function saveAnalysis(db: DB, emailId: string, needsReply: boolean, reason: string) {
   db.prepare(
     `
-    INSERT OR REPLACE INTO analyses (email_id, needs_reply, reason, priority, analyzed_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO analyses (email_id, needs_reply, reason, analyzed_at)
+    VALUES (?, ?, ?, ?)
   `,
-  ).run(emailId, needsReply ? 1 : 0, reason, priority || null, Date.now());
+  ).run(emailId, needsReply ? 1 : 0, reason, Date.now());
 }
 
 function saveDraft(
@@ -1130,7 +1124,7 @@ test.describe("Database CRUD operations", () => {
 
     test("deleteEmail removes email and associated analyses/drafts", () => {
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "needs reply", "high");
+      saveAnalysis(db, "e1", true, "needs reply");
       saveDraft(db, "e1", "draft body");
       deleteEmail(db, "e1", "acct1");
       expect(getEmail(db, "e1")).toBeUndefined();
@@ -1213,11 +1207,10 @@ test.describe("Database CRUD operations", () => {
   test.describe("Analysis operations", () => {
     test("saveAnalysis attaches analysis to email", () => {
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "Needs urgent reply", "high");
+      saveAnalysis(db, "e1", true, "Needs urgent reply");
       const result = getEmail(db, "e1");
       expect(result.needsReply).toBe(1);
       expect(result.reason).toBe("Needs urgent reply");
-      expect(result.priority).toBe("high");
       expect(result.analyzedAt).toBeGreaterThan(0);
     });
 
@@ -1226,13 +1219,12 @@ test.describe("Database CRUD operations", () => {
       saveAnalysis(db, "e1", false, "Newsletter");
       const result = getEmail(db, "e1");
       expect(result.needsReply).toBe(0);
-      expect(result.priority).toBeNull();
     });
 
     test("saveAnalysis upserts on duplicate email_id", () => {
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "first", "low");
-      saveAnalysis(db, "e1", false, "updated", "high");
+      saveAnalysis(db, "e1", true, "first");
+      saveAnalysis(db, "e1", false, "updated");
       const result = getEmail(db, "e1");
       expect(result.needsReply).toBe(0);
       expect(result.reason).toBe("updated");
@@ -1241,7 +1233,7 @@ test.describe("Database CRUD operations", () => {
     test("getAllEmails includes analysis data when present", () => {
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
       saveEmail(db, makeEmail({ id: "e2", threadId: "t2" }), "acct1");
-      saveAnalysis(db, "e1", true, "Reply needed", "medium");
+      saveAnalysis(db, "e1", true, "Reply needed");
       const all = getAllEmails(db, "acct1");
       const analyzed = all.find((e: Record<string, unknown>) => e.id === "e1");
       const unanalyzed = all.find((e: Record<string, unknown>) => e.id === "e2");
@@ -1340,7 +1332,7 @@ test.describe("Database CRUD operations", () => {
     test("removeAccount deletes account and all associated data", () => {
       saveAccount(db, "acct1", "user@gmail.com");
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "needs reply", "high");
+      saveAnalysis(db, "e1", true, "needs reply");
       saveDraft(db, "e1", "draft body");
       saveArchiveReady(db, "t1", "acct1", true, "ready");
       removeAccount(db, "acct1");
@@ -2069,7 +2061,7 @@ test.describe("Database CRUD operations", () => {
   test.describe("Cross-table data integrity", () => {
     test("getEmail joins analysis and draft data", () => {
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "Important", "high");
+      saveAnalysis(db, "e1", true, "Important");
       saveDraft(db, "e1", "Reply draft", "pending");
       const result = getEmail(db, "e1");
       expect(result.needsReply).toBe(1);
@@ -2086,7 +2078,7 @@ test.describe("Database CRUD operations", () => {
     test("removing an account cascades all related data", () => {
       saveAccount(db, "acct1", "user@gmail.com");
       saveEmail(db, makeEmail({ id: "e1", threadId: "t1" }), "acct1");
-      saveAnalysis(db, "e1", true, "reply needed", "high");
+      saveAnalysis(db, "e1", true, "reply needed");
       saveDraft(db, "e1", "draft body");
       snoozeEmail(db, "snz1", "e1", "t1", "acct1", Date.now() + 3600000);
       saveArchiveReady(db, "t1", "acct1", true, "ready");

@@ -1,7 +1,7 @@
 /**
  * Unit tests for EmailAnalyzer service.
  *
- * Strategy: Replace the module-level Anthropic client in anthropic-service.ts
+ * Strategy: Replace the module-level Anthropic client in llm-service.ts
  * with a MockAnthropic instance via _setClientForTesting, so all services
  * that call createMessage() go through the mock.
  */
@@ -13,7 +13,7 @@ import {
   resetAnthropicMock,
   getCapturedRequests,
 } from "../mocks/anthropic-api-mock";
-import { _setClientForTesting } from "../../src/main/services/anthropic-service";
+import { _setClientForTesting } from "../../src/main/services/llm-service";
 import type { Email } from "../../src/shared/types";
 import { ANALYSIS_JSON_FORMAT } from "../../src/shared/types";
 
@@ -56,7 +56,7 @@ test.describe("EmailAnalyzer", () => {
 
   test("analyze() returns correct AnalysisResult for a needs-reply email", async () => {
     mockAnthropicResponse({
-      text: '{"needs_reply": true, "reason": "Direct question about document review", "priority": "high"}',
+      text: '{"needs_reply": true, "reason": "Direct question about document review"}',
     });
     const analyzer = createAnalyzerWithMock();
     const email = makeEmail();
@@ -65,7 +65,6 @@ test.describe("EmailAnalyzer", () => {
 
     expect(result.needs_reply).toBe(true);
     expect(result.reason).toBe("Direct question about document review");
-    expect(result.priority).toBe("high");
   });
 
   test("analyze() returns correct result for newsletter (no reply needed)", async () => {
@@ -83,12 +82,11 @@ test.describe("EmailAnalyzer", () => {
 
     expect(result.needs_reply).toBe(false);
     expect(result.reason).toBe("Newsletter/marketing content");
-    expect(result.priority).toBeUndefined();
   });
 
   test("analyze() with custom prompt appends ANALYSIS_JSON_FORMAT", async () => {
     mockAnthropicResponse({
-      text: '{"needs_reply": true, "reason": "Custom prompt test", "priority": "medium"}',
+      text: '{"needs_reply": true, "reason": "Custom prompt test"}',
     });
     const customPrompt = "You are a custom email analyzer. Analyze this email.";
     const analyzer = createAnalyzerWithMock(customPrompt);
@@ -124,7 +122,7 @@ test.describe("EmailAnalyzer", () => {
 
   test("analyze() handles JSON fenced in markdown code blocks", async () => {
     mockAnthropicResponse({
-      text: '```json\n{"needs_reply": true, "reason": "Fenced JSON", "priority": "low"}\n```',
+      text: '```json\n{"needs_reply": true, "reason": "Fenced JSON"}\n```',
     });
     const analyzer = createAnalyzerWithMock();
     const email = makeEmail();
@@ -133,7 +131,6 @@ test.describe("EmailAnalyzer", () => {
 
     expect(result.needs_reply).toBe(true);
     expect(result.reason).toBe("Fenced JSON");
-    expect(result.priority).toBe("low");
   });
 
   test("analyze() handles parse failure gracefully (returns default no-reply)", async () => {
@@ -147,7 +144,6 @@ test.describe("EmailAnalyzer", () => {
 
     expect(result.needs_reply).toBe(false);
     expect(result.reason).toBe("Failed to parse analysis - skipping for safety");
-    expect(result.priority).toBeUndefined();
   });
 
   test("analyze() includes userEmail in the prompt when provided", async () => {
@@ -198,7 +194,7 @@ test.describe("EmailAnalyzer", () => {
 
   test("analyze() wraps email content in <untrusted_email> tags", async () => {
     mockAnthropicResponse({
-      text: '{"needs_reply": true, "reason": "test", "priority": "medium"}',
+      text: '{"needs_reply": true, "reason": "test"}',
     });
     const analyzer = createAnalyzerWithMock();
     const email = makeEmail();
@@ -214,7 +210,7 @@ test.describe("EmailAnalyzer", () => {
 
   test("analyze() strips quoted content from email body", async () => {
     mockAnthropicResponse({
-      text: '{"needs_reply": true, "reason": "Direct question", "priority": "medium"}',
+      text: '{"needs_reply": true, "reason": "Direct question"}',
     });
     const analyzer = createAnalyzerWithMock();
     const email = makeEmail({

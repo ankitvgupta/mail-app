@@ -1,0 +1,23 @@
+{
+  "id": "dg-3-decline",
+  "description": "A polite decline scenario — invitation to a low-priority speaking event the user should decline gracefully OR explicitly hedge by punting the decision back to the user.",
+  "input": {
+    "email": {
+      "id": "dg-3-msg",
+      "thread_id": "dg-3-thread",
+      "from": "Helen Brooks <helen@conf-marketing.test>",
+      "to": "you@example.test",
+      "subject": "Speak at the IndustryConf product panel?",
+      "snippet": "We'd love to have you on the panel about product strategy in May...",
+      "body": "Hi,\n\nWe'd love to have you on the panel about product strategy at IndustryConf in May. It's a 4-person panel, 45 minutes, in San Francisco. Honorarium of $1,500.\n\nThe date is May 15. Can you commit by end of next week?\n\nHelen",
+      "date": "2026-05-18T09:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    },
+    "analysis": {
+      "needs_reply": true,
+      "reason": "Speaking opportunity — needs a yes or no by next week"
+    }
+  },
+  "rubric": "Score this draft on a 10-point scale by summing the criteria below. Either of two strategies is acceptable: DECLINE the invitation, OR HEDGE (defer the decision back to the user without committing).\n\n## Strategy detection (4 points)\n\nIdentify which strategy the draft uses, then score:\n\n**DECLINE strategy** (the draft says no to the speaking ask):\n- +4 if a clear, polite decline (e.g. 'unfortunately I won't be able to make it', 'have to pass this time')\n- +2 if it declines but with hedging language that makes it ambiguous\n- 0 if it doesn't actually decline\n\n**HEDGE strategy** (the draft punts the decision back to the user):\n- +4 if it explicitly says it'll get back to Helen after checking the calendar / discussing with the team — clearly delegating the decision\n- +2 if it hedges but in a way that reads as soft acceptance\n- 0 if it doesn't hedge cleanly\n\n## Acknowledgement (2 points)\n- +2 if the draft thanks Helen for thinking of the user OR acknowledges the opportunity\n- +1 if minimal acknowledgement\n- 0 if no acknowledgement\n\n## Conciseness (2 points)\n- +2 if under ~60 words in the body (declines/hedges should be short)\n- +1 if 60-120 words\n- 0 if over 120 words\n\n## Tone (2 points)\n- +2 if warm and professional\n- +1 if slightly stiff but appropriate\n- 0 if cold, formal-cosplay, or AI-generated-sounding\n\n## Penalties (subtract from total)\n\n- -5 if the draft accepts the speaking gig on the user's behalf (this is the failure mode — user hasn't said yes)\n- -3 if it asks Helen for irrelevant details (the event details are all in the email already)\n- -3 if it proposes alternative dates/formats (this is a fixed-date event, not a meeting to schedule)\n- -2 if it commits to a follow-up timeline the user didn't authorize\n\n## Output\n\nReturn the clamped integer total (0-10). The reason must state which strategy was detected (DECLINE or HEDGE) and enumerate which criteria you scored above 0.",
+  "expectedMinScore": 5
+}

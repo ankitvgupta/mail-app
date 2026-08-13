@@ -56,6 +56,30 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
       sentRef.current = false;
       return;
     }
+    if (item.archiveThreadId) {
+      // Optimistically remove the thread from the local store. The IPC handler
+      // only broadcasts sync:emails-removed in the online-success path, so we
+      // can't rely on it for demo mode, offline mode, or the queued path.
+      // Use removeEmailsAndAdvance (not removeEmails) when the archived thread
+      // is currently selected — otherwise split view keeps the now-stale
+      // selection and shows a blank detail pane.
+      const archiveThreadId = item.archiveThreadId;
+      const accountId = item.sendOptions.accountId;
+      const state = useAppStore.getState();
+      const threadEmailIds = state.emails
+        .filter((e) => e.threadId === archiveThreadId && e.accountId === accountId)
+        .map((e) => e.id);
+      if (threadEmailIds.length > 0) {
+        if (state.selectedThreadId === archiveThreadId) {
+          state.removeEmailsAndAdvance(threadEmailIds, null, null);
+        } else {
+          state.removeEmails(threadEmailIds);
+        }
+      }
+      window.api.emails
+        .archiveThread(archiveThreadId, accountId)
+        .catch((err: unknown) => console.error("[Send & Archive] archive failed", err));
+    }
     cancelHandlers.delete(item.id);
     removeUndoSend(item.id);
   }, [item, removeUndoSend]);
@@ -69,9 +93,18 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
     const ctx = item.composeContext;
     if (ctx) {
       const store = useAppStore.getState();
-      // Remove the optimistic "sent" email from the store
+      // Remove the optimistic "sent" email from the store. On the error path
+      // the send already ran (and failed), so focusedThreadEmailId /
+      // inlineReplyToEmailId may point at the optimistic ID; null them in the
+      // same setState as the removal to avoid a render that observes a
+      // dangling reference, matching the doSend success path above.
       if (ctx.optimisticEmailId) {
-        store.removeEmails([ctx.optimisticEmailId]);
+        const optimisticId = ctx.optimisticEmailId;
+        useAppStore.setState((s) => ({
+          emails: s.emails.filter((e) => e.id !== optimisticId),
+          ...(s.focusedThreadEmailId === optimisticId ? { focusedThreadEmailId: null } : {}),
+          ...(s.inlineReplyToEmailId === optimisticId ? { inlineReplyToEmailId: null } : {}),
+        }));
       }
       if (ctx.threadId) {
         store.setSelectedThreadId(ctx.threadId);
@@ -130,14 +163,10 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
       )}
       {sendError && (
         <button
-          onClick={() => {
-            setSendError(null);
-            sentRef.current = false;
-            doSend();
-          }}
+          onClick={handleUndo}
           className="ml-4 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
         >
-          Retry
+          Edit
         </button>
       )}
     </div>

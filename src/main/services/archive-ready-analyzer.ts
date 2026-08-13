@@ -1,4 +1,4 @@
-import { createMessage } from "./anthropic-service";
+import { createMessage } from "./llm-service";
 import { stripJsonFences } from "../../shared/strip-json-fences";
 import {
   ARCHIVE_READY_JSON_FORMAT,
@@ -6,6 +6,7 @@ import {
   DEFAULT_ARCHIVE_READY_PROMPT,
   type ArchiveReadyResult,
   type DashboardEmail,
+  type LlmProvider,
 } from "../../shared/types";
 import { stripQuotedContent } from "./strip-quoted-content";
 import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/prompt-safety";
@@ -16,10 +17,12 @@ const log = createLogger("archive-ready");
 export class ArchiveReadyAnalyzer {
   private model: string;
   private customPrompt: string | null;
+  private provider?: LlmProvider;
 
-  constructor(model: string = "claude-sonnet-4-20250514", prompt?: string) {
+  constructor(model: string = "claude-sonnet-4-20250514", prompt?: string, provider?: LlmProvider) {
     this.model = model;
     this.customPrompt = prompt && prompt !== DEFAULT_ARCHIVE_READY_PROMPT ? prompt : null;
+    this.provider = provider;
   }
 
   async analyzeThread(
@@ -51,7 +54,7 @@ export class ArchiveReadyAnalyzer {
           },
         ],
       },
-      { caller: "archive-ready-analyzer" },
+      { caller: "archive-ready-analyzer", provider: this.provider },
     );
 
     // Log cache performance

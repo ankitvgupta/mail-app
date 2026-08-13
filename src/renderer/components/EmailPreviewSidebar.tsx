@@ -2,6 +2,7 @@ import { memo, useMemo, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
 import { useExtensionPanels, ExtensionPanelSlot } from "../extensions";
 import { AgentTabContent } from "./AgentPanel";
+import { deriveTraceProviderIds } from "../../shared/agent-types";
 import type { ScopedAgentEvent } from "../../shared/agent-types";
 
 // SVG icon components for sidebar tabs
@@ -264,10 +265,13 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
           if (!email) return;
 
           // Replay entire trace in a single store update (avoids O(n²) from N appendAgentEvent calls)
+          // Derive provider ids from the persisted events — the background
+          // provider is configurable, and replayAgentTrace drops events whose
+          // providerId isn't in this list.
           replayAgentTrace(
             taskId,
             email.id,
-            ["claude"],
+            deriveTraceProviderIds(result.data.events),
             "",
             {
               accountId: email.accountId || "",
@@ -315,8 +319,10 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
     return (
       <div className="w-80 bg-gray-50 dark:bg-gray-800/50 border-l border-gray-200 dark:border-gray-700 flex items-center justify-center">
         <div className="text-center px-6">
-          <p className="text-gray-400 dark:text-gray-500 text-sm">Select an email to see details</p>
-          <p className="text-gray-300 text-xs mt-1">Use j/k to navigate, Cmd+J for agent</p>
+          <p className="text-gray-600 dark:text-gray-400 text-sm">Select an email to see details</p>
+          <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
+            Use j/k to navigate, Cmd+J for agent
+          </p>
         </div>
       </div>
     );

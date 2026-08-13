@@ -67,6 +67,23 @@ export function emailMatchesSplit(email: DashboardEmail, split: InboxSplit): boo
   return split.conditionLogic === "and" ? results.every(Boolean) : results.some(Boolean);
 }
 
+// Check if a thread matches a split, scoped to the thread's owning account.
+// Splits are per-account: in unified ("All Inboxes") mode multiple accounts'
+// splits are visible at once, so an exclusive split from account A must not
+// hide threads from account B. Callers pass the thread's latestEmail so we
+// can avoid an import cycle with the store's EmailThread type.
+//
+// Emails with no accountId (legacy / partially-synced data — DashboardEmail.
+// accountId is optional) also fail this check, so they stay in the global
+// "All"/"Priority" inbox instead of being routed into some arbitrary account's
+// exclusive split tab and disappearing from the main view.
+export function threadMatchesSplit(latestEmail: DashboardEmail, split: InboxSplit): boolean {
+  if (!latestEmail.accountId || latestEmail.accountId !== split.accountId) {
+    return false;
+  }
+  return emailMatchesSplit(latestEmail, split);
+}
+
 // Evaluate a split condition against a local draft's available fields.
 // Drafts have to/cc/bcc/subject but no from/labels/attachments.
 function evaluateConditionForDraft(

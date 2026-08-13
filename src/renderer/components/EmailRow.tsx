@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { InboxDensity, SnoozedEmail } from "../../shared/types";
-import type { EmailThread } from "../store";
+import { useAppStore, type EmailThread } from "../store";
 import { formatSnoozeTime } from "./SnoozeMenu";
 
 interface EmailRowProps {
@@ -77,37 +77,33 @@ function decodeHtmlEntities(text: string): string {
   return textarea.value;
 }
 
-// Get priority label info
-function getPriorityLabel(thread: EmailThread): { text: string; className: string } | null {
+// Get the row's status pill. Returns null when no pill should render.
+//
+// Pills only show in non-priority tabs (the Priority tab is implicitly all
+// priority emails, so the pill would just be visual noise there). When the tab
+// is mixed (All / custom splits / Drafts / Snoozed / Archive Ready / Other),
+// the pill helps the user spot priority emails vs. completed drafts.
+function getPriorityLabel(
+  thread: EmailThread,
+  inPriorityTab: boolean,
+): { text: string; className: string } | null {
+  if (inPriorityTab) return null;
+
   if (thread.draft?.status === "created") {
     return {
       text: "Done",
       className: "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300",
     };
   }
-  if (!thread.analysis) {
-    return null; // Unanalyzed - no label
-  }
-  // Note: the store's categorization uses effectiveUserReplied (with a grace period)
-  // while we check userReplied directly. During the ~3 min grace window, the badge
-  // may show "Skip" while the thread still sits in Priority. This is acceptable:
-  // the user just replied so "Skip" is the correct eventual state.
-  if (!thread.analysis.needsReply || thread.userReplied) {
+
+  if (thread.analysis?.needsReply && !thread.userReplied) {
     return {
-      text: "Skip",
-      className: "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400",
+      text: "Priority",
+      className: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300",
     };
   }
-  const priority = thread.analysis.priority || "medium";
-  const colors: Record<string, string> = {
-    high: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300",
-    medium: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300",
-    low: "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400",
-  };
-  return {
-    text: priority.charAt(0).toUpperCase() + priority.slice(1),
-    className: colors[priority] || colors.medium,
-  };
+
+  return null;
 }
 
 // Memoized so that j/k navigation only re-renders the two rows whose
@@ -131,7 +127,8 @@ export const EmailRow = memo(
       : formatRelativeDate(thread.latestReceivedEmail.date);
     const rawSnippet = thread.latestEmail.snippet || "";
     const snippet = decodeHtmlEntities(rawSnippet);
-    const priorityLabel = getPriorityLabel(thread);
+    const currentSplitId = useAppStore((state) => state.currentSplitId);
+    const priorityLabel = getPriorityLabel(thread, currentSplitId === "__priority__");
     // Fallback to "default" if stored density is unrecognized (e.g. removed "comfortable")
     const ds = densityStyles[density] ?? densityStyles.default;
 
@@ -233,6 +230,7 @@ export const EmailRow = memo(
               {decodeHtmlEntities(thread.subject)}
             </span>
             <span
+              aria-hidden="true"
               className={`flex-shrink ${isSelected && !isChecked ? "text-white/40" : "text-gray-300 dark:text-gray-600"}`}
             >
               —
@@ -240,7 +238,7 @@ export const EmailRow = memo(
             {thread.draft ? (
               <>
                 <span
-                  className={`flex-shrink-0 ${isSelected && !isChecked ? "text-green-200" : "text-green-600 dark:text-green-400"}`}
+                  className={`flex-shrink-0 ${isSelected && !isChecked ? "text-green-200" : "text-green-700 dark:text-green-400"}`}
                 >
                   <svg
                     className="w-3 h-3 inline-block mr-0.5 -mt-px"
@@ -258,7 +256,7 @@ export const EmailRow = memo(
                   Draft
                 </span>
                 <span
-                  className={`truncate min-w-0 ${isSelected && !isChecked ? "text-white/60" : "text-gray-400"}`}
+                  className={`truncate min-w-0 ${isSelected && !isChecked ? "text-white/60" : "text-gray-500 dark:text-gray-400"}`}
                 >
                   {(thread.draft.body ?? "")
                     .replace(/<[^>]*>/g, "")
@@ -269,7 +267,7 @@ export const EmailRow = memo(
             ) : (
               <span
                 className={`truncate min-w-0 ${
-                  isSelected && !isChecked ? "text-white/60" : "text-gray-400"
+                  isSelected && !isChecked ? "text-white/60" : "text-gray-500 dark:text-gray-400"
                 }`}
               >
                 {snippet}
@@ -281,7 +279,7 @@ export const EmailRow = memo(
           {snoozeInfo && (
             <span
               className={`flex items-center gap-0.5 flex-shrink-0 ${
-                isSelected && !isChecked ? "text-white/60" : "text-amber-500 dark:text-amber-400"
+                isSelected && !isChecked ? "text-white/60" : "text-amber-700 dark:text-amber-400"
               }`}
               title={`Snoozed until ${formatSnoozeTime(snoozeInfo.snoozeUntil)}`}
             >
@@ -302,8 +300,8 @@ export const EmailRow = memo(
               isSelected && !isChecked
                 ? "text-white/60"
                 : snoozeInfo
-                  ? "text-amber-500 dark:text-amber-400"
-                  : "text-gray-400"
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-gray-500 dark:text-gray-400"
             }`}
           >
             {snoozeInfo ? formatSnoozeCountdown(snoozeInfo.snoozeUntil) : time}
@@ -317,7 +315,7 @@ export const EmailRow = memo(
           ${
             isSelected && !isChecked
               ? "bg-white/20 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+              : "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
           }
         `}
             >
@@ -328,14 +326,51 @@ export const EmailRow = memo(
       </div>
     );
   },
-  (prev, next) =>
-    prev.thread === next.thread &&
-    prev.isSelected === next.isSelected &&
-    prev.isChecked === next.isChecked &&
-    prev.isMultiSelectActive === next.isMultiSelectActive &&
-    prev.density === next.density &&
-    prev.snoozeInfo === next.snoozeInfo &&
-    prev.returnTime === next.returnTime,
+  (prev, next) => {
+    if (
+      prev.isSelected !== next.isSelected ||
+      prev.isChecked !== next.isChecked ||
+      prev.isMultiSelectActive !== next.isMultiSelectActive ||
+      prev.density !== next.density ||
+      prev.snoozeInfo !== next.snoozeInfo ||
+      prev.returnTime !== next.returnTime
+    ) {
+      return false;
+    }
+    if (prev.thread === next.thread) return true;
+    // Thread object identity changes on every store mutation that touches
+    // `emails` because groupByThread rebuilds the objects. Comparing the
+    // rendered fields directly lets us skip re-rendering visible rows on
+    // every unrelated state update — the dominant cost of switching to an
+    // account with a large inbox (e.g. ~20 rows × ~50 EmailList renders ×
+    // ~10ms each ≈ 9s blocking the renderer).
+    //
+    // KEEP IN SYNC: if you add a field to `EmailThread` (src/renderer/store)
+    // that the EmailRow JSX below reads, add the same field to this
+    // comparator — otherwise rows will silently render stale data. The same
+    // applies if EmailRow's JSX starts rendering a previously-ignored field.
+    const pt = prev.thread;
+    const nt = next.thread;
+    return (
+      pt.threadId === nt.threadId &&
+      pt.isUnread === nt.isUnread &&
+      pt.userReplied === nt.userReplied &&
+      pt.displaySender === nt.displaySender &&
+      pt.subject === nt.subject &&
+      pt.latestReceivedDate === nt.latestReceivedDate &&
+      pt.hasMultipleEmails === nt.hasMultipleEmails &&
+      // Thread-count badge reads `thread.emails.length` directly — a thread
+      // going 2→3 emails wouldn't change `hasMultipleEmails`, so we'd skip
+      // the render and the badge would lie.
+      pt.emails.length === nt.emails.length &&
+      pt.latestEmail.id === nt.latestEmail.id &&
+      pt.latestEmail.snippet === nt.latestEmail.snippet &&
+      pt.latestReceivedEmail.id === nt.latestReceivedEmail.id &&
+      pt.latestReceivedEmail.date === nt.latestReceivedEmail.date &&
+      pt.analysis === nt.analysis &&
+      pt.draft === nt.draft
+    );
+  },
   // onClick / onCheckboxChange intentionally omitted — they are stable in behavior
   // but are new arrow function references on each parent render.
 );

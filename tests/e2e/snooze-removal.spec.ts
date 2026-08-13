@@ -39,11 +39,9 @@ test.describe("Snooze — email must leave inbox and cursor must advance", () =>
 
     // Wait for the app to fully load with emails
     await page.waitForSelector("text=Exo", { timeout: 15000 });
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low/ })
-      .first()
-      .waitFor({ timeout: 10000 });
+    // Priority pills were collapsed in issue #143 — wait on the stable
+    // per-row data-thread-id attribute instead.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 10000 });
   });
 
   test.afterAll(async () => {

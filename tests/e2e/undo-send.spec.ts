@@ -1,11 +1,14 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
 import path from "path";
+import { fileURLToPath } from "url";
 import { existsSync, unlinkSync, readdirSync } from "fs";
 import {
   launchElectronApp as _launchElectronApp,
   takeScreenshot,
   closeApp,
 } from "./launch-helpers";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * E2E Tests for Undo Send feature
@@ -30,28 +33,23 @@ import {
  * The demo DB is recreated by sync:init on every app launch, so deleting it is safe.
  */
 function resetTestEnvironment(workerIndex: number) {
-  const home = process.env.HOME || "/root";
-
   // Only delete THIS worker's demo database to avoid interfering with parallel workers.
-  // Config files are shared global state and must NOT be deleted during parallel runs.
+  // Config files are shared state and must NOT be deleted during parallel runs.
+  //
+  // Dev/test launches always resolve their data dir to the project-local
+  // .dev-data/ (src/main/data-dir.ts) — never clean global per-user app dirs
+  // here, those belong to the packaged app's real install.
   const workerDbPattern = `exo-demo-w${workerIndex}.db`;
-  const demoDirs = [
-    path.join(home, "Library/Application Support/Electron/data"),
-    path.join(home, "Library/Application Support/exo/data"),
-    path.join(home, ".config/Electron/data"),
-    path.join(home, ".config/exo/data"),
-  ];
-  for (const dir of demoDirs) {
-    if (!existsSync(dir)) continue;
-    try {
-      for (const file of readdirSync(dir)) {
-        if (file.startsWith(workerDbPattern)) {
-          unlinkSync(path.join(dir, file));
-        }
+  const demoDataDir = path.join(__dirname, "../../.dev-data/data");
+  if (!existsSync(demoDataDir)) return;
+  try {
+    for (const file of readdirSync(demoDataDir)) {
+      if (file.startsWith(workerDbPattern)) {
+        unlinkSync(path.join(demoDataDir, file));
       }
-    } catch {
-      /* dir may not exist */
     }
+  } catch {
+    /* dir may have been removed concurrently */
   }
 }
 

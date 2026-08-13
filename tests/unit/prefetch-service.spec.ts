@@ -54,7 +54,6 @@ interface AgentDraftItem {
   emailId: string;
   subject: string;
   from: string;
-  priority: string;
   status: "queued" | "running" | "completed" | "failed";
   startedAt?: number;
   completedAt?: number;
@@ -161,28 +160,13 @@ function buildProgress(
 }
 
 // ---------------------------------------------------------------------------
-// Re-implement priority assignment for sender profiles
+// Re-implement sender profile queue priority — Priority (needs-reply) emails
+// are queued at weight 10, Other emails at weight 30. The three-level priority
+// system was collapsed to this binary check in issue #143.
 // ---------------------------------------------------------------------------
 
-function assignSenderProfilePriority(
-  needsReply: boolean,
-  analysisPriority?: "high" | "medium" | "low" | "skip",
-): number {
-  let priority = 40; // Default: no reply needed
-  if (needsReply) {
-    switch (analysisPriority) {
-      case "high":
-        priority = 10;
-        break;
-      case "medium":
-        priority = 20;
-        break;
-      case "low":
-        priority = 30;
-        break;
-    }
-  }
-  return priority;
+function assignSenderProfilePriority(needsReply: boolean): number {
+  return needsReply ? 10 : 30;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +254,6 @@ test.describe("AgentDraftTracker", () => {
       emailId: "e1",
       subject: "Test",
       from: "alice@example.com",
-      priority: "high",
       status: "running",
       startedAt: Date.now(),
     });
@@ -285,7 +268,6 @@ test.describe("AgentDraftTracker", () => {
       emailId: "e1",
       subject: "Test",
       from: "alice@example.com",
-      priority: "high",
       status: "running",
       startedAt: Date.now(),
     });
@@ -305,7 +287,6 @@ test.describe("AgentDraftTracker", () => {
       emailId: "e1",
       subject: "Test",
       from: "alice@example.com",
-      priority: "high",
       status: "running",
     });
 
@@ -323,7 +304,6 @@ test.describe("AgentDraftTracker", () => {
         emailId: `e${i}`,
         subject: `Test ${i}`,
         from: "alice@example.com",
-        priority: "medium",
         status: "running",
       });
       tracker.markDone(`e${i}`, "completed");
@@ -455,130 +435,16 @@ test.describe("buildProgress", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: assignSenderProfilePriority
+// Tests: assignSenderProfilePriority — Priority/Other binary classification
 // ---------------------------------------------------------------------------
 
 test.describe("assignSenderProfilePriority", () => {
-  test("returns 10 for high priority needs-reply email", () => {
-    expect(assignSenderProfilePriority(true, "high")).toBe(10);
+  test("returns 10 for Priority (needs-reply) email", () => {
+    expect(assignSenderProfilePriority(true)).toBe(10);
   });
 
-  test("returns 20 for medium priority needs-reply email", () => {
-    expect(assignSenderProfilePriority(true, "medium")).toBe(20);
-  });
-
-  test("returns 30 for low priority needs-reply email", () => {
-    expect(assignSenderProfilePriority(true, "low")).toBe(30);
-  });
-
-  test("returns 40 for no-reply email regardless of priority", () => {
-    expect(assignSenderProfilePriority(false, "high")).toBe(40);
-    expect(assignSenderProfilePriority(false, "medium")).toBe(40);
-    expect(assignSenderProfilePriority(false, "low")).toBe(40);
-    expect(assignSenderProfilePriority(false)).toBe(40);
-  });
-
-  test("returns 40 for needs-reply with skip priority", () => {
-    expect(assignSenderProfilePriority(true, "skip")).toBe(40);
-  });
-
-  test("returns 40 for needs-reply with undefined priority", () => {
-    expect(assignSenderProfilePriority(true, undefined)).toBe(40);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests: queueSenderProfiles priority sorting logic (re-implemented)
-// ---------------------------------------------------------------------------
-
-test.describe("queueSenderProfiles sorting", () => {
-  type EmailWithAnalysis = {
-    id: string;
-    from: string;
-    analysis?: { priority?: string };
-  };
-
-  function sortEmailsByPriority(emails: EmailWithAnalysis[]): EmailWithAnalysis[] {
-    const priorityOrder: Record<string, number> = {
-      high: 1,
-      medium: 2,
-      low: 3,
-    };
-    return [...emails].sort((a, b) => {
-      const aPriority = priorityOrder[a.analysis?.priority || "low"] || 3;
-      const bPriority = priorityOrder[b.analysis?.priority || "low"] || 3;
-      return aPriority - bPriority;
-    });
-  }
-
-  test("sorts high priority first, then medium, then low", () => {
-    const emails: EmailWithAnalysis[] = [
-      { id: "low", from: "a@example.com", analysis: { priority: "low" } },
-      { id: "high", from: "b@example.com", analysis: { priority: "high" } },
-      { id: "med", from: "c@example.com", analysis: { priority: "medium" } },
-    ];
-
-    const sorted = sortEmailsByPriority(emails);
-    expect(sorted.map((e) => e.id)).toEqual(["high", "med", "low"]);
-  });
-
-  test("treats missing priority as low", () => {
-    const emails: EmailWithAnalysis[] = [
-      { id: "none", from: "a@example.com", analysis: {} },
-      { id: "high", from: "b@example.com", analysis: { priority: "high" } },
-    ];
-
-    const sorted = sortEmailsByPriority(emails);
-    expect(sorted[0].id).toBe("high");
-    expect(sorted[1].id).toBe("none");
-  });
-
-  test("treats missing analysis as low priority", () => {
-    const emails: EmailWithAnalysis[] = [
-      { id: "no-analysis", from: "a@example.com" },
-      { id: "high", from: "b@example.com", analysis: { priority: "high" } },
-    ];
-
-    const sorted = sortEmailsByPriority(emails);
-    expect(sorted[0].id).toBe("high");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests: autoDraft priority filtering logic (re-implemented)
-// ---------------------------------------------------------------------------
-
-test.describe("autoDraft priority filtering", () => {
-  function shouldAutoDraft(
-    emailPriority: string | undefined,
-    allowedPriorities: string[],
-  ): boolean {
-    return allowedPriorities.includes(emailPriority || "low");
-  }
-
-  test("allows high priority when configured for high+medium", () => {
-    expect(shouldAutoDraft("high", ["high", "medium"])).toBe(true);
-  });
-
-  test("allows medium priority when configured for high+medium", () => {
-    expect(shouldAutoDraft("medium", ["high", "medium"])).toBe(true);
-  });
-
-  test("rejects low priority when configured for high+medium only", () => {
-    expect(shouldAutoDraft("low", ["high", "medium"])).toBe(false);
-  });
-
-  test("allows low priority when explicitly configured", () => {
-    expect(shouldAutoDraft("low", ["high", "medium", "low"])).toBe(true);
-  });
-
-  test("treats undefined priority as 'low'", () => {
-    expect(shouldAutoDraft(undefined, ["high", "medium"])).toBe(false);
-    expect(shouldAutoDraft(undefined, ["high", "medium", "low"])).toBe(true);
-  });
-
-  test("rejects skip priority always", () => {
-    expect(shouldAutoDraft("skip", ["high", "medium", "low"])).toBe(false);
+  test("returns 30 for Other (no-reply) email", () => {
+    expect(assignSenderProfilePriority(false)).toBe(30);
   });
 });
 

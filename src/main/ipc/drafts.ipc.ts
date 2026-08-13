@@ -1,5 +1,5 @@
 import { ipcMain } from "electron";
-import { createMessage } from "../services/anthropic-service";
+import { createMessage } from "../services/llm-service";
 import {
   getEmail,
   deleteDraft,
@@ -13,7 +13,7 @@ import {
   deleteGmailDraftById,
   deleteGmailDraftsBatch,
 } from "../services/gmail-draft-sync";
-import { getConfig, getModelIdForFeature } from "./settings.ipc";
+import { getConfig, getFeatureModelConfig, getBackgroundAgentProviderId } from "./settings.ipc";
 import { buildMemoryContext } from "../services/memory-context";
 import { prefetchService } from "../services/prefetch-service";
 import { agentCoordinator } from "../agents/agent-coordinator";
@@ -117,9 +117,10 @@ export function registerDraftsIpc(): void {
           : "";
         const memorySection = memoryContext ? `\n${memoryContext}\n---\n` : "";
 
+        const refinementConfig = getFeatureModelConfig("refinement");
         const response = await createMessage(
           {
-            model: getModelIdForFeature("refinement"),
+            model: refinementConfig.model,
             max_tokens: 1024,
             system: [{ type: "text", text: UNTRUSTED_DATA_INSTRUCTION }],
             messages: [
@@ -145,7 +146,12 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
               },
             ],
           },
-          { caller: "drafts-refine", emailId, accountId: email.accountId },
+          {
+            caller: "drafts-refine",
+            emailId,
+            accountId: email.accountId,
+            provider: refinementConfig.provider,
+          },
         );
 
         const textBlock = response.content.find((block) => block.type === "text");
@@ -171,7 +177,10 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
   // Rerun agent draft for a single email
   ipcMain.handle(
     "drafts:rerun-agent",
-    async (_, { emailId }: { emailId: string }): Promise<IpcResponse<{ taskId: string }>> => {
+    async (
+      _,
+      { emailId }: { emailId: string },
+    ): Promise<IpcResponse<{ taskId: string; providerIds: string[] }>> => {
       if (useFakeData) {
         return { success: false, error: "Agent drafting is not available in demo/test mode" };
       }
@@ -225,7 +234,8 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
         prefetchService.trackManualAgentDraft(emailId, taskId);
 
         // Launch agent — events auto-stream to renderer via agent:event IPC
-        await agentCoordinator.runAgent(taskId, ["claude"], prompt, context);
+        const providerId = getBackgroundAgentProviderId();
+        await agentCoordinator.runAgent(taskId, [providerId], prompt, context);
 
         // Link draft to agent task when it completes (async, don't block response)
         agentCoordinator
@@ -246,7 +256,7 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
             prefetchService.markAgentDraftDone(emailId, "failed");
           });
 
-        return { success: true, data: { taskId } };
+        return { success: true, data: { taskId, providerIds: [providerId] } };
       } catch (error) {
         return {
           success: false,
@@ -278,8 +288,10 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
           `[Drafts] Rerun all: cleared ${clearedCount} pending drafts, ${tracesCleared} agent traces`,
         );
 
-        // Reset prefetch tracking so emails can be re-queued
-        prefetchService.clear();
+        // Reset prefetch tracking so emails can be re-queued.
+        // Use clearForRerun() so the next processAllPending() does NOT re-seed
+        // processedDrafts from DB — the seed would re-block all the just-cleared drafts.
+        prefetchService.clearForRerun();
 
         // Re-trigger the full prefetch pipeline (fire-and-forget, but catch errors)
         prefetchService.processAllPending().catch((err) => {

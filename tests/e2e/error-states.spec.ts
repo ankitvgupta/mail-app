@@ -331,18 +331,19 @@ test.describe("Error States - UI Resilience", () => {
   });
 
   test("double-clicking an email doesn't cause issues", async () => {
-    // Find an email to double-click
-    const emailButton = page
-      .locator("button")
-      .filter({ hasText: /HIGH|MEDIUM|LOW/ })
-      .first();
+    // Priority pills were collapsed in issue #143 — pick any visible thread.
+    const emailButton = page.locator("[data-thread-id]").first();
 
     if (await emailButton.isVisible()) {
       await emailButton.dblclick();
       await page.waitForTimeout(500);
 
-      // App should handle double-click gracefully
-      await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 5000 });
+      // App should handle double-click gracefully. Verify against the titlebar
+      // "Exo" header rather than the sidebar Inbox button: clicking a thread
+      // switches to full-view mode which hides the sidebar, so a previous
+      // assertion against `text=Inbox` would flake. The titlebar is always
+      // visible whatever the view mode.
+      await expect(page.locator("h1").filter({ hasText: "Exo" })).toBeVisible({ timeout: 5000 });
     }
   });
 
@@ -359,8 +360,10 @@ test.describe("Error States - UI Resilience", () => {
       await refreshButton.click();
       await page.waitForTimeout(500);
 
-      // Inbox should still be visible
-      await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 5000 });
+      // App should still be alive after refresh. Verify against the always-
+      // visible titlebar rather than the sidebar Inbox button, which is
+      // hidden when the previous keyboard actions land the app in full view.
+      await expect(page.locator("h1").filter({ hasText: "Exo" })).toBeVisible({ timeout: 5000 });
     }
   });
 });

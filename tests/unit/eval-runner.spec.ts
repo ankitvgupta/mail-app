@@ -30,64 +30,37 @@ test.describe("Eval fixtures", () => {
 });
 
 test.describe("Deterministic scoring", () => {
-  test("perfect score when both needs_reply and priority match", () => {
+  test("full score when needs_reply matches (priority)", () => {
     const actual: AnalysisResult = {
       needs_reply: true,
       reason: "Urgent request",
-      priority: "high",
     };
     const expected: EvalFixtureExpected = {
       needs_reply: true,
-      priority: "high",
     };
 
     const result = scoreDeterministic("test-001", actual, expected);
 
     expect(result.score).toBe(10);
     expect(result.needs_reply_correct).toBe(true);
-    expect(result.priority_correct).toBe(true);
-  });
-
-  test("partial score when needs_reply matches but priority does not", () => {
-    const actual: AnalysisResult = {
-      needs_reply: true,
-      reason: "Question",
-      priority: "low",
-    };
-    const expected: EvalFixtureExpected = {
-      needs_reply: true,
-      priority: "high",
-    };
-
-    const result = scoreDeterministic("test-002", actual, expected);
-
-    expect(result.score).toBe(5);
-    expect(result.needs_reply_correct).toBe(true);
-    expect(result.priority_correct).toBe(false);
   });
 
   test("zero score when needs_reply mismatches", () => {
     const actual: AnalysisResult = {
       needs_reply: true,
       reason: "Looks important",
-      priority: "medium",
     };
     const expected: EvalFixtureExpected = {
       needs_reply: false,
     };
 
-    const result = scoreDeterministic("test-003", actual, expected);
+    const result = scoreDeterministic("test-002", actual, expected);
 
-    // needs_reply wrong = 0 points, but priority is auto-pass for no-reply expected
-    // Wait — actual says needs_reply=true, expected says false.
-    // needs_reply wrong = 0 points
-    // Since expected.needs_reply is false, priority is auto-pass = 5 points
-    expect(result.score).toBe(5);
+    expect(result.score).toBe(0);
     expect(result.needs_reply_correct).toBe(false);
-    expect(result.priority_correct).toBe(true);
   });
 
-  test("full score for no-reply match (priority auto-awarded)", () => {
+  test("full score for no-reply match", () => {
     const actual: AnalysisResult = {
       needs_reply: false,
       reason: "Newsletter",
@@ -96,11 +69,10 @@ test.describe("Deterministic scoring", () => {
       needs_reply: false,
     };
 
-    const result = scoreDeterministic("test-004", actual, expected);
+    const result = scoreDeterministic("test-003", actual, expected);
 
     expect(result.score).toBe(10);
     expect(result.needs_reply_correct).toBe(true);
-    expect(result.priority_correct).toBe(true);
   });
 });
 
@@ -116,13 +88,13 @@ test.describe("Baseline comparison", () => {
     const currentResults = [
       scoreDeterministic(
         "fixture-a",
-        { needs_reply: true, reason: "ok", priority: "high" },
-        { needs_reply: true, priority: "high" },
+        { needs_reply: true, reason: "ok" },
+        { needs_reply: true },
       ),
       scoreDeterministic(
         "fixture-b",
         { needs_reply: false, reason: "wrong" }, // regression: expected needs_reply=true
-        { needs_reply: true, priority: "medium" },
+        { needs_reply: true },
       ),
     ];
 

@@ -1,0 +1,40 @@
+{
+  "id": "ar-1-resolved-thread",
+  "description": "A thread that ended with explicit agreement — should be marked archive-ready.",
+  "input": {
+    "thread": [
+      {
+        "id": "ar-1-m1",
+        "thread_id": "ar-1",
+        "from": "Frank Lopez <frank@bigcustomer.test>",
+        "to": "you@example.test",
+        "subject": "Quick call next week?",
+        "snippet": "Could we grab 30 minutes?",
+        "body": "Hey, could we grab 30 minutes next week to catch up? Tuesday or Wednesday afternoon work for me.\n\nFrank",
+        "date": "2026-05-18T10:00:00Z"
+      },
+      {
+        "id": "ar-1-m2",
+        "thread_id": "ar-1",
+        "from": "you@example.test",
+        "to": "Frank Lopez <frank@bigcustomer.test>",
+        "subject": "Re: Quick call next week?",
+        "snippet": "Tuesday at 2pm works",
+        "body": "Tuesday at 2pm works great. I'll send a calendar invite.",
+        "date": "2026-05-18T11:00:00Z"
+      },
+      {
+        "id": "ar-1-m3",
+        "thread_id": "ar-1",
+        "from": "Frank Lopez <frank@bigcustomer.test>",
+        "to": "you@example.test",
+        "subject": "Re: Quick call next week?",
+        "snippet": "Got it, see you then",
+        "body": "Got it, see you then. Thanks!\n\nFrank",
+        "date": "2026-05-18T11:15:00Z"
+      }
+    ]
+  },
+  "rubric": "Good output:\n- Indicates the thread is archive-ready (e.g. `isArchiveReady: true` or similar field set positively)\n- Reasoning acknowledges the explicit agreement / resolution\n\nBad output:\n- Marks the thread as needing further action despite the explicit close\n- Inconsistent fields (claims resolved but suggests follow-up)",
+  "expectedMinScore": 7
+}

@@ -19,7 +19,6 @@ type SnippetsStore = {
   snippets: Snippet[];
 };
 
-// Lazy-initialized to avoid running before initDevData()
 let _store: Store<SnippetsStore> | null = null;
 function getStore(): Store<SnippetsStore> {
   if (!_store) {

@@ -192,7 +192,7 @@ test.describe("Undo Send - Toast restoration flow", () => {
     );
 
     expect(toastCode).toContain("optimisticEmailId");
-    expect(toastCode).toContain("store.removeEmails");
+    expect(toastCode).toContain("emails: s.emails.filter((e) => e.id !== optimisticId)");
   });
 
   test("UndoSendToast supports keyboard shortcut for undo", () => {

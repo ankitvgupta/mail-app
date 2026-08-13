@@ -1,13 +1,11 @@
 import { app, BrowserWindow, ipcMain, session, nativeTheme } from "electron";
 import { join } from "path";
 import { readFileSync, existsSync, readdirSync } from "fs";
-import { electronApp, optimizer } from "@electron-toolkit/utils";
+import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import Store from "electron-store";
 
-import { getDataDir, initDevData } from "./data-dir";
+import { getDataDir } from "./data-dir";
 import { createLogger, closeLogs } from "./services/logger";
-
-initDevData();
 
 const log = createLogger("app");
 
@@ -55,6 +53,23 @@ import { calendarSyncService } from "./services/calendar-sync";
 import { emailSyncService } from "./services/email-sync";
 import * as webSearchExtension from "../extensions/mail-ext-web-search/src/index";
 import * as calendarExtension from "../extensions/mail-ext-calendar/src/index";
+
+// Anchor Electron's framework userData (SingletonLock, sessions, cache, IDB,
+// LocalStorage, ServiceWorkers, GPUCache) to the per-worktree `.dev-data/` in
+// dev, or to EXO_USER_DATA_DIR when set (packaged smoke tests). Without this,
+// Electron defaults to the packaged app's real user-data dir, so dev runs both
+// pollute real user data and collide on the singleton lock across parallel
+// worktrees. Must run before any `app.getPath("userData")` call below.
+if (is.dev || process.env.EXO_USER_DATA_DIR) {
+  app.setPath("userData", getDataDir());
+}
+// Surface an active override loudly: a leftover `export EXO_USER_DATA_DIR`
+// silently redirects a production launch to a scratch dir — the user sees an
+// "empty" app and the logs land in the override dir, so without this line
+// nothing anywhere records why.
+if (process.env.EXO_USER_DATA_DIR) {
+  log.warn(`[Config] Data dir overridden by EXO_USER_DATA_DIR: ${process.env.EXO_USER_DATA_DIR}`);
+}
 
 // Skip Keychain for Chromium's internal cookie/localStorage encryption.
 // Without this, macOS prompts "wants to access data from other apps" on first launch
@@ -389,8 +404,8 @@ ipcMain.handle("default-mail-app:get-pending", () => {
 // Initialize database on startup
 const _db = initDatabase();
 
-// Wire up AnthropicService cost tracking
-import { setAnthropicServiceDb } from "./services/anthropic-service";
+// Wire up LLM service cost tracking
+import { setAnthropicServiceDb, setOllamaConfig } from "./services/llm-service";
 setAnthropicServiceDb(_db);
 
 // If no ANTHROPIC_API_KEY in env (e.g. packaged app with no .env), read from stored config
@@ -399,6 +414,10 @@ setAnthropicServiceDb(_db);
   const config = getConfig();
   if (!process.env.ANTHROPIC_API_KEY && config.anthropicApiKey) {
     process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  }
+  // Initialize Ollama Cloud client if configured
+  if (config.ollamaCloud?.apiKey) {
+    setOllamaConfig(config.ollamaCloud.apiKey);
   }
 }
 
@@ -420,9 +439,15 @@ app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId("com.exo.app");
 
-  // Set dock icon on macOS (especially for dev mode where packaged icon isn't used)
+  // Set dock icon on macOS (especially for dev mode where packaged icon isn't used).
+  // In headless mode, hide the dock icon entirely so launching the app for CDP-based
+  // testing doesn't pop a dock icon or steal focus from the user.
   if (process.platform === "darwin" && app.dock) {
-    app.dock.setIcon(getIconPath());
+    if (process.env.EXO_HEADLESS === "true" || process.env.NODE_ENV === "test") {
+      app.dock.hide();
+    } else {
+      app.dock.setIcon(getIconPath());
+    }
   }
 
   // Initialize network monitor

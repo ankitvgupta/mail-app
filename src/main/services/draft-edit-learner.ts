@@ -10,7 +10,8 @@
  * Key invariant: draft memories never enter the prompt. Only promoted memories do.
  */
 import { randomUUID } from "crypto";
-import { createMessage, getClient, recordStreamingCall } from "./anthropic-service";
+import { createMessage, getClient, recordStreamingCall } from "./llm-service";
+import { getConfig } from "../ipc/settings.ipc";
 import {
   getThreadDraftBody,
   getDraftMemories,
@@ -34,6 +35,21 @@ import type {
 import { createLogger } from "./logger";
 
 const log = createLogger("draft-edit-learner");
+
+/**
+ * Whether Anthropic credentials are available. The draft-edit learner uses
+ * `messages.stream` with extended thinking — both Anthropic-specific. For
+ * Ollama-only users we skip the learner entirely so it doesn't crash trying
+ * to construct an Anthropic client without a key.
+ */
+function hasAnthropicCredentials(): boolean {
+  if (process.env.ANTHROPIC_API_KEY) return true;
+  try {
+    return !!getConfig().anthropicApiKey;
+  } catch {
+    return false;
+  }
+}
 
 /** Result of learning from a draft edit */
 export interface DraftEditLearnResult {
@@ -404,6 +420,12 @@ export async function filterAgainstPromotedMemories(
     return observations;
   }
 
+  // Anthropic-only path (uses Claude-specific streaming + thinking elsewhere).
+  if (!hasAnthropicCredentials()) {
+    log.info("[DraftEditLearner] No Anthropic credentials — skipping filter");
+    return observations;
+  }
+
   const response = await createMessage(
     {
       model: "claude-sonnet-4-5-20250929",
@@ -499,6 +521,12 @@ export async function consolidateMemoryScopes(
 
   // Skip API call in demo/test mode — treat all candidates as new
   if (process.env.EXO_TEST_MODE === "true" || process.env.EXO_DEMO_MODE === "true") {
+    return { action: "save", deletedIds: [], createdGlobal: null, coveringMemoryId: null };
+  }
+
+  // Anthropic-only path. Without an Anthropic key, treat the candidate as new.
+  if (!hasAnthropicCredentials()) {
+    log.info("[DraftEditLearner] No Anthropic credentials — skipping consolidate");
     return { action: "save", deletedIds: [], createdGlobal: null, coveringMemoryId: null };
   }
 
@@ -661,6 +689,12 @@ export async function learnFromDraftEdit(params: {
   sentBodyHtml: string;
   sentBodyText?: string;
 }): Promise<DraftEditLearnResult | null> {
+  // The full edit-learning pipeline depends on Anthropic-specific features
+  // (extended thinking via `messages.stream`). Skip cleanly for Ollama-only users.
+  if (!hasAnthropicCredentials()) {
+    log.info("[DraftEditLearner] No Anthropic credentials — skipping learn");
+    return null;
+  }
   const { threadId, accountId, sentBodyHtml } = params;
   log.info(`[DraftEditLearner] Called for thread ${threadId}`);
 

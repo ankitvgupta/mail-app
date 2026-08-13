@@ -867,25 +867,19 @@ Kevin`,
 ];
 
 // Expected analysis results for demo emails
-export const DEMO_EXPECTED_ANALYSIS: Record<
-  string,
-  { needsReply: boolean; priority?: "high" | "medium" | "low"; reason: string }
-> = {
+export const DEMO_EXPECTED_ANALYSIS: Record<string, { needsReply: boolean; reason: string }> = {
   "demo-001": { needsReply: false, reason: "Initial email in thread, already has follow-ups" },
   "demo-002": { needsReply: false, reason: "Middle of thread, not the latest message" },
   "demo-003": {
     needsReply: true,
-    priority: "high",
     reason: "Direct question about availability and request for technical input",
   },
   "demo-004": {
     needsReply: true,
-    priority: "medium",
     reason: "Technical questions requiring expertise, customer going live next week",
   },
   "demo-005": {
     needsReply: true,
-    priority: "high",
     reason: "Action items with deadline, needs confirmation for exec review",
   },
   "demo-006": { needsReply: false, reason: "Automated GitHub CI notification" },
@@ -893,28 +887,23 @@ export const DEMO_EXPECTED_ANALYSIS: Record<
   "demo-008": { needsReply: false, reason: "Automated shipping notification" },
   "demo-009": {
     needsReply: true,
-    priority: "medium",
     reason: "Interview scheduling request requiring confirmation",
   },
   "demo-010": {
     needsReply: true,
-    priority: "low",
     reason: "Personal lunch invitation, can respond when convenient",
   },
   "demo-011": { needsReply: false, reason: "Automated calendar notification" },
   "demo-012": {
     needsReply: true,
-    priority: "high",
     reason: "Production incident requiring immediate attention",
   },
   "demo-meeting": {
     needsReply: true,
-    priority: "medium",
     reason: "Partnership discussion request with scheduling ask",
   },
   "demo-inline-images": {
     needsReply: true,
-    priority: "medium",
     reason: "Design review request requiring feedback",
   },
   "demo-sent-reply-001": { needsReply: false, reason: "Sent by user - no reply needed" },
@@ -934,29 +923,24 @@ export const DEMO_EXPECTED_ANALYSIS: Record<
   },
   "demo-multi-006": {
     needsReply: true,
-    priority: "high",
     reason: "Direct request for tooltip copy, release notes, and webinar date by EOD",
   },
   "demo-html-email": { needsReply: false, reason: "Product update newsletter, no action required" },
   "demo-casual-inbox": {
     needsReply: true,
-    priority: "low",
     reason: "Casual friend asking about weekend plans",
   },
   "demo-formal-inbox": {
     needsReply: true,
-    priority: "medium",
     reason: "Strategic advisory request with deadline from managing partner",
   },
   "demo-intro-request": {
     needsReply: true,
-    priority: "high",
     reason:
       "Direct request for 3 introductions — requires drafting individual intro emails to Garry, Jared, and Diana",
   },
   "demo-intro": {
     needsReply: true,
-    priority: "high",
     reason:
       "Introduction email — should reply to Tim and BCC Kevin (the introducer) to move him to BCC",
   },
@@ -971,12 +955,10 @@ export const DEMO_EXPECTED_ANALYSIS: Record<
   },
   "demo-ea-sched-004": {
     needsReply: true,
-    priority: "medium",
     reason: "David confirmed a time — but Claire (EA) is handling scheduling, user is just CC'd",
   },
   "demo-ea-direct-001": {
     needsReply: true,
-    priority: "high",
     reason: "Direct technical questions addressed to user requiring personal expertise",
   },
 };

@@ -10,6 +10,26 @@
 import { test, expect } from "@playwright/test";
 
 // ============================================================
+// Perf budgets — fail loudly on ~5x regressions, not nitpick.
+// Budgets are generous (~3x current median, rounded up) so they don't flap
+// on slow CI hardware but a real regression will cross the line. Tighten
+// over time once we have a stable history.
+// TODO: add "sync 1k emails ≤ 10s" benchmark per plan Phase 4 Layer 12 —
+// not present here today; would belong in tests/unit/sync-perf.spec.ts
+// where the related harness already lives.
+// ============================================================
+
+// Stripping 200 realistic Gmail bodies via regex — observed ~1ms locally.
+const BUDGET_HTML_STRIP_200_BODIES_MS = 5;
+
+// Stripping 500 short snippets via regex — observed ~0.3ms locally.
+const BUDGET_HTML_STRIP_500_SNIPPETS_MS = 2;
+
+// Parallel load across N accounts with 15ms simulated IPC — observed
+// ~30ms regardless of N because all calls overlap. 50ms is forgiving.
+const BUDGET_PARALLEL_LOAD_MS = 50;
+
+// ============================================================
 // Benchmark harness (same pattern as sync-perf.spec.ts)
 // ============================================================
 
@@ -240,6 +260,7 @@ test.describe("Renderer performance benchmarks", () => {
         () => htmlBodies.map(stripHtmlTagsRegex),
         10,
       );
+      expect(regexResult.median).toBeLessThan(BUDGET_HTML_STRIP_200_BODIES_MS);
 
       const domResult = runBenchmark(
         "OLD (DOMParser-simulated)",
@@ -279,6 +300,7 @@ test.describe("Renderer performance benchmarks", () => {
         () => htmlSnippets.map(stripHtmlTagsRegex),
         20,
       );
+      expect(regexResult.median).toBeLessThan(BUDGET_HTML_STRIP_500_SNIPPETS_MS);
 
       const domResult = runBenchmark(
         "OLD (DOMParser-simulated)",
@@ -427,6 +449,11 @@ test.describe("Renderer performance benchmarks", () => {
         // We use a generous lower bound to avoid flakiness, but the real
         // speedup should be close to accountCount.
         expect(speedup).toBeGreaterThan(expectedMinSpeedup);
+
+        // Absolute budget: parallel load should always be well under
+        // BUDGET_PARALLEL_LOAD_MS no matter how many accounts — that's
+        // the whole point of Promise.all.
+        expect(parallel.median).toBeLessThan(BUDGET_PARALLEL_LOAD_MS);
       });
     }
 

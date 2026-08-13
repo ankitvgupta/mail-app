@@ -2,7 +2,8 @@ import { ipcMain } from "electron";
 import { execFile, execFileSync } from "child_process";
 import { agentCoordinator } from "../agents/agent-coordinator";
 import { authenticateProvider } from "../agents/private-providers-main";
-import { getModelIdForFeature } from "./settings.ipc";
+import { getConfig, getModelIdForFeature } from "./settings.ipc";
+import { resolveAgentOllamaConfig } from "../../shared/types";
 import { getAgentTrace } from "../db";
 import type { AgentContext } from "../agents/types";
 import type { ScopedAgentEvent } from "../agents/types";
@@ -45,8 +46,15 @@ export function registerAgentIpc(): void {
       },
     ): Promise<IpcResponse<{ taskId: string }>> => {
       try {
-        // Interactive agent tasks use the agentChat model (defaults to opus)
-        const modelOverride = getModelIdForFeature("agentChat");
+        // Interactive agent tasks use the agentChat model (defaults to opus).
+        // Pick the model based on the worker's actual destination — using
+        // resolveAgentOllamaConfig which requires BOTH agentChat AND
+        // agentDrafter to be ollama-cloud before routing the worker there.
+        // If only agentChat is set to ollama-cloud (mismatched config), the
+        // worker is still on Anthropic and would 400 with invalid_model
+        // unless we send an Anthropic name.
+        const ollamaConfig = resolveAgentOllamaConfig(getConfig());
+        const modelOverride = ollamaConfig?.model ?? getModelIdForFeature("agentChat");
         await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
         return { success: true, data: { taskId } };
       } catch (error) {

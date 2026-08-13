@@ -55,12 +55,9 @@ test.describe("Snooze Feature — Menu & Presets", () => {
     electronApp = result.app;
     page = result.page;
 
-    // Wait for email list to populate (priority badges or any email sender visible)
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low|HR Team|Product Team|Snoozed/ })
-      .first()
-      .waitFor({ timeout: 15000 });
+    // Wait for email list to populate. Priority pills were collapsed in
+    // issue #143, so use the stable per-row data-thread-id attribute.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 15000 });
 
     page.on("console", (msg) => {
       if (msg.type() === "error") {
@@ -168,12 +165,9 @@ test.describe("Snooze Feature — Natural Language Input", () => {
     electronApp = result.app;
     page = result.page;
 
-    // Wait for email list to populate
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low|Garry|HR Team|Product Team/ })
-      .first()
-      .waitFor({ timeout: 15000 });
+    // Priority pills were collapsed in issue #143 — wait on the stable
+    // per-row data-thread-id attribute instead.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 15000 });
   });
 
   test.afterAll(async () => {
@@ -265,12 +259,9 @@ test.describe("Snooze Feature — Snooze Banner & Unsnooze", () => {
     electronApp = result.app;
     page = result.page;
 
-    // Wait for email list to populate
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low|HR Team|Product Team/ })
-      .first()
-      .waitFor({ timeout: 15000 });
+    // Priority pills were collapsed in issue #143 — wait on the stable
+    // per-row data-thread-id attribute instead.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 15000 });
   });
 
   test.afterAll(async () => {
@@ -372,12 +363,9 @@ test.describe("Snooze Feature — Date Picker", () => {
     electronApp = result.app;
     page = result.page;
 
-    // Wait for email list to populate
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low|HR Team|Product Team/ })
-      .first()
-      .waitFor({ timeout: 15000 });
+    // Priority pills were collapsed in issue #143 — wait on the stable
+    // per-row data-thread-id attribute instead.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 15000 });
   });
 
   test.afterAll(async () => {

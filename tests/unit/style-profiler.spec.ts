@@ -39,11 +39,19 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
+/** Strip the standard email signature delimiter (-- ) and everything after it */
+function stripPlainTextSignature(text: string): string {
+  const sigIndex = text.search(/\n-- ?\n/);
+  if (sigIndex !== -1) return text.slice(0, sigIndex).trim();
+  return text.replace(/\n*Sent (?:by|from) Exo\s*$/i, "").trim();
+}
+
 function extractEmailSignals(bodyText: string): EmailSignals {
+  const cleaned = stripPlainTextSignature(bodyText);
   return {
-    greeting: detectGreeting(bodyText),
-    signoff: detectSignoff(bodyText),
-    wordCount: countWords(bodyText),
+    greeting: detectGreeting(cleaned),
+    signoff: detectSignoff(cleaned),
+    wordCount: countWords(cleaned),
   };
 }
 
@@ -177,5 +185,74 @@ Cheers`;
     expect(signals.greeting).toBe("hey");
     expect(signals.signoff).toBe("cheers");
     expect(signals.wordCount).toBeLessThan(20);
+  });
+});
+
+// ============================================================
+// Signature stripping
+// ============================================================
+
+test.describe("signature stripping", () => {
+  test("strips standard -- signature delimiter", () => {
+    const email = `Hey team,
+
+Here's the update.
+
+Best,
+John
+
+--
+Sent by Exo`;
+
+    const signals = extractEmailSignals(email);
+    expect(signals.signoff).toBe("best");
+    // "Sent by Exo" should not be counted in word count
+    expect(signals.wordCount).toBeLessThan(10);
+  });
+
+  test("strips 'Sent by Exo' without -- delimiter", () => {
+    const email = `Sounds good!
+
+Thanks
+Sent by Exo`;
+
+    const signals = extractEmailSignals(email);
+    expect(signals.signoff).toBe("thanks");
+    // "Sent by Exo" should be stripped
+    expect(signals.wordCount).toBe(3); // "Sounds good! Thanks"
+  });
+
+  test("strips 'Sent from Exo' variant", () => {
+    const email = `Got it, will do.
+Sent from Exo`;
+
+    const signals = extractEmailSignals(email);
+    expect(signals.wordCount).toBe(4); // "Got it, will do."
+  });
+
+  test("preserves sign-off above -- delimiter", () => {
+    const email = `Thanks for the update.
+
+Cheers,
+Alice
+
+--
+Alice Smith
+Engineering Lead`;
+
+    const signals = extractEmailSignals(email);
+    expect(signals.signoff).toBe("cheers");
+    expect(signals.greeting).toBe("none");
+  });
+
+  test("handles email with no signature", () => {
+    const email = `Just checking in on the project status.
+
+Best,
+Bob`;
+
+    const signals = extractEmailSignals(email);
+    expect(signals.signoff).toBe("best");
+    expect(signals.wordCount).toBe(9);
   });
 });

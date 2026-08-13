@@ -23,6 +23,9 @@ release/
 *.swp
 *.swo
 
+# Claude Code harness runtime state
+.claude/scheduled_tasks.lock
+
 # SQLite database (stored in user data directory, but just in case)
 *.db
 *.db-journal
@@ -55,9 +58,19 @@ tests/screenshots/
 # Dev mode data directory (isolated from production)
 .dev-data/
 
+# Packaged smoke-test data directory (tests/packaged/, isolated from production)
+.packaged-test-data/
+
 # Private extensions and agents (copied in at build time by mail-app)
 src/extensions-private/
 src/agents-private/
 
 # gstack QA reports
 .gstack/
+
+# Spike + agentic-verify run logs (Phase 1.5)
+scripts/.spike-runs/
+scripts/.agentic-runs/
+
+# Pre-PR local report (gitignored, injected into PR body)
+.pre-pr-report.md

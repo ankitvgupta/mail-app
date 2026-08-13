@@ -1,6 +1,7 @@
 import React from "react";
 import type { DashboardEmail } from "../../../shared/types";
 import type { ExtensionEnrichmentResult } from "../../../shared/extension-types";
+import { useAppStore } from "../../store";
 
 // Types for the enrichment data from web-search extension
 interface SenderProfileData {
@@ -26,6 +27,7 @@ interface SenderProfilePanelProps {
  */
 export function SenderProfilePanel({
   email,
+  threadEmails,
   enrichment,
   isLoading,
 }: SenderProfilePanelProps): React.ReactElement {
@@ -38,6 +40,38 @@ export function SenderProfilePanel({
   const senderName = profile?.name || extractDisplayName(email.from);
   const senderEmail = profile?.email || extractEmailAddress(email.from);
 
+  const addUndoAction = useAppStore((s) => s.addUndoAction);
+  const removeEmails = useAppStore((s) => s.removeEmails);
+
+  // Hide the block button on reminder emails — the visible sender is the
+  // original-sender (e.g. someone you bcc'd via Boomerang), and blocking
+  // them via the reminder service header would do the wrong thing.
+  const canBlock = !isReminder && !!email.accountId && !!senderEmail && senderEmail.includes("@");
+
+  // Deferred commit: optimistically remove the thread from view and queue an
+  // undo. The IPC (create Gmail filter + trash existing messages) only fires
+  // when the undo timer elapses; clicking Undo within 5s restores the view
+  // and the server-side action never happens.
+  const handleBlock = () => {
+    if (!canBlock || !email.accountId) return;
+    const accountId = email.accountId;
+    const normalized = senderEmail.toLowerCase();
+
+    const threadIds = threadEmails.map((e) => e.id);
+    removeEmails(threadIds);
+
+    addUndoAction({
+      id: `block-${normalized}-${Date.now()}`,
+      type: "block",
+      threadCount: 1,
+      accountId,
+      emails: [...threadEmails],
+      scheduledAt: Date.now(),
+      delayMs: 5000,
+      blockedSender: normalized,
+    });
+  };
+
   return (
     <div className="p-4">
       {/* Reminder indicator */}
@@ -48,7 +82,7 @@ export function SenderProfilePanel({
       )}
 
       {/* Sender Avatar & Name */}
-      <div className="flex items-center space-x-3 mb-4">
+      <div className="flex items-center space-x-3 mb-3">
         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-lg font-semibold text-white">
           {senderName.charAt(0).toUpperCase()}
         </div>
@@ -57,6 +91,18 @@ export function SenderProfilePanel({
           <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{senderEmail}</p>
         </div>
       </div>
+
+      {/* Block sender — single click, undoable via toast */}
+      {canBlock && (
+        <button
+          type="button"
+          onClick={handleBlock}
+          className="mb-4 text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:underline"
+          title="Create a Gmail filter that routes this sender to Trash"
+        >
+          Block sender
+        </button>
+      )}
 
       {/* Loading state */}
       {isLoading && (

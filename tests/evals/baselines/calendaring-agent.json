@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature": "calendaring-agent",
+  "judgeModel": "claude-opus-4-7",
+  "generatedAt": "2026-05-21T06:08:00Z",
+  "scores": {
+    "ca-1-explicit-scheduling": {
+      "score": 9,
+      "reason": "p25 of 10-run variance analysis under Opus judge. Strong feature performance; Opus consistently scores 9-10."
+    },
+    "ca-2-not-scheduling": {
+      "score": 10,
+      "reason": "Deterministic 10 across 10 runs under Opus. The judge has no ambiguity on negative-case scheduling detection."
+    },
+    "ca-3-ambiguous-time": {
+      "score": 9,
+      "reason": "Deterministic 9 across 10 runs under Opus. Opus mechanically lands on 9 for the borderline 'let's catch up sometime' case."
+    }
+  }
+}

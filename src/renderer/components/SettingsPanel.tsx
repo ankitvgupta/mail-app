@@ -18,6 +18,16 @@ import {
   type ModelConfig,
   type ModelTier,
   type CliToolConfig,
+  LLM_PROVIDERS,
+  type LlmProvider,
+  SENDER_LOOKUP_PROVIDERS,
+  type SenderLookupProvider,
+  DEFAULT_OLLAMA_MODEL,
+  DEFAULT_BACKGROUND_AGENT_PROVIDER,
+  resolveBackgroundAgentProviderId,
+  applyAgentDrafterSelection,
+  isAgentRuntimeAvailable,
+  type BlockedSender,
 } from "../../shared/types";
 import { useAppStore, type Account, type SettingsTab } from "../store";
 import { reconfigurePostHog, trackEvent } from "../services/posthog";
@@ -25,6 +35,7 @@ import { SplitConfigEditor } from "./SplitConfigEditor";
 import { SnippetsEditor } from "./SnippetsEditor";
 import { MemoriesTab } from "./MemoriesTab";
 import { ExtensionsTab } from "./ExtensionsTab";
+import { OllamaModelSelect } from "./OllamaModelSelect";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -50,6 +61,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     setKeyboardBindings,
     undoSendDelaySeconds,
     setUndoSendDelay,
+    sendAndArchive,
+    setSendAndArchive,
     currentAccountId,
     highlightMemoryIds,
   } = useAppStore();
@@ -62,6 +75,10 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
   const [stylePrompt, setStylePrompt] = useState("");
+  const [isInferring, setIsInferring] = useState(false);
+  const [inferError, setInferError] = useState<string | null>(null);
+  const [isSavingStyle, setIsSavingStyle] = useState(false);
+  const [styleSaved, setStyleSaved] = useState(false);
   const [agentDrafterPrompt, setAgentDrafterPrompt] = useState("");
   const [isRerunningAll, setIsRerunningAll] = useState(false);
   const [rerunResult, setRerunResult] = useState<string | null>(null);
@@ -81,8 +98,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
   // General settings state
   const [enableSenderLookup, setEnableSenderLookup] = useState(true);
+  const [senderLookupProvider, setSenderLookupProvider] =
+    useState<SenderLookupProvider>("anthropic");
+  const [exaApiKey, setExaApiKey] = useState("");
+  const [syncDraftsToGmail, setSyncDraftsToGmail] = useState(false);
   const [modelConfig, setModelConfig] = useState<ModelConfig>(DEFAULT_MODEL_CONFIG);
+  const [featureProviders, setFeatureProviders] = useState<Record<string, LlmProvider>>({});
+  const [ollamaModels, setOllamaModels] = useState<Record<string, string>>({});
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  // "saved" for transient success feedback, any other string is an error message
+  const [generalSaveResult, setGeneralSaveResult] = useState<string | null>(null);
   const [isExportingLogs, setIsExportingLogs] = useState(false);
   const [exportLogsError, setExportLogsError] = useState<string | null>(null);
   const [isDefaultMailApp, setIsDefaultMailApp] = useState(false);
@@ -129,11 +154,16 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const [chromeProfilePath, setChromeProfilePath] = useState("");
   const [isSavingBrowser, setIsSavingBrowser] = useState(false);
 
+  // Which agent provider runs background auto-drafts (new-email drafter + regenerate).
+  // Provider gates (opencode/hostler enabled state) are derived from generalConfig.
+  const [backgroundAgentProvider, setBackgroundAgentProvider] = useState(
+    DEFAULT_BACKGROUND_AGENT_PROVIDER,
+  );
+
   // PostHog analytics state — initialized once from config, not clobbered by react-query refetch
   const [posthogEnabled, setPosthogEnabled] = useState(false);
   const [isSavingAnalytics, setIsSavingAnalytics] = useState(false);
   const [analyticsSaveResult, setAnalyticsSaveResult] = useState<string | null>(null);
-  const analyticsInitialized = useRef(false);
 
   // Custom MCP servers state
   const [mcpServers, setMcpServers] = useState<Record<string, McpServerConfig>>({});
@@ -182,8 +212,14 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     },
   });
 
-  // Fetch general config
-  const { data: generalConfig } = useQuery({
+  // Fetch general config. The key is shared with other observers (e.g.
+  // useSignature) whose cached copy can be minutes old — force a fresh fetch
+  // per panel open since the once-only hydration below snapshots what it sees.
+  const {
+    data: generalConfig,
+    isError: generalConfigLoadError,
+    isFetchedAfterMount: generalConfigFresh,
+  } = useQuery({
     queryKey: ["general-config"],
     queryFn: async () => {
       const result = await window.api.settings.get();
@@ -192,7 +228,23 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       }
       throw new Error(result.error);
     },
+    refetchOnMount: "always",
   });
+
+  // What the main process will actually launch for background drafts, given
+  // the current provider gates — the same resolver prefetch/rerun use, so the
+  // fallback warning under the Agent Drafter row can't drift from real behavior.
+  const runtimeGates = {
+    opencode: generalConfig?.opencode,
+    hostler: generalConfig?.hostler,
+    openclaw: generalConfig?.openclaw,
+  };
+  const effectiveBackgroundProvider = resolveBackgroundAgentProviderId({
+    backgroundAgentProvider,
+    ...runtimeGates,
+  });
+  const opencodeRuntimeAvailable = isAgentRuntimeAvailable("opencode", runtimeGates);
+  const hostlerRuntimeAvailable = isAgentRuntimeAvailable("hostler", runtimeGates);
 
   useEffect(() => {
     if (prompts) {
@@ -222,10 +274,26 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       .catch(() => {});
   }, []);
 
+  // Hydrate staged General-tab state ONCE from the first config load. Later
+  // refetches (Extensions-tab saves invalidate general-config; window-focus
+  // refetch after staleTime) must not rewrite staged fields — that silently
+  // reverts unsaved edits, which the user then persists without noticing.
+  // Live gate reads (e.g. the Agent Drafter runtime options) use generalConfig
+  // directly, so they stay fresh without this effect re-running.
+  const generalInitialized = useRef(false);
   useEffect(() => {
-    if (generalConfig) {
+    if (generalConfig && generalConfigFresh && !generalInitialized.current) {
+      generalInitialized.current = true;
       setEnableSenderLookup(generalConfig.enableSenderLookup ?? true);
+      setSenderLookupProvider(generalConfig.senderLookupProvider ?? "anthropic");
+      setExaApiKey(generalConfig.exaApiKey ?? "");
+      setSyncDraftsToGmail(generalConfig.syncDraftsToGmail ?? false);
       setModelConfig({ ...DEFAULT_MODEL_CONFIG, ...generalConfig.modelConfig });
+      setFeatureProviders(generalConfig.featureProviders ?? {});
+      const ollamaFeatureModels = generalConfig.ollamaCloud?.featureModels;
+      if (ollamaFeatureModels) {
+        setOllamaModels(ollamaFeatureModels);
+      }
       setGithubToken(generalConfig.githubToken ?? "");
       setAllowPrereleaseUpdates(generalConfig.allowPrereleaseUpdates ?? false);
       setAnthropicApiKey(generalConfig.anthropicApiKey ?? "");
@@ -238,16 +306,18 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       setMcpServers(generalConfig.mcpServers ?? {});
       setCliTools((generalConfig.cliTools ?? []).map((t) => ({ ...t, _key: nextCliToolKey() })));
       setExtraPathDirs(generalConfig.extraPathDirs ?? []);
-      // PostHog analytics config — only set once to avoid clobbering unsaved edits on refetch
-      if (!analyticsInitialized.current) {
-        analyticsInitialized.current = true;
-        const ph = generalConfig.posthog;
-        if (ph) {
-          setPosthogEnabled(ph.enabled);
-        }
+      setBackgroundAgentProvider(
+        generalConfig.backgroundAgentProvider || DEFAULT_BACKGROUND_AGENT_PROVIDER,
+      );
+      const ph = generalConfig.posthog;
+      if (ph) {
+        setPosthogEnabled(ph.enabled);
       }
     }
-  }, [generalConfig]);
+    // generalConfigFresh must be a dep: structural sharing can keep the same
+    // data reference across the mount refetch, so the freshness flip is the
+    // only signal that re-runs this effect when cached and fresh data match.
+  }, [generalConfig, generalConfigFresh]);
 
   useEffect(() => {
     if (generalConfig) {
@@ -286,7 +356,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     return cleanup;
   }, []);
 
-  // Check Claude CLI availability and auth status when Agents tab is shown
+  // Check Claude CLI availability and auth status when Agents tab is shown.
   useEffect(() => {
     if (activeTab !== "agents") return;
     setClaudeAuthStatus("checking");
@@ -370,6 +440,11 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
     await window.api.settings.set({ undoSendDelay: seconds });
   };
 
+  const handleSendAndArchiveToggle = async (enabled: boolean) => {
+    setSendAndArchive(enabled);
+    await window.api.settings.set({ sendAndArchive: enabled });
+  };
+
   const handleKeyboardBindingsChange = async (bindings: "superhuman" | "gmail") => {
     setKeyboardBindings(bindings);
     await window.api.settings.set({ keyboardBindings: bindings });
@@ -377,14 +452,36 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
   const handleSaveGeneral = async () => {
     setIsSavingGeneral(true);
+    setGeneralSaveResult(null);
     try {
-      await window.api.settings.set({
+      const result = (await window.api.settings.set({
         enableSenderLookup,
+        senderLookupProvider,
+        exaApiKey: exaApiKey || undefined,
+        syncDraftsToGmail,
         modelConfig,
+        featureProviders,
+        backgroundAgentProvider,
+        // Only send featureModels here — apiKey and defaultModel are owned by the
+        // ExtensionsTab. Spreading the cached ollamaCloud here can carry a stale
+        // empty apiKey from before the user saved one in ExtensionsTab; the backend
+        // deep-merge uses `incoming.apiKey ?? existing` so an empty string would
+        // overwrite the freshly-saved key. By omitting apiKey/defaultModel, the
+        // deep-merge falls through to the existing values for those fields.
+        ollamaCloud: { featureModels: ollamaModels },
         githubToken: githubToken || undefined,
         allowPrereleaseUpdates,
-      });
+      })) as { success: boolean; error?: string } | undefined;
+      if (result?.success) {
+        setGeneralSaveResult("saved");
+        // Functional clear so a later save's error can't be wiped by this timer
+        setTimeout(() => setGeneralSaveResult((v) => (v === "saved" ? null : v)), 2000);
+      } else {
+        setGeneralSaveResult(result?.error || "Could not save settings.");
+      }
       queryClient.invalidateQueries({ queryKey: ["general-config"] });
+    } catch (error) {
+      setGeneralSaveResult(error instanceof Error ? error.message : "Could not save settings.");
     } finally {
       setIsSavingGeneral(false);
     }
@@ -462,19 +559,45 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   };
 
   const handleSaveStylePrompt = async () => {
-    setIsSaving(true);
+    setIsSavingStyle(true);
+    setStyleSaved(false);
     try {
-      await window.api.settings.setPrompts({
+      const result = (await window.api.settings.setPrompts({
         stylePrompt: stylePrompt || undefined,
-      });
+      })) as { success: boolean };
       queryClient.invalidateQueries({ queryKey: ["prompts"] });
+      if (result.success) {
+        setStyleSaved(true);
+        setTimeout(() => setStyleSaved(false), 2000);
+      }
     } finally {
-      setIsSaving(false);
+      setIsSavingStyle(false);
     }
   };
 
   const handleResetStylePrompt = () => {
     setStylePrompt(DEFAULT_STYLE_PROMPT);
+  };
+
+  const handleInferStyle = async () => {
+    setIsInferring(true);
+    setInferError(null);
+    try {
+      const result = (await window.api.style.infer()) as {
+        success: boolean;
+        data?: string;
+        error?: string;
+      };
+      if (result.success && result.data) {
+        setStylePrompt(result.data);
+      } else {
+        setInferError(result.error || "Failed to infer writing style");
+      }
+    } catch {
+      setInferError("Failed to infer writing style");
+    } finally {
+      setIsInferring(false);
+    }
   };
 
   const handleSaveEA = async () => {
@@ -691,6 +814,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         </div>
         <button
           onClick={onClose}
+          aria-label="Close settings"
           className="titlebar-no-drag p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -706,7 +830,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
 
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex space-x-1 p-2">
+        <div className="flex space-x-1 p-2 overflow-x-auto whitespace-nowrap">
           <button
             onClick={() => setActiveTab("general")}
             data-active={activeTab === "general" ? "true" : undefined}
@@ -728,6 +852,17 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
             }`}
           >
             Accounts
+          </button>
+          <button
+            onClick={() => setActiveTab("blocked")}
+            data-active={activeTab === "blocked" ? "true" : undefined}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              activeTab === "blocked"
+                ? "bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300"
+                : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            }`}
+          >
+            Blocked
           </button>
           <button
             onClick={() => setActiveTab("calendar")}
@@ -871,7 +1006,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {activeTab === "general" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 General Settings
@@ -1029,6 +1164,36 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 </div>
               </div>
 
+              {/* Send & Archive */}
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
+                <div className="flex items-center justify-between">
+                  <div className="pr-4">
+                    <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                      Send &amp; Archive
+                    </h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      When replying, sending also archives the conversation. New emails and forwards
+                      are unaffected.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSendAndArchiveToggle(!sendAndArchive)}
+                    aria-label="Toggle Send and Archive"
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+                      sendAndArchive
+                        ? "bg-blue-600 dark:bg-blue-500"
+                        : "bg-gray-200 dark:bg-gray-700"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        sendAndArchive ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
               {/* Default Mail App */}
               <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
                 <div className="flex items-center justify-between">
@@ -1042,7 +1207,11 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     </p>
                   </div>
                   <button
-                    disabled={isDefaultMailAppLoading}
+                    role="switch"
+                    aria-checked={isDefaultMailApp}
+                    aria-label="Set as default mail app"
+                    aria-disabled={isDefaultMailAppLoading}
+                    aria-busy={isDefaultMailAppLoading}
                     onClick={async () => {
                       if (isDefaultMailAppLoading) return;
                       setIsDefaultMailAppLoading(true);
@@ -1086,13 +1255,94 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 )}
               </div>
 
+              {/* Sender Lookup */}
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
+                <div className="mb-3">
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                    Sender Lookup Search
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    Which search backend to use when looking up info about email senders. The model
+                    used to parse the results is set below under <em>Sender Lookup</em> in AI
+                    Models.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <label
+                      htmlFor="sender-lookup-provider"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300 w-24"
+                    >
+                      Backend
+                    </label>
+                    <select
+                      id="sender-lookup-provider"
+                      value={senderLookupProvider}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if ((SENDER_LOOKUP_PROVIDERS as readonly string[]).includes(v)) {
+                          setSenderLookupProvider(v as SenderLookupProvider);
+                          // Switching away from Exa hides the Ollama Cloud option
+                          // in the senderLookup model dropdown — reset to anthropic
+                          // so a stale "ollama-cloud" value isn't silently persisted
+                          // and then re-activated when the user switches back to Exa.
+                          if (v !== "exa" && featureProviders.senderLookup === "ollama-cloud") {
+                            setFeatureProviders((prev) => ({
+                              ...prev,
+                              senderLookup: "anthropic",
+                            }));
+                          }
+                        }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="anthropic">
+                        Anthropic (Claude web_search — single call, no extra key)
+                      </option>
+                      <option value="exa">Exa (search API + configurable parsing model)</option>
+                    </select>
+                  </div>
+                  {senderLookupProvider === "exa" && (
+                    <div className="flex items-center gap-3">
+                      <label
+                        htmlFor="exa-api-key"
+                        className="text-sm font-medium text-gray-700 dark:text-gray-300 w-24"
+                      >
+                        Exa API key
+                      </label>
+                      <input
+                        id="exa-api-key"
+                        type="password"
+                        value={exaApiKey}
+                        onChange={(e) => setExaApiKey(e.target.value)}
+                        placeholder="Get one at dashboard.exa.ai"
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  )}
+                  {senderLookupProvider === "exa" && !exaApiKey && anthropicApiKey && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      No Exa key configured — sender lookups will fall back to Anthropic web_search
+                      until you add one.
+                    </p>
+                  )}
+                  {senderLookupProvider === "exa" && !exaApiKey && !anthropicApiKey && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      No Exa key configured. You also haven&apos;t set an Anthropic key, so there is
+                      no fallback — sender lookup will be skipped until you add an Exa key above (or
+                      an Anthropic key under AI Provider).
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {/* AI Models */}
               <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
                 <div className="mb-3">
                   <h3 className="font-semibold text-gray-900 dark:text-gray-100">AI Models</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Choose which Claude model to use for each feature. Haiku is fastest and
-                    cheapest, Opus is most capable.
+                    Choose which provider and model runs each feature. For Anthropic, Haiku is
+                    fastest and cheapest, Opus is most capable.
                   </p>
                 </div>
                 <div className="space-y-3">
@@ -1130,42 +1380,159 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     {
                       key: "agentDrafter" as const,
                       label: "Agent Drafter",
-                      description: "Background auto-draft generation",
+                      description: "Background auto-drafts for new emails and “Regenerate draft”",
                     },
                     {
                       key: "agentChat" as const,
                       label: "Agent Chat",
                       description: "Interactive agent sidebar conversations",
                     },
-                  ].map(({ key, label, description }) => (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
-                    >
-                      <div className="flex-1 min-w-0 mr-4">
-                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          {label}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{description}</p>
-                      </div>
-                      <select
-                        value={modelConfig[key]}
-                        onChange={(e) => {
-                          const tier = e.target.value;
-                          if ((MODEL_TIERS as readonly string[]).includes(tier)) {
-                            setModelConfig((prev) => ({ ...prev, [key]: tier as ModelTier }));
-                          }
-                        }}
-                        className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  ].map(({ key, label, description }) => {
+                    const provider = featureProviders[key] ?? "anthropic";
+                    // The Agent Drafter row doubles as the background-agent runtime
+                    // picker: OpenCode/Hostler route background drafts to that agent
+                    // provider (backgroundAgentProvider, model configured in the
+                    // Extensions tab), while Anthropic/Ollama keep the built-in
+                    // Claude agent and pick which model it uses. While an external
+                    // runtime is selected, featureProviders.agentDrafter is hidden
+                    // but still saved — it keeps gating resolveAgentOllamaConfig
+                    // (the shared agent worker's Ollama routing) alongside agentChat.
+                    const isBackgroundAgentRow = key === "agentDrafter";
+                    const externalRuntime =
+                      isBackgroundAgentRow &&
+                      backgroundAgentProvider !== DEFAULT_BACKGROUND_AGENT_PROVIDER;
+                    return (
+                      <div
+                        key={key}
+                        className="py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
                       >
-                        {MODEL_TIERS.map((tier) => (
-                          <option key={tier} value={tier}>
-                            {MODEL_TIER_LABELS[tier]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0 mr-4">
+                            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {label}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={externalRuntime ? backgroundAgentProvider : provider}
+                              onChange={(e) => {
+                                const p = e.target.value;
+                                if (isBackgroundAgentRow) {
+                                  const sel = applyAgentDrafterSelection(p);
+                                  if (!sel) return;
+                                  setBackgroundAgentProvider(sel.backgroundAgentProvider);
+                                  const llm = sel.agentDrafterProvider;
+                                  if (llm) {
+                                    setFeatureProviders((prev) => ({ ...prev, [key]: llm }));
+                                  }
+                                  return;
+                                }
+                                if ((LLM_PROVIDERS as readonly string[]).includes(p)) {
+                                  setFeatureProviders((prev) => ({
+                                    ...prev,
+                                    [key]: p as LlmProvider,
+                                  }));
+                                }
+                              }}
+                              aria-label={`Provider for ${label}`}
+                              className="px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              <option value="anthropic">Anthropic</option>
+                              {/* For senderLookup, the Ollama option is only honored when
+                                the search backend is Exa — the Anthropic backend bundles
+                                search + parse into one web_search tool call, which doesn't
+                                exist on Ollama. Hide it on the Anthropic backend to avoid
+                                saving a route that can't be honored at call time. */}
+                              {(key !== "senderLookup" || senderLookupProvider === "exa") && (
+                                <option value="ollama-cloud">Ollama Cloud</option>
+                              )}
+                              {isBackgroundAgentRow && (
+                                <>
+                                  <option value="opencode" disabled={!opencodeRuntimeAvailable}>
+                                    OpenCode
+                                  </option>
+                                  <option value="hostler" disabled={!hostlerRuntimeAvailable}>
+                                    Hostler (cloud)
+                                  </option>
+                                  {/* A hand-edited or installed provider id has no fixed
+                                      option — render it so the select reflects the saved
+                                      value the fallback warning references, instead of
+                                      showing a blank control. */}
+                                  {externalRuntime &&
+                                    backgroundAgentProvider !== "opencode" &&
+                                    backgroundAgentProvider !== "hostler" && (
+                                      <option value={backgroundAgentProvider} disabled>
+                                        {backgroundAgentProvider}
+                                      </option>
+                                    )}
+                                </>
+                              )}
+                            </select>
+                            {externalRuntime ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab("extensions")}
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                Model set in Extensions
+                              </button>
+                            ) : provider === "anthropic" ? (
+                              <select
+                                value={modelConfig[key]}
+                                onChange={(e) => {
+                                  const tier = e.target.value;
+                                  if ((MODEL_TIERS as readonly string[]).includes(tier)) {
+                                    setModelConfig((prev) => ({
+                                      ...prev,
+                                      [key]: tier as ModelTier,
+                                    }));
+                                  }
+                                }}
+                                aria-label={`Model tier for ${label}`}
+                                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              >
+                                {MODEL_TIERS.map((tier) => (
+                                  <option key={tier} value={tier}>
+                                    {MODEL_TIER_LABELS[tier]}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <OllamaModelSelect
+                                value={ollamaModels[key] ?? DEFAULT_OLLAMA_MODEL}
+                                onChange={(v) => setOllamaModels((prev) => ({ ...prev, [key]: v }))}
+                                ariaLabel={`Ollama model for ${label}`}
+                                selectClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                inputClassName="w-48 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            )}
+                          </div>
+                        </div>
+                        {isBackgroundAgentRow &&
+                          effectiveBackgroundProvider !== backgroundAgentProvider && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                              {backgroundAgentProvider === "opencode"
+                                ? "OpenCode is disabled — background drafts fall back to the built-in agent until it's re-enabled."
+                                : backgroundAgentProvider === "hostler"
+                                  ? `Hostler is ${generalConfig?.hostler?.enabled ? "missing an API key" : "disabled"} — background drafts fall back to the built-in agent until it's configured.`
+                                  : `"${backgroundAgentProvider}" isn't available — background drafts fall back to the built-in agent until it's configured.`}
+                            </p>
+                          )}
+                        {isBackgroundAgentRow &&
+                          generalConfig &&
+                          !opencodeRuntimeAvailable &&
+                          !hostlerRuntimeAvailable && (
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                              Enable OpenCode or Hostler in Settings → Extensions to run background
+                              drafts through them.
+                            </p>
+                          )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1315,6 +1682,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   <button
                     role="switch"
                     aria-checked={allowPrereleaseUpdates}
+                    aria-label="Pre-release updates"
                     onClick={() => setAllowPrereleaseUpdates(!allowPrereleaseUpdates)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                       allowPrereleaseUpdates
@@ -1344,6 +1712,9 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     </p>
                   </div>
                   <button
+                    role="switch"
+                    aria-checked={enableSenderLookup}
+                    aria-label="Enable sender lookup"
                     onClick={() => setEnableSenderLookup(!enableSenderLookup)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                       enableSenderLookup
@@ -1371,8 +1742,39 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 )}
               </div>
 
+              {/* Gmail Draft Sync Toggle */}
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                      Sync Drafts to Gmail
+                    </h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      Push AI-generated drafts to Gmail so they appear in other email clients.
+                    </p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={syncDraftsToGmail}
+                    aria-label="Sync drafts to Gmail"
+                    onClick={() => setSyncDraftsToGmail(!syncDraftsToGmail)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      syncDraftsToGmail
+                        ? "bg-blue-600 dark:bg-blue-500"
+                        : "bg-gray-200 dark:bg-gray-700"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        syncDraftsToGmail ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
               {/* Troubleshooting */}
-              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
                 <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
                   Troubleshooting
                 </h3>
@@ -1405,14 +1807,32 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 )}
               </div>
 
-              {/* Save button */}
-              <div className="flex justify-end">
+              {/* Save button — disabled until config has loaded so a failed or
+                  slow settings:get can't be overwritten with staged defaults */}
+              <div className="flex justify-end items-center gap-3">
+                {generalConfigLoadError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    Could not load settings — close and reopen Settings to retry. Saving is disabled
+                    so stored settings aren't overwritten.
+                  </p>
+                )}
+                {generalSaveResult && generalSaveResult !== "saved" && (
+                  <p className="text-sm text-red-600 dark:text-red-400">{generalSaveResult}</p>
+                )}
                 <button
                   onClick={handleSaveGeneral}
-                  disabled={isSavingGeneral}
-                  className="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-50"
+                  disabled={isSavingGeneral || !generalConfigFresh}
+                  className={`px-6 py-2 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
+                    generalSaveResult === "saved"
+                      ? "bg-green-600 dark:bg-green-500"
+                      : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+                  }`}
                 >
-                  {isSavingGeneral ? "Saving..." : "Save Changes"}
+                  {isSavingGeneral
+                    ? "Saving..."
+                    : generalSaveResult === "saved"
+                      ? "Saved"
+                      : "Save Changes"}
                 </button>
               </div>
             </div>
@@ -1420,7 +1840,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "accounts" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Connected Accounts
@@ -1534,8 +1954,14 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
           </div>
         )}
 
+        {activeTab === "blocked" && (
+          <div className="max-w-3xl mx-auto space-y-6">
+            <BlockedSendersSection />
+          </div>
+        )}
+
         {activeTab === "calendar" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Calendar Visibility
@@ -1613,19 +2039,19 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "splits" && (
-          <div className="max-w-3xl">
+          <div className="max-w-3xl mx-auto">
             <SplitConfigEditor />
           </div>
         )}
 
         {activeTab === "snippets" && (
-          <div className="max-w-3xl">
+          <div className="max-w-3xl mx-auto">
             <SnippetsEditor />
           </div>
         )}
 
         {activeTab === "signatures" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Email Signatures
@@ -1796,6 +2222,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                             accountId: e.target.value || undefined,
                           })
                         }
+                        aria-label="Signature account"
                         className="w-full p-3 border border-gray-300 dark:border-gray-500 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-gray-100"
                       >
                         <option value="">All accounts (global)</option>
@@ -1858,7 +2285,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "prompts" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             {isLoading ? (
               <p className="text-gray-500 dark:text-gray-400">Loading settings...</p>
             ) : (
@@ -1877,9 +2304,9 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                     </button>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                    Each email is categorized as SKIP (no reply), or HIGH / MEDIUM / LOW priority.
-                    Customize the rules below to control how emails are triaged. The required output
-                    format is handled automatically.
+                    Each email is categorized as PRIORITY (needs a reply) or OTHER. Customize the
+                    rules below to control how emails are triaged. The required output format is
+                    handled automatically.
                   </p>
                   <textarea
                     value={analysisPrompt}
@@ -2032,7 +2459,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "style" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Writing Style
@@ -2062,12 +2489,21 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Style Prompt
                   </label>
-                  <button
-                    onClick={handleResetStylePrompt}
-                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Reset to default
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleInferStyle}
+                      disabled={isInferring}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                    >
+                      {isInferring ? "Analyzing..." : "Learn My Style"}
+                    </button>
+                    <button
+                      onClick={handleResetStylePrompt}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
                 </div>
                 <textarea
                   value={stylePrompt}
@@ -2080,21 +2516,27 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                   This prompt is prepended to your draft generation when style examples are
                   available. It tells the AI how to interpret the examples of your past emails.
                 </p>
+                {inferError && (
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">{inferError}</p>
+                )}
               </div>
 
-              <button
-                onClick={handleSaveStylePrompt}
-                disabled={isSaving}
-                className="mt-4 px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-50"
-              >
-                {isSaving ? "Saving..." : "Save Style Prompt"}
-              </button>
+              <div className="flex items-center gap-3 mt-4">
+                <button
+                  onClick={handleSaveStylePrompt}
+                  disabled={isSavingStyle}
+                  className="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-50"
+                >
+                  {isSavingStyle ? "Saving..." : "Save Style Prompt"}
+                </button>
+                {styleSaved && <p className="text-sm text-green-600 dark:text-green-400">Saved.</p>}
+              </div>
             </div>
           </div>
         )}
 
         {activeTab === "assistant" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Executive Assistant Integration
@@ -2201,7 +2643,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "queue" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
                 Background Processing Queue
@@ -2399,17 +2841,6 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                                 .split(" ")[0]
                             }
                           </span>
-                          <span
-                            className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                              item.priority === "high"
-                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                : item.priority === "medium"
-                                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                  : "bg-gray-100 text-gray-600 dark:bg-gray-600 dark:text-gray-300"
-                            }`}
-                          >
-                            {item.priority}
-                          </span>
                         </div>
                       ))}
                     </div>
@@ -2421,7 +2852,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
                 <p className="font-medium mb-2">How it works:</p>
                 <ul className="list-disc list-inside space-y-1">
                   <li>
-                    <strong>Analysis:</strong> Determines if emails need a reply and their priority
+                    <strong>Analysis:</strong> Determines if emails are Priority (need a reply) or
+                    Other
                   </li>
                   <li>
                     <strong>Sender Profiles:</strong> Looks up sender information for all inbox
@@ -2442,7 +2874,7 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
         )}
 
         {activeTab === "agents" && (
-          <div className="space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                 Agent Settings
@@ -3144,10 +3576,26 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
           </div>
         )}
 
-        {activeTab === "extensions" && <ExtensionsTab />}
+        {activeTab === "extensions" && (
+          <ExtensionsTab
+            onOllamaCloudDisabled={() => {
+              // Mirror the persisted featureProviders reset in the staged copy
+              // (hydrated once per session) so Save Changes can't republish
+              // ollama-cloud routes whose API key was just cleared.
+              setFeatureProviders((prev) =>
+                Object.fromEntries(
+                  Object.entries(prev).map(([feature, provider]) => [
+                    feature,
+                    provider === "ollama-cloud" ? "anthropic" : provider,
+                  ]),
+                ),
+              );
+            }}
+          />
+        )}
 
         {activeTab === "analytics" && (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl mx-auto space-y-6">
             <div>
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                 Analytics
@@ -3470,6 +3918,109 @@ function UsageCostSection() {
           <p className="text-sm text-gray-400 dark:text-gray-500">No calls recorded yet.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Blocked senders settings section
+// =============================================================================
+
+function BlockedSendersSection() {
+  const queryClient = useQueryClient();
+  const accounts = useAppStore((s) => s.accounts);
+
+  const { data: blocked, isLoading } = useQuery({
+    queryKey: ["blocked-senders"],
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = (await (window as any).api.emails.listBlockedSenders()) as {
+        success: boolean;
+        data?: BlockedSender[];
+        error?: string;
+      };
+      if (!result.success) throw new Error(result.error);
+      return result.data ?? [];
+    },
+  });
+
+  const [unblocking, setUnblocking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const accountEmailById = new Map(accounts.map((a) => [a.id, a.email]));
+
+  const handleUnblock = async (senderEmail: string, accountId: string) => {
+    const key = `${accountId}:${senderEmail}`;
+    setUnblocking(key);
+    setError(null);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = (await (window as any).api.emails.unblockSender(senderEmail, accountId)) as {
+        success: boolean;
+        error?: string;
+      };
+      if (!result.success) {
+        setError(result.error ?? "Failed to unblock sender");
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: ["blocked-senders"] });
+    } finally {
+      setUnblocking(null);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+        Blocked Senders
+      </h2>
+      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        Senders here are routed to Trash by a Gmail filter, so the block applies in Gmail Web and on
+        mobile too. Unblock to delete the filter and restore future delivery.
+      </p>
+
+      {error && (
+        <div className="mb-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      {isLoading ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
+      ) : blocked && blocked.length > 0 ? (
+        <ul className="divide-y divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded">
+          {blocked.map((row) => {
+            const key = `${row.accountId}:${row.senderEmail}`;
+            const accountEmail = accountEmailById.get(row.accountId) ?? row.accountId;
+            return (
+              <li key={key} className="flex items-center justify-between px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {row.senderEmail}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    Blocked {new Date(row.blockedAt).toLocaleDateString()} · {accountEmail}
+                    {row.gmailFilterId ? "" : " · (no Gmail filter — local only)"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleUnblock(row.senderEmail, row.accountId)}
+                  disabled={unblocking === key}
+                  className="ml-3 px-3 py-1 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded disabled:opacity-50"
+                >
+                  {unblocking === key ? "Unblocking…" : "Unblock"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          You haven't blocked anyone. Click the block icon in any email header (or use the Sender
+          panel) to start.
+        </p>
+      )}
     </div>
   );
 }

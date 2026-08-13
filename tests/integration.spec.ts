@@ -361,11 +361,10 @@ test.describe("Mock Analyzer Tests", () => {
 
     const analyzer = new MockEmailAnalyzer();
 
-    // Test high-priority email
+    // Test Priority (needs-reply) email
     const email1 = FAKE_INBOX_EMAILS.find((e) => e.id === "msg-001")!;
     const result1 = await analyzer.analyze(email1);
     expect(result1.needs_reply).toBe(true);
-    expect(result1.priority).toBe("high");
 
     // Test newsletter (no reply needed)
     const email4 = FAKE_INBOX_EMAILS.find((e) => e.id === "msg-004")!;
@@ -383,7 +382,6 @@ test.describe("Mock Analyzer Tests", () => {
     const draft = await generator.generateDraft(email, {
       needs_reply: true,
       reason: "Test reason",
-      priority: "high",
     });
 
     expect(draft).toContain("Hi Sarah Johnson");

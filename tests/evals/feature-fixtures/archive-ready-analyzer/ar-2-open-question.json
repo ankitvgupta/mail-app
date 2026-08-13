@@ -1,0 +1,30 @@
+{
+  "id": "ar-2-open-question",
+  "description": "A thread ending with an unanswered question — should NOT be archive-ready.",
+  "input": {
+    "thread": [
+      {
+        "id": "ar-2-m1",
+        "thread_id": "ar-2",
+        "from": "Bob Patel <bob.patel@northwind.test>",
+        "to": "you@example.test",
+        "subject": "Budget question",
+        "snippet": "Quick question about Q4",
+        "body": "Hey, do you know if we got approval for the Q4 budget increase? Need to know before I update the forecast.\n\nBob",
+        "date": "2026-05-18T10:00:00Z"
+      },
+      {
+        "id": "ar-2-m2",
+        "thread_id": "ar-2",
+        "from": "Bob Patel <bob.patel@northwind.test>",
+        "to": "you@example.test",
+        "subject": "Re: Budget question",
+        "snippet": "Bumping this",
+        "body": "Just bumping this — finance needs an answer by EOD tomorrow.",
+        "date": "2026-05-19T09:00:00Z"
+      }
+    ]
+  },
+  "rubric": "Good output:\n- Indicates the thread is NOT archive-ready (e.g. `isArchiveReady: false`)\n- Reasoning acknowledges the open/unanswered question\n\nBad output:\n- Marks as archive-ready despite an unanswered question with a deadline\n- Fails to notice the bump message indicating pending action",
+  "expectedMinScore": 7
+}

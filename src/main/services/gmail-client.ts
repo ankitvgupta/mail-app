@@ -19,8 +19,10 @@ import type {
   SendAsAlias,
 } from "../../shared/types";
 import { getAccounts } from "../db";
+import { DATA_URI_STRIP_THRESHOLD, inlineImagePlaceholder } from "../../shared/body-sanitizer";
 import { getDataDir } from "../data-dir";
 import { extractEmail } from "../utils/address-formatting";
+import { createBlockFilter } from "./gmail-block-filter";
 import { createLogger } from "./logger";
 
 const log = createLogger("gmail");
@@ -39,6 +41,11 @@ const OLD_CONFIG_DIR = join(homedir(), ".config", "exo");
  * Safe to call multiple times — skips files that already exist at the destination.
  */
 export async function migrateOldConfigIfNeeded(): Promise<void> {
+  // An explicitly redirected data dir (packaged smoke tests, scratch runs)
+  // must never be seeded from the legacy location — that would copy real
+  // OAuth tokens/credentials out of production into a disposable dir.
+  if (process.env.EXO_USER_DATA_DIR) return;
+
   const newDir = getConfigDir();
   if (OLD_CONFIG_DIR === newDir) return; // Linux: paths are the same, nothing to do
 
@@ -94,6 +101,8 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.modify",
+  // Needed for users.settings.filters.create/delete (block-sender feature)
+  "https://www.googleapis.com/auth/gmail.settings.basic",
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/calendar.readonly",
 ];
@@ -133,6 +142,15 @@ export function isAuthError(error: unknown): boolean {
     return true;
   }
   return false;
+}
+
+/** An inline (cid:) image referenced by an email body. `size` is the decoded
+ *  byte count reported by Gmail, used to skip downloading oversized images. */
+interface InlineImageInfo {
+  mimeType: string;
+  data?: string;
+  attachmentId?: string;
+  size?: number;
 }
 
 export class GmailClient {
@@ -731,10 +749,8 @@ export class GmailClient {
    * Collect inline image parts from MIME tree (parts with Content-ID headers).
    * Returns a map from Content-ID (without angle brackets) to image metadata.
    */
-  private collectInlineImages(
-    payload: gmail_v1.Schema$MessagePart,
-  ): Map<string, { mimeType: string; data?: string; attachmentId?: string }> {
-    const images = new Map<string, { mimeType: string; data?: string; attachmentId?: string }>();
+  private collectInlineImages(payload: gmail_v1.Schema$MessagePart): Map<string, InlineImageInfo> {
+    const images = new Map<string, InlineImageInfo>();
 
     const walk = (part: gmail_v1.Schema$MessagePart) => {
       const headers = part.headers || [];
@@ -747,6 +763,7 @@ export class GmailClient {
           mimeType: part.mimeType,
           data: part.body?.data ?? undefined,
           attachmentId: part.body?.attachmentId ?? undefined,
+          size: part.body?.size ?? undefined,
         });
       }
 
@@ -816,7 +833,7 @@ export class GmailClient {
    */
   private async resolveInlineImages(
     html: string,
-    inlineImages: Map<string, { mimeType: string; data?: string; attachmentId?: string }>,
+    inlineImages: Map<string, InlineImageInfo>,
     messageId: string,
   ): Promise<string> {
     if (inlineImages.size === 0) return html;
@@ -838,6 +855,22 @@ export class GmailClient {
       [...cidRefs].map(async (cid) => {
         const imageInfo = inlineImages.get(cid);
         if (!imageInfo) return;
+
+        // Oversized images would be stripped to a placeholder by saveEmail
+        // anyway (see shared/body-sanitizer.ts) — resolve them to the
+        // placeholder directly so we never download multi-MB attachments just
+        // to discard them. The stored data URI is `data:<mime>;base64,<b64>`:
+        // base64 is 4/3 of the decoded size, plus the `data:...;base64,` prefix.
+        const estimatedDataUriLength = imageInfo.size
+          ? Math.ceil(imageInfo.size / 3) * 4 + imageInfo.mimeType.length + 13
+          : undefined;
+        if (estimatedDataUriLength && estimatedDataUriLength >= DATA_URI_STRIP_THRESHOLD) {
+          replacements.set(
+            `cid:${cid}`,
+            inlineImagePlaceholder(imageInfo.mimeType, estimatedDataUriLength),
+          );
+          return;
+        }
 
         let base64Data = imageInfo.data;
 
@@ -1637,7 +1670,15 @@ export class GmailClient {
     const unreadMessageIds: string[] = [];
     let latestHistoryId = startHistoryId;
 
-    // Fetch history for a single label, accumulating into the shared arrays above
+    // Fetch history for a single label, accumulating into the shared arrays above.
+    // Each `await gmail.users.history.list(...)` is async, but googleapis does
+    // ~50ms of synchronous CPU work per response (auth signing, JSON parse,
+    // schema validation). For an account whose history ID is far in the past,
+    // we paginate through dozens of pages with no actual changes, and the
+    // accumulated sync CPU + tight `do/while` is enough to starve other tasks
+    // on the main event loop for 7-9s — long enough for macOS to show the
+    // beachball. A setImmediate yield between pages keeps the loop healthy
+    // without measurably slowing the sync itself.
     const fetchLabel = async (labelId: string) => {
       let pageToken: string | undefined;
       do {
@@ -1705,6 +1746,11 @@ export class GmailClient {
           latestHistoryId = responseHistoryId;
         }
         pageToken = response.data.nextPageToken || undefined;
+        // Yield to the event loop every page so a long history walk doesn't
+        // monopolize the main thread (see comment on fetchLabel above).
+        if (pageToken) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
       } while (pageToken);
     };
 
@@ -1735,6 +1781,60 @@ export class GmailClient {
       }
       throw error;
     }
+  }
+
+  /**
+   * Create the block-sender Gmail filter (see gmail-block-filter.ts for the
+   * Trash-vs-Spam rationale and transient-500 retry behavior). Returns the
+   * filter's ID so we can delete it on unblock.
+   */
+  async createBlockFilter(senderEmail: string): Promise<string> {
+    return createBlockFilter(this.gmail!, senderEmail);
+  }
+
+  /** Delete a Gmail filter by ID. Idempotent — swallows 404 (filter already gone). */
+  async deleteFilter(filterId: string): Promise<void> {
+    const gmail = this.gmail!;
+    try {
+      await gmail.users.settings.filters.delete({ userId: "me", id: filterId });
+    } catch (err: unknown) {
+      const errObj = err as { code?: number; status?: number };
+      if (errObj.code === 404 || errObj.status === 404) return;
+      throw err;
+    }
+  }
+
+  /**
+   * Move multiple messages to Trash in parallel. Uses messages.trash (not
+   * batchModify + addLabel:TRASH) because only trash() triggers Gmail's 30-day
+   * auto-delete behavior — batchModify just adds the label without the lifecycle.
+   * Returns the IDs that failed so the caller can decide whether to restore them.
+   */
+  async batchMoveToTrash(messageIds: string[]): Promise<{ failedIds: string[] }> {
+    return this.batchTrash(messageIds);
+  }
+
+  /**
+   * Reverse of batchMoveToTrash — used when unblocking. Uses messages.untrash to
+   * restore the message from Trash; the resulting labels include INBOX iff the
+   * message had it before trashing (Gmail remembers).
+   */
+  async batchRestoreFromTrash(messageIds: string[]): Promise<{ failedIds: string[] }> {
+    if (messageIds.length === 0) return { failedIds: [] };
+    const failedIds: string[] = [];
+    const CONCURRENCY = 5;
+    for (let i = 0; i < messageIds.length; i += CONCURRENCY) {
+      const batch = messageIds.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map((id) => this.gmail!.users.messages.untrash({ userId: "me", id })),
+      );
+      for (let j = 0; j < results.length; j++) {
+        if (results[j].status === "rejected") {
+          failedIds.push(batch[j]);
+        }
+      }
+    }
+    return { failedIds };
   }
 
   async searchSentEmails(maxResults: number = 500): Promise<SentEmail[]> {

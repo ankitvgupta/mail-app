@@ -1,0 +1,23 @@
+{
+  "id": "dg-1-direct-question",
+  "description": "A direct question with a specific deadline — draft should answer or commit to a time, not deflect.",
+  "input": {
+    "email": {
+      "id": "dg-1-msg",
+      "thread_id": "dg-1-thread",
+      "from": "Alice Chen <alice.chen@acme.test>",
+      "to": "you@example.test",
+      "subject": "Can you review the Q3 plan by Tuesday?",
+      "snippet": "Could you take a pass at the Q3 plan doc before Tuesday's exec sync?",
+      "body": "Hey,\n\nCould you take a pass at the Q3 plan doc before Tuesday's exec sync? I'm specifically looking for feedback on the staffing assumptions in section 3.\n\nDoc: https://example.test/q3-plan\n\nThanks!\nAlice",
+      "date": "2026-05-18T15:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    },
+    "analysis": {
+      "needs_reply": true,
+      "reason": "Direct request with a Tuesday deadline"
+    }
+  },
+  "rubric": "Score this draft on a 10-point scale by summing the criteria below. Do not invent additional criteria.\n\n## Criteria (sum these — total caps at 10)\n\n**DEADLINE HANDLING (3 points)**\n- +3 if the draft commits to delivering before Tuesday, OR explicitly declines, OR proposes a specific alternative timeline\n- +1 if it only acknowledges the deadline exists without committing to it\n- 0 if the deadline isn't mentioned at all\n\n**SECTION-3 FOCUS (3 points)**\n- +3 if the draft explicitly mentions the staffing/section-3 focus the sender called out\n- +1 if it generically commits to 'reviewing the doc' without naming section 3 or staffing\n- 0 if it doesn't address the focus area at all\n\n**TONE (2 points)**\n- +2 if conversational, peer-to-peer, natural\n- +1 if slightly stiff but acceptable\n- 0 if robotic, over-formal, or reads AI-generated (excessive 'I'd be delighted', 'kind regards', etc.)\n\n**CONCISENESS (2 points)**\n- +2 if under ~80 words in the body (this is a peer email)\n- +1 if 80-150 words\n- 0 if over 150 words\n\n## Penalties (subtract from total)\n\n- -3 if the draft claims to have already read or reviewed the doc (fabrication)\n- -2 if it adds an irrelevant question or topic shift\n- -2 if it defers to a scheduling assistant (this fixture has EA disabled)\n\n## Output\n\nReturn the clamped integer total (0-10). The reason must enumerate which criteria you scored above 0 (e.g. 'deadline +3, section-3 +1, tone +2, conciseness +2 = 8').",
+  "expectedMinScore": 6
+}

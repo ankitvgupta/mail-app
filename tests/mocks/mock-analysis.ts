@@ -13,7 +13,6 @@ export class MockEmailAnalyzer {
         reason: expected.needsReply
           ? `This email requires a reply (test fixture: ${email.id})`
           : `This email does not need a reply (test fixture: ${email.id})`,
-        priority: expected.priority as "high" | "medium" | "low" | undefined,
       };
     }
 
@@ -38,7 +37,6 @@ Thank you for your email regarding "${email.subject}".
 [This is a mock-generated draft for testing purposes]
 
 Analysis reason: ${analysis.reason}
-Priority: ${analysis.priority || "normal"}
 
 Best regards`;
   }

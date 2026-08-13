@@ -198,10 +198,10 @@ Cheers,`,
 
 // Expected analysis results for testing
 export const EXPECTED_ANALYSIS = {
-  "msg-001": { needsReply: true, priority: "high" }, // Direct request for status update
-  "msg-002": { needsReply: true, priority: "high" }, // Follow-up items needing input
+  "msg-001": { needsReply: true }, // Direct request for status update
+  "msg-002": { needsReply: true }, // Follow-up items needing input
   "msg-003": { needsReply: false }, // Automated GitHub notification
   "msg-004": { needsReply: false }, // Newsletter
-  "msg-005": { needsReply: true, priority: "medium" }, // Technical question
+  "msg-005": { needsReply: true }, // Technical question
   "msg-006": { needsReply: false }, // Shipping notification
 };

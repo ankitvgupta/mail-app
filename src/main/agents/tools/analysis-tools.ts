@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { type ToolDefinition, ToolRiskLevel } from "./types";
 import type { DashboardEmail } from "../../../shared/types";
+import { htmlToPlainText } from "../../util/html-to-text";
 
 const analyzeEmail: ToolDefinition<{ emailId: string }> = {
   name: "analyze_email",
   description:
-    "Analyze an email to determine if it needs a reply, its priority level, and reasoning. Returns cached analysis if available.",
+    "Analyze an email to determine if it needs a reply (Priority) or not (Other), with reasoning. Returns cached analysis if available.",
   category: "analysis",
   riskLevel: ToolRiskLevel.NONE,
   inputSchema: z.object({
@@ -32,7 +33,7 @@ const analyzeEmail: ToolDefinition<{ emailId: string }> = {
       from: email.from,
       to: email.to,
       date: email.date,
-      body: email.body,
+      body: email.body ? htmlToPlainText(email.body) : undefined,
       message: "No cached analysis found. The email content is provided for inline analysis.",
     };
   },

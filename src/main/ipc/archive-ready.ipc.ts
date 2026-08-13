@@ -10,7 +10,7 @@ import {
   getAccounts,
   updateEmailLabelIds,
 } from "../db";
-import { getConfig, getModelIdForFeature } from "./settings.ipc";
+import { getConfig, getFeatureModelConfig } from "./settings.ipc";
 import { getEmailSyncService } from "./sync.ipc";
 import type { IpcResponse, DashboardEmail } from "../../shared/types";
 import { createLogger } from "../services/logger";
@@ -26,10 +26,8 @@ let analyzer: ArchiveReadyAnalyzer | null = null;
 function getAnalyzer(): ArchiveReadyAnalyzer {
   if (!analyzer) {
     const config = getConfig();
-    analyzer = new ArchiveReadyAnalyzer(
-      getModelIdForFeature("archiveReady"),
-      config.archiveReadyPrompt,
-    );
+    const { model, provider } = getFeatureModelConfig("archiveReady");
+    analyzer = new ArchiveReadyAnalyzer(model, config.archiveReadyPrompt, provider);
   }
   return analyzer;
 }

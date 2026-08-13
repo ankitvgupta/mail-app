@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature": "draft-generator",
+  "judgeModel": "claude-opus-4-7",
+  "generatedAt": "2026-05-21T06:05:00Z",
+  "scores": {
+    "dg-1-direct-question": {
+      "score": 10,
+      "reason": "p25 of 10-run variance analysis under Opus judge with structured rubric. Scores: 8,10,10,10,10,10,10,10,10,10. Stddev 0.60 (vs 2.42 under Sonnet) — Opus has the headroom to follow the structured rubric mechanically. Floor at 10 may seem aggressive but reflects empirical behavior; with threshold=3, fails only on score <=7."
+    },
+    "dg-2-scheduling": {
+      "score": 8,
+      "reason": "p25 of 10-run variance analysis under Opus judge. Scores: 6,6,8,8,8,8,8,8,10,10. Stddev 1.26, mean 8. Opus consistently scores this higher than Sonnet did (mean 6.0) — Opus is more generous about partial slot-picking."
+    },
+    "dg-3-decline": {
+      "score": 1,
+      "reason": "p25 of 10-run variance analysis under Opus judge. Scores: 1,1,1,1,2,2,2,2,3,5. Stddev 1.18, mean 2. Both Sonnet and Opus agree the feature consistently fails this scenario — high-confidence signal that DEFAULT_DRAFT_PROMPT needs iteration on the decline/hedge flow."
+    }
+  }
+}

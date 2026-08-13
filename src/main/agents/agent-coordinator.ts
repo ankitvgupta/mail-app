@@ -1,6 +1,7 @@
 import { utilityProcess, MessageChannelMain, type BrowserWindow, net } from "electron";
 import path from "path";
 import { existsSync } from "fs";
+import { fileURLToPath } from "url";
 import type {
   AgentContext,
   AgentFrameworkConfig,
@@ -9,7 +10,8 @@ import type {
   WorkerMessage,
 } from "./types";
 import { getEmailSyncService } from "../ipc/sync.ipc";
-import { getConfig, getModelIdForFeature } from "../ipc/settings.ipc";
+import { getConfig, getFeatureModelConfig, getModelIdForFeature } from "../ipc/settings.ipc";
+import { resolveAgentOllamaConfig } from "../../shared/types";
 import * as db from "../db";
 import { buildStyleContext } from "../services/style-profiler";
 import { buildAgentMemoryContext } from "../services/memory-context";
@@ -18,7 +20,12 @@ import { generateDraftForEmail, generateForwardForEmail } from "../services/draf
 import { saveDraftAndSync } from "../services/gmail-draft-sync";
 import { DEFAULT_STYLE_PROMPT } from "../../shared/types";
 import { populatePrivateProviderConfig } from "./private-providers-main";
+import { recordAgentSessionStart } from "../services/llm-service";
 import { createLogger } from "../services/logger";
+
+// __dirname is undefined in ESM. After the @anthropic-ai/claude-agent-sdk
+// 0.3.x upgrade, electron-vite emits the main bundle as ESM.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const log = createLogger("agent-coordinator");
 
@@ -53,6 +60,64 @@ export class AgentCoordinator {
     }
   >();
 
+  private buildBaseConfig(): AgentFrameworkConfig {
+    const appConfig = getConfig();
+    const apiKey = appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined;
+    const browser = appConfig.agentBrowser;
+    const ollamaConfig = resolveAgentOllamaConfig(appConfig);
+
+    return {
+      // When the resolver says the worker stays on Anthropic, force an Anthropic
+      // model name — even if featureProviders.agentDrafter is "ollama-cloud" alone,
+      // because getFeatureModelConfig would then return an Ollama model name and
+      // the worker (pointed at Anthropic) would 400 with invalid_model.
+      model: ollamaConfig?.model ?? getModelIdForFeature("agentDrafter"),
+      anthropicApiKey: apiKey,
+      ollamaCloud: ollamaConfig,
+      browserConfig: browser
+        ? {
+            enabled: browser.enabled,
+            chromeDebugPort: browser.chromeDebugPort,
+            chromeProfilePath: browser.chromeProfilePath,
+          }
+        : undefined,
+      mcpServers: appConfig.mcpServers,
+      cliTools: appConfig.cliTools,
+      providers: {
+        "openclaw-agent": {
+          enabled: appConfig.openclaw?.enabled ?? false,
+          gatewayUrl: appConfig.openclaw?.gatewayUrl ?? "",
+          gatewayToken: appConfig.openclaw?.gatewayToken ?? "",
+        },
+      },
+      opencode: appConfig.opencode
+        ? { enabled: appConfig.opencode.enabled, model: appConfig.opencode.model }
+        : { enabled: false },
+      hostler: appConfig.hostler
+        ? {
+            enabled: appConfig.hostler.enabled,
+            apiKey: appConfig.hostler.apiKey || undefined,
+            harness: appConfig.hostler.harness,
+            model: appConfig.hostler.model,
+            baseUrl: appConfig.hostler.baseUrl,
+          }
+        : { enabled: false },
+    };
+  }
+
+  private async buildEnrichedConfig(): Promise<AgentFrameworkConfig> {
+    const baseConfig = this.buildBaseConfig();
+    try {
+      return await populatePrivateProviderConfig(baseConfig);
+    } catch (err) {
+      log.error(
+        { err },
+        "[AgentCoordinator] populatePrivateProviderConfig failed; falling back to base config",
+      );
+      return baseConfig;
+    }
+  }
+
   // DB proxy methods available to the worker.
   // No explicit Record type — each method retains its specific signature.
   // In handleDbRequest we cast to a generic callable since the IPC boundary is untyped.
@@ -64,8 +129,8 @@ export class AgentCoordinator {
     getInboxEmails: (accountId?: string) => db.getInboxEmails(accountId),
     getAllEmails: (accountId?: string) => db.getAllEmails(accountId),
     searchEmails: (query: string, options?: db.SearchOptions) => db.searchEmails(query, options),
-    saveAnalysis: (emailId: string, needsReply: boolean, reason: string, priority?: string) =>
-      db.saveAnalysis(emailId, needsReply, reason, priority),
+    saveAnalysis: (emailId: string, needsReply: boolean, reason: string) =>
+      db.saveAnalysis(emailId, needsReply, reason),
     saveDraft: (
       emailId: string,
       draftBody: string,
@@ -142,10 +207,14 @@ export class AgentCoordinator {
       }
 
       const enableSenderLookup = config.enableSenderLookup ?? true;
+      const dConfig = getFeatureModelConfig("drafts");
+      const cConfig = getFeatureModelConfig("calendaring");
       const generator = new DraftGenerator(
-        getModelIdForFeature("drafts"),
+        dConfig.model,
         prompt,
-        getModelIdForFeature("calendaring"),
+        cConfig.model,
+        dConfig.provider,
+        cConfig.provider,
       );
       return generator.composeNewEmail(to, subject, instructions, { enableSenderLookup });
     },
@@ -157,6 +226,11 @@ export class AgentCoordinator {
       cc?: string[],
       bcc?: string[],
     ) => generateForwardForEmail({ emailId, accountId, instructions, to, cc, bcc }),
+    // Logged once per provider.run(): stamps which harness and LLM backend were
+    // chosen for the session. The only visibility into OpenCode-driven sessions,
+    // since their actual LLM calls happen inside the spawned opencode server.
+    recordAgentSessionStart: (args: Parameters<typeof recordAgentSessionStart>[0]) =>
+      recordAgentSessionStart(args),
   } as const;
 
   /**
@@ -232,54 +306,21 @@ export class AgentCoordinator {
 
     // Auto-init the worker with framework config so it's ready for commands.
     // Config is enriched asynchronously by private provider modules before being sent.
-    // Read API key from app config first, fall back to env var; use undefined (not "")
-    // when neither exists so the SDK falls through to Claude Code's stored OAuth.
-    const appConfig = getConfig();
-    const apiKey = appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined;
-    const browser = appConfig.agentBrowser;
-    const baseConfig: AgentFrameworkConfig = {
-      model: getModelIdForFeature("agentDrafter"),
-      anthropicApiKey: apiKey,
-      browserConfig: browser
-        ? {
-            enabled: browser.enabled,
-            chromeDebugPort: browser.chromeDebugPort,
-            chromeProfilePath: browser.chromeProfilePath,
-          }
-        : undefined,
-      mcpServers: appConfig.mcpServers,
-      cliTools: appConfig.cliTools,
-      providers: {
-        "openclaw-agent": {
-          enabled: appConfig.openclaw?.enabled ?? false,
-          gatewayUrl: appConfig.openclaw?.gatewayUrl ?? "",
-          gatewayToken: appConfig.openclaw?.gatewayToken ?? "",
-        },
-      },
-    };
-    this.workerReady = populatePrivateProviderConfig(baseConfig).then(
-      (enrichedConfig) => {
-        this.initWorker(enrichedConfig);
-      },
-      () => {
-        this.initWorker(baseConfig);
-      }, // Fallback to base config on error
-    );
+    this.workerReady = this.buildEnrichedConfig().then((enrichedConfig) => {
+      this.initWorker(enrichedConfig);
+    });
 
     // After worker init, re-load any installed providers (respawn recovery)
     if (this.installedProviders.size > 0) {
-      this.workerReady = this.workerReady.then(() => {
+      this.workerReady = this.workerReady.then(async () => {
+        const providerConfig = await this.buildEnrichedConfig();
         for (const [providerId, providerPath] of this.installedProviders) {
           log.info(`[AgentCoordinator] Re-loading installed provider on respawn: ${providerId}`);
           this.sendToWorker({
             type: "load_provider",
             providerId,
             providerPath,
-            config: {
-              model: getModelIdForFeature("agentDrafter"),
-              anthropicApiKey:
-                getConfig().anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined,
-            },
+            config: providerConfig,
           });
         }
       });
@@ -484,6 +525,10 @@ export class AgentCoordinator {
   updateConfig(config: Partial<AgentFrameworkConfig>): void {
     if (this.worker) {
       this.sendToWorker({ type: "config_update", config });
+      // Availability may have changed (e.g. a provider was just enabled with
+      // an API key). Re-broadcast the provider list so the renderer's agent
+      // picker updates without an app restart.
+      this.sendToWorker({ type: "list_providers" });
     }
   }
 
@@ -512,12 +557,10 @@ export class AgentCoordinator {
     }
     this.installedProviders.set(providerId, providerPath);
 
-    // Send config_update first so worker has latest config
-    const appConfig = getConfig();
-    const config: AgentFrameworkConfig = {
-      model: getModelIdForFeature("agentDrafter"),
-      anthropicApiKey: appConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined,
-    };
+    // Send config_update first so worker and provider factory both see the
+    // latest app config plus installed-provider enrichment (endpoint, keys,
+    // provider-specific settings, etc.).
+    const config = await this.buildEnrichedConfig();
     this.sendToWorker({ type: "config_update", config });
 
     // Then send load_provider and wait for response

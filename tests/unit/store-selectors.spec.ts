@@ -402,7 +402,6 @@ test.describe("groupByThread — analysis and draft propagation", () => {
     const analysis = {
       needsReply: true,
       reason: "Question asked",
-      priority: "high" as const,
       analyzedAt: Date.now(),
     };
     const e1 = makeEmail({
@@ -675,14 +674,7 @@ test.describe("thread categorization", () => {
     const skipped = threads.filter((t) => (t.analysis && !t.analysis.needsReply) || t.userReplied);
     const unanalyzed = threads.filter((t) => !t.analysis && !t.userReplied);
 
-    const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-    const sortedNeedsReply = [...needsReply].sort((a, b) => {
-      const aPriority = priorityOrder[a.analysis?.priority || "medium"] ?? 1;
-      const bPriority = priorityOrder[b.analysis?.priority || "medium"] ?? 1;
-      return aPriority - bPriority;
-    });
-
-    return { needsReply: sortedNeedsReply, done, skipped, unanalyzed };
+    return { needsReply, done, skipped, unanalyzed };
   }
 
   function makeThreadFromEmail(
@@ -720,7 +712,7 @@ test.describe("thread categorization", () => {
     const thread = makeThreadFromEmail({
       id: "e1",
       threadId: "t1",
-      analysis: { needsReply: true, reason: "question", priority: "high", analyzedAt: Date.now() },
+      analysis: { needsReply: true, reason: "question", analyzedAt: Date.now() },
     });
     const result = categorize([thread]);
 
@@ -734,7 +726,6 @@ test.describe("thread categorization", () => {
       analysis: {
         needsReply: true,
         reason: "question",
-        priority: "medium",
         analyzedAt: Date.now(),
       },
       draft: { body: "reply", status: "created", createdAt: Date.now() },
@@ -745,14 +736,13 @@ test.describe("thread categorization", () => {
     expect(result.needsReply).toHaveLength(0);
   });
 
-  test("thread analyzed as skip goes to skipped", () => {
+  test("thread analyzed as Other (no reply needed) goes to skipped", () => {
     const thread = makeThreadFromEmail({
       id: "e1",
       threadId: "t1",
       analysis: {
         needsReply: false,
         reason: "newsletter",
-        priority: "skip",
         analyzedAt: Date.now(),
       },
     });
@@ -766,33 +756,11 @@ test.describe("thread categorization", () => {
       id: "e1",
       threadId: "t1",
       userReplied: true,
-      analysis: { needsReply: true, reason: "question", priority: "high", analyzedAt: Date.now() },
+      analysis: { needsReply: true, reason: "question", analyzedAt: Date.now() },
     });
     const result = categorize([thread]);
 
     expect(result.skipped).toHaveLength(1);
     expect(result.needsReply).toHaveLength(0);
-  });
-
-  test("needsReply is sorted by priority: high > medium > low", () => {
-    const low = makeThreadFromEmail({
-      id: "e1",
-      threadId: "t1",
-      analysis: { needsReply: true, reason: "r", priority: "low", analyzedAt: Date.now() },
-    });
-    const high = makeThreadFromEmail({
-      id: "e2",
-      threadId: "t2",
-      analysis: { needsReply: true, reason: "r", priority: "high", analyzedAt: Date.now() },
-    });
-    const medium = makeThreadFromEmail({
-      id: "e3",
-      threadId: "t3",
-      analysis: { needsReply: true, reason: "r", priority: "medium", analyzedAt: Date.now() },
-    });
-
-    const result = categorize([low, high, medium]);
-
-    expect(result.needsReply.map((t) => t.analysis?.priority)).toEqual(["high", "medium", "low"]);
   });
 });

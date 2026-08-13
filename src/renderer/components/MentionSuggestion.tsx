@@ -148,7 +148,7 @@ function createSuggestionRender() {
 function createSuggestionConfig(
   char: string,
   pluginKey: PluginKey,
-  onAddToCcRef: React.RefObject<((email: string) => void) | null>,
+  onAddToCcRef: React.RefObject<((email: string, name?: string) => void) | null>,
 ): Omit<SuggestionOptions<ContactSuggestion>, "editor"> {
   return {
     char,
@@ -178,7 +178,7 @@ function createSuggestionConfig(
         .insertContent(firstName + " ")
         .run();
       // Side effect: add to CC
-      onAddToCcRef.current?.(item.email);
+      onAddToCcRef.current?.(item.email, item.name);
     },
 
     render: createSuggestionRender(),
@@ -191,7 +191,7 @@ const atPluginKey = new PluginKey("contactMentionAt");
 const plusPluginKey = new PluginKey("contactMentionPlus");
 
 interface ContactMentionOptions {
-  onAddToCcRef: React.RefObject<((email: string) => void) | null>;
+  onAddToCcRef: React.RefObject<((email: string, name?: string) => void) | null>;
 }
 
 /**

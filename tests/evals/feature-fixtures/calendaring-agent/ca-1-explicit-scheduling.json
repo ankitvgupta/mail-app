@@ -1,0 +1,19 @@
+{
+  "id": "ca-1-explicit-scheduling",
+  "description": "An email proposing specific meeting times — should detect hasSchedulingContext=true.",
+  "input": {
+    "email": {
+      "id": "ca-1-msg",
+      "thread_id": "ca-1-thread",
+      "from": "Frank Lopez <frank@bigcustomer.test>",
+      "to": "you@example.test",
+      "subject": "Quick call next week?",
+      "snippet": "Could we grab 30 minutes next week to catch up?",
+      "body": "Hey,\n\nHope you're doing well. Could we grab 30 minutes next week to catch up on the integration work? Tuesday or Wednesday afternoon would be great on my end.\n\nFrank",
+      "date": "2026-05-18T10:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    }
+  },
+  "rubric": "Good output:\n- `hasSchedulingContext` is true\n- The output identifies that specific times are being proposed (Tuesday/Wednesday afternoon)\n- Includes some indication of duration awareness (30 minutes)\n\nBad output:\n- `hasSchedulingContext: false` (clearly wrong — this IS scheduling)\n- Misses the time proposal entirely",
+  "expectedMinScore": 7
+}

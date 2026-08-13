@@ -1,7 +1,13 @@
 import { BrowserWindow, shell, nativeTheme, app } from "electron";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { is } from "@electron-toolkit/utils";
 import { getConfig } from "./ipc/settings.ipc";
+
+// __dirname is undefined in ESM. After the @anthropic-ai/claude-agent-sdk
+// 0.3.x upgrade, electron-vite emits the main bundle as ESM, so we resolve
+// the directory portably from import.meta.url.
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function getIconPath(): string {
   if (app.isPackaged) {

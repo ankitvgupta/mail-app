@@ -18,7 +18,7 @@ import {
   getUsageStats,
   getCallHistory,
   type LlmCallRecord,
-} from "../../src/main/services/anthropic-service";
+} from "../../src/main/services/llm-service";
 
 const require = createRequire(import.meta.url);
 

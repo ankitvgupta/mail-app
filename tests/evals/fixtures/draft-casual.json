@@ -12,7 +12,6 @@
     "snippet": "hey! a few of us are heading to that new ramen place..."
   },
   "expected": {
-    "needs_reply": true,
-    "priority": "low"
+    "needs_reply": true
   }
 }

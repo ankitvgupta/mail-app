@@ -19,7 +19,6 @@ type SplitsStore = {
   splits: InboxSplit[];
 };
 
-// Lazy-initialized to avoid running before initDevData() (see settings.ipc.ts)
 let _store: Store<SplitsStore> | null = null;
 function getStore(): Store<SplitsStore> {
   if (!_store) {

@@ -43,7 +43,7 @@ import {
   addBreadcrumb,
   captureException,
 } from "./services/posthog";
-import { LocalDraftSchema } from "../shared/types";
+import { LocalDraftSchema, DEFAULT_BACKGROUND_AGENT_PROVIDER } from "../shared/types";
 import type {
   DashboardEmail,
   OutboxStats,
@@ -236,6 +236,7 @@ function SearchResultsView() {
     addEmails,
     setSelectedEmailId,
     setSelectedThreadId,
+    setSelectedDraftId,
     setViewMode,
     selectedThreadId,
     setRemoteSearchResults,
@@ -264,11 +265,12 @@ function SearchResultsView() {
     (thread: EmailThread) => {
       // Add all emails in the thread so the thread view works properly
       addEmails(thread.emails);
+      setSelectedDraftId(null);
       setSelectedEmailId(thread.latestEmail.id);
       setSelectedThreadId(thread.threadId);
       setViewMode("full");
     },
-    [addEmails, setSelectedEmailId, setSelectedThreadId, setViewMode],
+    [addEmails, setSelectedDraftId, setSelectedEmailId, setSelectedThreadId, setViewMode],
   );
 
   const retryRemoteSearch = useCallback(() => {
@@ -594,6 +596,37 @@ async function prefetchEmailBodies(emailIds: string[]): Promise<void> {
   }
 }
 
+/**
+ * Bottom-left toast that surfaces transient errors set via `useAppStore.setError`.
+ * Auto-dismisses after 8s. Currently consumed by the block-sender flow (silent
+ * failure was flagged by agentic-verify); other call sites still log to console
+ * only, but can opt in by calling `setError` themselves.
+ */
+function GlobalErrorToast() {
+  const error = useAppStore((s) => s.error);
+  const setError = useAppStore((s) => s.setError);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 8000);
+    return () => clearTimeout(t);
+  }, [error, setError]);
+
+  if (!error) return null;
+  return (
+    <div className="bg-red-600 text-white rounded-lg shadow-lg flex items-center justify-between px-4 py-3 min-w-[280px] max-w-md">
+      <span className="text-sm">{error}</span>
+      <button
+        onClick={() => setError(null)}
+        className="ml-4 text-sm font-medium text-red-100 hover:text-white flex-shrink-0"
+        aria-label="Dismiss"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -663,6 +696,7 @@ export default function App() {
   const setInboxDensity = useAppStore((s) => s.setInboxDensity);
   const setKeyboardBindings = useAppStore((s) => s.setKeyboardBindings);
   const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
+  const setSendAndArchive = useAppStore((s) => s.setSendAndArchive);
   const setSentEmails = useAppStore((s) => s.setSentEmails);
   const addSentEmails = useAppStore((s) => s.addSentEmails);
   const setSplits = useAppStore((s) => s.setSplits);
@@ -705,8 +739,10 @@ export default function App() {
         data?: {
           inboxDensity?: InboxDensity;
           undoSendDelay?: number;
+          sendAndArchive?: boolean;
           keyboardBindings?: "superhuman" | "gmail";
           posthog?: { enabled: boolean; sessionReplay?: boolean };
+          lastSelectedAccountId?: string | null;
         };
       }) => {
         if (result.success && result.data) {
@@ -719,13 +755,16 @@ export default function App() {
           if (result.data.undoSendDelay !== undefined) {
             setUndoSendDelay(result.data.undoSendDelay);
           }
+          if (result.data.sendAndArchive !== undefined) {
+            setSendAndArchive(result.data.sendAndArchive);
+          }
           // Initialize PostHog analytics — API key is baked in at build time,
-          // user can only toggle enabled/sessionReplay in settings
+          // user can only toggle enabled/sessionReplay in settings.
+          // getConfig() guarantees posthog is set (legacy installs → off,
+          // fresh installs → on), so the `?? false` is just a defensive fallback.
           const phConfig = result.data.posthog;
           const apiKey = import.meta.env.VITE_POSTHOG_API_KEY;
           const host = import.meta.env.VITE_POSTHOG_HOST || "https://us.i.posthog.com";
-          // Default to disabled for existing users upgrading (no persisted config).
-          // New users opt in during onboarding (SetupWizard defaults to enabled).
           const enabled = phConfig?.enabled ?? false;
           if (apiKey) {
             initPostHog({
@@ -754,6 +793,7 @@ export default function App() {
     setInboxDensity,
     setKeyboardBindings,
     setUndoSendDelay,
+    setSendAndArchive,
   ]);
 
   // Toggle dark class on document.documentElement when resolvedTheme changes
@@ -821,10 +861,75 @@ export default function App() {
           );
           setAccounts(fullAccounts);
 
-          // Set current account to primary or first available
+          // Restore last-selected inbox view from settings (null = unified).
+          // Fall back to primary/first if the persisted account no longer
+          // exists (account was removed) or this is a first run.
+          const settingsResult = await window.api.settings.get();
+          const persisted = (settingsResult as { data?: { lastSelectedAccountId?: string | null } })
+            ?.data?.lastSelectedAccountId;
           const primaryAccount = fullAccounts.find((a) => a.isPrimary) || fullAccounts[0];
+          let initialAccountId: string | null;
+          if (persisted === null && fullAccounts.length > 1) {
+            // Unified ("All Inboxes") only makes sense with 2+ accounts. If
+            // the user persisted unified previously but has since removed
+            // every account but one, fall back to that one account.
+            initialAccountId = null;
+          } else if (
+            typeof persisted === "string" &&
+            fullAccounts.some((a) => a.id === persisted)
+          ) {
+            initialAccountId = persisted;
+          } else {
+            initialAccountId = primaryAccount?.id ?? null;
+          }
+
+          // Load cached emails for ALL accounts BEFORE flipping
+          // currentAccountId. Without this ordering, the first render in
+          // unified mode (initialAccountId === null) would fire with an
+          // empty/partial store.emails and the user would see "All Inboxes"
+          // showing only one account's emails for a beat (or until they
+          // manually refreshed). Fetching first means the very first paint
+          // already shows the full union across both accounts.
+          const allEmails: DashboardEmail[] = [];
+          const allSentEmails: DashboardEmail[] = [];
+          const accountResults = await Promise.all(
+            accountList.map((acc) =>
+              Promise.all([
+                window.api.sync.getEmails(acc.id),
+                window.api.sync.getSentEmails(acc.id),
+              ]),
+            ),
+          );
+          for (const [emailsResult, sentResult] of accountResults) {
+            if (emailsResult.success && emailsResult.data) {
+              allEmails.push(...emailsResult.data);
+            }
+            if (sentResult.success && sentResult.data) {
+              allSentEmails.push(...sentResult.data);
+            }
+          }
+          if (allEmails.length > 0) {
+            // Use addEmails (merge) instead of setEmails (replace) because
+            // progressive loading may already be adding emails to the store
+            // concurrently via sync:new-emails → bufferAddEmails. A full
+            // replace would wipe those progressive adds with a partial DB snapshot.
+            addEmails(allEmails);
+            // Backfill bodies in the background — emails were loaded without
+            // body content to avoid blocking the main thread on SQLite overflow reads.
+            prefetchEmailBodies(allEmails.map((e) => e.id)).catch((err) =>
+              console.error("Body prefetch failed:", err),
+            );
+          }
+          if (allSentEmails.length > 0) {
+            setSentEmails(allSentEmails);
+          }
+
+          // Now safe to flip currentAccountId — store.emails has every
+          // account's data, so useThreadedEmails will resolve the full
+          // union on first paint.
+          setCurrentAccountId(initialAccountId);
+
           if (primaryAccount) {
-            setCurrentAccountId(primaryAccount.id);
             // Identify user in PostHog using primary email
             identifyUser(primaryAccount.email, {
               account_count: fullAccounts.length,
@@ -833,40 +938,6 @@ export default function App() {
               account_count: fullAccounts.length,
             });
           }
-        }
-
-        // Load cached emails for all accounts (including expired ones)
-        // Fetch all accounts in parallel instead of sequentially
-        const allEmails: DashboardEmail[] = [];
-        const allSentEmails: DashboardEmail[] = [];
-        const accountResults = await Promise.all(
-          accountList.map((acc) =>
-            Promise.all([window.api.sync.getEmails(acc.id), window.api.sync.getSentEmails(acc.id)]),
-          ),
-        );
-        for (const [emailsResult, sentResult] of accountResults) {
-          if (emailsResult.success && emailsResult.data) {
-            allEmails.push(...emailsResult.data);
-          }
-          if (sentResult.success && sentResult.data) {
-            allSentEmails.push(...sentResult.data);
-          }
-        }
-        if (allEmails.length > 0) {
-          // Use addEmails (merge) instead of setEmails (replace) because
-          // progressive loading may already be adding emails to the store
-          // concurrently via sync:new-emails → bufferAddEmails. A full
-          // replace would wipe those progressive adds with a partial DB snapshot.
-          addEmails(allEmails);
-
-          // Backfill bodies in the background — emails were loaded without
-          // body content to avoid blocking the main thread on SQLite overflow reads.
-          prefetchEmailBodies(allEmails.map((e) => e.id)).catch((err) =>
-            console.error("Body prefetch failed:", err),
-          );
-        }
-        if (allSentEmails.length > 0) {
-          setSentEmails(allSentEmails);
         }
 
         // Load local drafts (new emails composed by agent or user)
@@ -966,7 +1037,6 @@ export default function App() {
     window.api.prefetch.onEmailAnalyzed((email: DashboardEmail) => {
       bufferUpdateEmails([{ emailId: email.id, changes: { analysis: email.analysis } }]);
       trackEvent("email_analyzed", {
-        priority: email.analysis?.priority ?? "unknown",
         needs_reply: email.analysis?.needsReply ?? false,
       });
     });
@@ -1107,12 +1177,21 @@ export default function App() {
             // Save sidebar tab — startAgentTask unconditionally sets it to "agent",
             // but background auto-drafts shouldn't steal focus from the user
             const prevTab = store.sidebarTab;
-            store.startAgentTask(taskId, emailId, ["claude"], "", {
-              accountId: email.accountId || "",
-              currentEmailId: emailId,
-              currentThreadId: email.threadId,
-              userEmail: "",
-            });
+            // The background provider is configurable (backgroundAgentProvider),
+            // so derive it from the event — appendAgentEvent drops events whose
+            // providerId has no registered run.
+            store.startAgentTask(
+              taskId,
+              emailId,
+              [event.providerId ?? DEFAULT_BACKGROUND_AGENT_PROVIDER],
+              "",
+              {
+                accountId: email.accountId || "",
+                currentEmailId: emailId,
+                currentThreadId: email.threadId,
+                userEmail: "",
+              },
+            );
             trackEvent("agent_run_started", { source: "auto_draft", provider_count: 1 });
             // Restore tab if this auto-draft is for a different email than what the user is viewing
             if (store.selectedEmailId !== emailId && prevTab !== "agent") {
@@ -1314,12 +1393,12 @@ export default function App() {
         result: IpcResponse<{
           hasCredentials: boolean;
           hasTokens: boolean;
-          hasAnthropicKey: boolean;
+          hasLlmProvider: boolean;
         }>,
       ) => {
         if (result.success) {
-          // Credentials are always bundled at build time — only check API key and tokens
-          setNeedsSetup(!result.data.hasAnthropicKey || !result.data.hasTokens);
+          // Credentials are always bundled at build time — only check LLM provider and tokens
+          setNeedsSetup(!result.data.hasLlmProvider || !result.data.hasTokens);
         } else {
           setNeedsSetup(true);
         }
@@ -1379,25 +1458,39 @@ export default function App() {
 
   // Fetch emails query — disabled during progressive sync to prevent
   // setEmails (full replace) from wiping incrementally-loaded emails.
+  // Also disabled in unified ("All Inboxes") mode: gmail.fetchUnread takes
+  // a single accountId and falls back to "default" when none is provided,
+  // so running it with currentAccountId=null would return only the default
+  // account's unread set and then setEmails would WIPE every other
+  // account's emails (the visible "All Inboxes only renders one account"
+  // bug). In unified mode, initializeSync's per-account fetch fan-out is
+  // the authoritative loader; on explicit refresh, handleRefresh does its
+  // own per-account fan-out with replaceEmailsForAccount.
   const hasActiveProgressiveSync = Object.values(syncProgress).some(
     (p) => p !== null && p.fetched < p.total,
   );
   const { refetch: fetchEmails, isFetching } = useQuery({
     queryKey: ["emails", currentAccountId],
     queryFn: async () => {
-      const result = await window.api.gmail.fetchUnread(100, currentAccountId ?? undefined);
+      // currentAccountId can't be null here — the `enabled` guard below
+      // disables the query in unified mode. Narrow defensively anyway.
+      if (currentAccountId == null) return [];
+      const result = await window.api.gmail.fetchUnread(100, currentAccountId);
       if (result.success) {
-        setEmails(result.data);
+        // Use replaceEmailsForAccount, not setEmails. setEmails would wipe
+        // every other account's emails from the store — fine when there
+        // was only one account, broken when more than one is loaded.
+        useAppStore.getState().replaceEmailsForAccount(currentAccountId, result.data);
         prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
         return result.data;
       }
       throw new Error(result.error);
     },
-    enabled: needsSetup === false && !hasActiveProgressiveSync,
+    enabled: needsSetup === false && !hasActiveProgressiveSync && currentAccountId !== null,
     // Disable auto-refetch on window focus — the sync loop + sync buffer
     // handle keeping emails up to date. Window-focus refetch does a full
-    // setEmails from DB which overwrites optimistic label updates
-    // (e.g. mark-as-read) that haven't been persisted yet.
+    // refetch from DB which overwrites optimistic label updates (e.g.
+    // mark-as-read) that haven't been persisted yet.
     refetchOnWindowFocus: false,
   });
 
@@ -1438,36 +1531,56 @@ export default function App() {
   const reloadSentEmailsForAccount = async (accountId: string) => {
     const sentResult = await window.api.sync.getSentEmails(accountId);
     if (sentResult.success && sentResult.data) {
-      const otherAccountSent = useAppStore
-        .getState()
-        .sentEmails.filter((e) => e.accountId !== accountId);
-      setSentEmails([...otherAccountSent, ...sentResult.data]);
+      // Atomic per-account replacement — see store action note.
+      useAppStore.getState().replaceSentEmailsForAccount(accountId, sentResult.data);
     }
   };
 
   const handleRefresh = async () => {
     setError(null);
-    try {
-      if (currentAccountId) {
-        // Use sync for multi-account support
-        await window.api.sync.now(currentAccountId);
-        // Reload emails from database after sync
-        const result = await window.api.sync.getEmails(currentAccountId);
+    // In unified mode (currentAccountId === null) refresh every account in
+    // parallel; otherwise refresh just the active one.
+    const targets =
+      currentAccountId === null
+        ? accounts.map((a) => a.id)
+        : currentAccountId
+          ? [currentAccountId]
+          : [];
+
+    if (targets.length === 0) {
+      // No accounts configured — fall through to legacy path.
+      try {
+        await fetchEmails();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to fetch emails");
+      }
+      return;
+    }
+
+    // allSettled so one account's failure (e.g. expired token) doesn't hide
+    // the others' results. Each account's store write goes through
+    // replaceEmailsForAccount, an atomic read-modify-write that survives
+    // concurrent resolves without losing other accounts' just-fetched emails.
+    const results = await Promise.allSettled(
+      targets.map(async (aid) => {
+        await window.api.sync.now(aid);
+        const result = await window.api.sync.getEmails(aid);
         if (result.success && result.data) {
-          const otherAccountEmails = useAppStore
-            .getState()
-            .emails.filter((e) => e.accountId !== currentAccountId);
-          setEmails([...otherAccountEmails, ...result.data]);
+          useAppStore.getState().replaceEmailsForAccount(aid, result.data);
           prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
         }
-        // Reload sent emails too
-        await reloadSentEmailsForAccount(currentAccountId);
-      } else {
-        // Fallback to legacy fetch for default account
-        await fetchEmails();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch emails");
+        await reloadSentEmailsForAccount(aid);
+      }),
+    );
+
+    const failed = results
+      .map((r, i) => (r.status === "rejected" ? targets[i] : null))
+      .filter((x): x is string => x !== null);
+    if (failed.length > 0) {
+      const failedEmails = failed.map((aid) => accounts.find((a) => a.id === aid)?.email ?? aid);
+      console.error("[Refresh] Failed for accounts:", failedEmails);
+      // Show the failure but don't blow away the partial success.
+      setError(`Refresh failed for ${failedEmails.join(", ")}`);
     }
   };
 
@@ -1547,54 +1660,74 @@ export default function App() {
     return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
-  // Get current account and its sync status
+  // Get current account and its sync status. In unified mode (currentAccountId
+  // === null) we aggregate across all accounts so the title-bar still reflects
+  // useful state — "syncing" if any account is syncing; "expired" if any is.
   const currentAccount = accounts.find((a) => a.id === currentAccountId);
+  const isUnifiedView = currentAccountId === null && accounts.length > 0;
   const currentSyncStatus = currentAccountId
     ? syncStatuses.get(currentAccountId) || "idle"
-    : "idle";
+    : isUnifiedView && accounts.some((a) => syncStatuses.get(a.id) === "syncing")
+      ? "syncing"
+      : isUnifiedView && accounts.some((a) => syncStatuses.get(a.id) === "error")
+        ? "error"
+        : "idle";
   const isSyncing = currentSyncStatus === "syncing";
-  const isCurrentAccountExpired =
-    currentAccountId != null && expiredAccountIds.has(currentAccountId);
+  const isCurrentAccountExpired = isUnifiedView
+    ? accounts.some((a) => expiredAccountIds.has(a.id))
+    : currentAccountId != null && expiredAccountIds.has(currentAccountId);
 
   // Build list of expired accounts with their email addresses for the banner
   const expiredAccounts = accounts.filter((a) => expiredAccountIds.has(a.id));
 
-  // Handle account switch — instant because emails for all accounts are
-  // already in the store from initial load + background sync. We just flip
-  // currentAccountId and let useThreadedEmails filter; background sync
-  // picks up anything new without blocking the UI.
-  const handleAccountSwitch = (accountId: string) => {
+  // Handle account switch. We always reload each target account's emails
+  // from the local DB on switch — the previous heuristic ("only refresh if
+  // we have zero emails for this account") wasn't enough: an account with
+  // even one stale email in memory would skip the refresh, so optimistic
+  // archives from a prior session, partial syncs, or just a long-lived
+  // session with churn would leave the inbox visibly incomplete after
+  // switching back. DB reads via sync.getEmails are cheap (sub-100ms),
+  // so always-fetching is the simple right answer. We use
+  // replaceEmailsForAccount so the per-account writes are atomic and
+  // concurrent unified-mode loads don't race on a read-modify-write.
+  //
+  // `accountId === null` means switch to the unified "All Inboxes" view —
+  // refresh + sync every connected account in parallel.
+  const handleAccountSwitch = (accountId: string | null) => {
     setCurrentAccountId(accountId);
     setAccountMenuOpen(false);
 
-    trackEvent("account_switched", { account_count: accounts.length });
+    trackEvent("account_switched", {
+      account_count: accounts.length,
+      unified: accountId === null,
+    });
 
-    // Backfill inbox/sent emails independently if missing for this account.
-    const storeState = useAppStore.getState();
-    if (!storeState.emails.some((e) => e.accountId === accountId)) {
+    const targetAccountIds = accountId === null ? accounts.map((a) => a.id) : [accountId];
+
+    for (const aid of targetAccountIds) {
       window.api.sync
-        .getEmails(accountId)
+        .getEmails(aid)
         .then((result: IpcResponse<DashboardEmail[]>) => {
-          if (result.success && result.data && result.data.length > 0) {
-            addEmails(result.data);
+          if (result.success && result.data) {
+            useAppStore.getState().replaceEmailsForAccount(aid, result.data);
             prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
           }
         })
         .catch(console.error);
-    }
-    if (!storeState.sentEmails.some((e) => e.accountId === accountId)) {
       window.api.sync
-        .getSentEmails(accountId)
+        .getSentEmails(aid)
         .then((sentResult: IpcResponse<DashboardEmail[]>) => {
           if (sentResult.success && sentResult.data) {
-            addSentEmails(sentResult.data);
+            useAppStore.getState().replaceSentEmailsForAccount(aid, sentResult.data);
           }
         })
         .catch(console.error);
+      // Trigger background sync to pick up any new emails (non-blocking).
+      // Safe to call on every click: getHistoryChanges yields to the event
+      // loop between Gmail History API pages so a stale account walking
+      // many empty pages no longer monopolises the main thread.
+      window.api.sync.now(aid).catch(console.error);
     }
-
-    // Trigger background sync to pick up any new emails (non-blocking)
-    window.api.sync.now(accountId).catch(console.error);
   };
 
   const handleCancelScheduled = async (id: string) => {
@@ -1634,38 +1767,40 @@ export default function App() {
                 className="flex items-center space-x-2 px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
               >
                 <span className="text-gray-700 dark:text-gray-300 truncate max-w-[200px]">
-                  {currentAccount?.email || "Select account"}
+                  {isUnifiedView ? "All Inboxes" : currentAccount?.email || "Select account"}
                 </span>
                 {/* Sync status indicator */}
                 {isSyncing && (
-                  <svg
-                    className="w-4 h-4 text-blue-500 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
+                  <span
+                    className="flex w-4 h-4 items-center justify-center flex-shrink-0"
+                    title="Syncing"
                   >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
+                    <span className="w-3 h-3 rounded-full border-2 border-blue-200 border-t-blue-500 animate-spin" />
+                  </span>
                 )}
                 {!isSyncing && !isCurrentAccountExpired && currentSyncStatus === "idle" && (
-                  <span className="w-2 h-2 rounded-full bg-green-500" title="Connected" />
+                  <span
+                    className="flex w-4 h-4 items-center justify-center flex-shrink-0"
+                    title="Connected"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                  </span>
                 )}
                 {isCurrentAccountExpired && (
-                  <span className="w-2 h-2 rounded-full bg-amber-500" title="Session expired" />
+                  <span
+                    className="flex w-4 h-4 items-center justify-center flex-shrink-0"
+                    title="Session expired"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  </span>
                 )}
                 {!isCurrentAccountExpired && currentSyncStatus === "error" && (
-                  <span className="w-2 h-2 rounded-full bg-red-500" title="Sync error" />
+                  <span
+                    className="flex w-4 h-4 items-center justify-center flex-shrink-0"
+                    title="Sync error"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                  </span>
                 )}
                 <svg
                   className="w-4 h-4 text-gray-500 dark:text-gray-400"
@@ -1686,6 +1821,29 @@ export default function App() {
               {accountMenuOpen && (
                 <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg dark:shadow-black/40 z-50">
                   <div className="py-1">
+                    {accounts.length > 1 && (
+                      <>
+                        <button
+                          onClick={() => handleAccountSwitch(null)}
+                          className={`w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between ${
+                            isUnifiedView ? "bg-blue-50 dark:bg-blue-900/30" : ""
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2">
+                            {/* Stacked-dots glyph to visually differentiate from per-account rows */}
+                            <span className="relative inline-block w-2 h-2 flex-shrink-0">
+                              <span className="absolute top-0 left-0 w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              <span className="absolute bottom-0 right-0 w-1.5 h-1.5 rounded-full bg-purple-500" />
+                            </span>
+                            <span className="truncate">All Inboxes</span>
+                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {accounts.length}
+                          </span>
+                        </button>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+                      </>
+                    )}
                     {accounts.map((account) => (
                       <button
                         key={account.id}
@@ -1736,6 +1894,7 @@ export default function App() {
             onClick={openSearch}
             className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1"
             title="Search (/)"
+            aria-label="Search"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -1886,6 +2045,7 @@ export default function App() {
             onClick={() => setShowSettings(true)}
             className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors focus:outline-none"
             title="Settings"
+            aria-label="Settings"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -1907,6 +2067,7 @@ export default function App() {
             disabled={isFetching || isSyncing}
             className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
             title="Refresh"
+            aria-label="Refresh"
           >
             <svg
               className={`w-5 h-5 ${isFetching || isSyncing ? "animate-spin" : ""}`}
@@ -2013,6 +2174,7 @@ export default function App() {
               onClick={() => removeExtensionAuthRequired(extId)}
               className="p-1 text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
               title="Dismiss"
+              aria-label={`Dismiss ${displayName} authentication notice`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -2071,6 +2233,7 @@ export default function App() {
               onClick={() => removeAgentAuthRequired(providerId)}
               className="p-1 text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
               title="Dismiss"
+              aria-label={`Dismiss ${displayName} authentication notice`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -2156,6 +2319,7 @@ export default function App() {
         <UndoActionToast />
         <DraftEditLearnedToast />
         <AnalysisOverrideLearnedToast />
+        <GlobalErrorToast />
       </div>
 
       {/* Global Snooze Menu Overlay */}

@@ -680,7 +680,6 @@ class EmailSyncService {
         const skipAnalysis = {
           needsReply: false,
           reason: "Pre-existing email before app setup",
-          priority: "skip" as const,
           analyzedAt: Date.now(),
         };
         for (const email of newEmails) {
@@ -811,14 +810,13 @@ class EmailSyncService {
     }
 
     // Update in-memory email objects with analysis data for skipped emails
-    // so the renderer receives them with correct priority, preventing them
-    // from appearing as "unanalyzed" at the top of the inbox.
+    // so the renderer receives them with their Other classification, preventing
+    // them from appearing as "unanalyzed" at the top of the inbox.
     if (toSkip.length > 0) {
       const skipIdSet = new Set(toSkip.map((e) => e.id));
       const skipAnalysis = {
         needsReply: false,
         reason: "Pre-existing email before app setup",
-        priority: "skip" as const,
         analyzedAt: Date.now(),
       };
       for (const email of newEmails) {

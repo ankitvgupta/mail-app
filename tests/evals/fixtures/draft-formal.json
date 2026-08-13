@@ -12,7 +12,6 @@
     "snippet": "Legal has approved the contract with Acme Corp. We need your signature..."
   },
   "expected": {
-    "needs_reply": true,
-    "priority": "high"
+    "needs_reply": true
   }
 }

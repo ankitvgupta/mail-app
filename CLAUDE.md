@@ -61,7 +61,26 @@ Do not allow flaky tests. If you have 1 test that fails in a large test run, don
 - Prior to making a pull request, always run the tests and ensure they pass
 - Prior to making a pull request, always run the linters and ensure they pass
 - Prior to making a pull request, always run the type checker and ensure they pass
+- **🚨 ALWAYS run `npm run pre-pr` (full, no `--quick`) immediately after `gh pr create` succeeds — unprompted, every single PR, no exceptions.** This is not optional and not "if it seems risky." `gh pr create` and `npm run pre-pr` are one atomic sequence; the PR is not "opened" until pre-pr is running. Do not hand control back to the user, do not announce the PR as ready, and do not move on to other work without kicking it off first. If you find yourself stopping after `gh pr create`, you have skipped a required step — go back and run it.
+  - It runs the LLM-judged evals + agentic-verify + real-Gmail tests and injects the report into the PR body (which is why the PR must exist first). The CI job `verify-prepr-report` requires (a) a marker block exists, (b) `mode=full`, (c) verdict=PASS. Use `--quick` freely for iteration; the full run gates ready-for-review. See `docs/LOCAL_DEVELOPMENT.md`.
+  - The standard sequence is: commit → push → `gh pr create` → `npm run pre-pr` (full) → triage the report. There is no valid variant of this sequence that ends at `gh pr create`.
+  - Run pre-pr in the foreground (or background with `run_in_background`) yourself — never tell the user "you should run pre-pr now." That is a delegation failure; the agent owns this step.
+  - Before pushing, you should already be confident the diff is locally clean (type-check, lint, unit/e2e tests, any quick `--quick` pre-PR runs you've done while iterating). Pre-PR is the gate, not the first sanity check.
+- **Triage the pre-PR report after the run:**
+  - **Major issues** (eval regressions vs. baseline, agentic-verify failures on the diff, real-Gmail test failures, crashes, broken core flows, type/lint/test failures introduced by this PR) → fix locally and re-run pre-PR until the report is clean. Do not request review or merge yet. CI will keep running on the open PR in parallel, which is fine.
+  - **Mild issues** (eval score wobble within noise, flaky non-blocking sub-checks, cosmetic warnings, slow but passing checks, pre-existing failures unrelated to this diff) → let CI keep running on the open PR while you fix them in follow-up commits in parallel. Call them out explicitly in the PR description so they aren't forgotten.
+  - When in doubt about severity, treat as major and fix first.
+- **🚨 Local pre-pr PASS ≠ CI green. Always run `gh pr checks <PR#>` after the local pre-pr finishes.** The local run only adds the `<!-- PRE-PR-REPORT-START -->` marker + verdict to the PR body at the very end. CI's `Verify pre-pr report` job fires on push and inspects the PR body immediately, so it will fail if it runs before pre-pr finishes (typical: pre-pr takes 1-3 min, CI samples within seconds of push). The PR isn't actually mergeable until that job is green.
+  - The fix is `gh run rerun <run-id> --failed` once the marker is in the PR body — confirm first with `gh pr view <PR#> --json body --jq .body | grep PRE-PR-REPORT`.
+  - Treat the sequence as: `gh pr create` → `npm run pre-pr` → `gh pr checks` → rerun `Verify pre-pr report` if it raced. Stopping at "local PASS" is the same delegation failure as stopping at `gh pr create`.
+- **Re-run pre-PR periodically during code review** when there have been substantial changes since the last run. The first pre-PR run is a snapshot of the diff at PR-open; if `/reviewloop` or subsequent commits change a lot, that snapshot goes stale. Heuristics for when to re-run (full mode, which also re-injects the report):
+  - After a `/reviewloop` iteration that touched core behavior (analyzer, draft generator, sync, IPC, prompts) — not just comment/doc tweaks.
+  - After roughly every ~10 review-driven commits, or whenever the diff since the last pre-PR run grows by ≳200 lines of non-trivial code.
+  - Before requesting human review and again before merge, even if nothing seems to have changed materially since the last run — the marker SHA in the report makes drift easy to spot.
+  - If a re-run surfaces major issues, treat the PR as not-yet-mergeable and fix them in the same loop.
 - Once a pull request has been open for a branch, you should ask me whether you should commit and push changes to that branch. After every push to a branch, include a link to the branch in the output to me so I can quickly navigate to the PR.
+- **After opening a PR, autonomously run `/review` then `/reviewloop`** without waiting to be asked. `/review` catches pre-landing issues (SQL safety, LLM trust boundaries, structural problems); `/reviewloop` then iterates against Greptile/Devin/other bots until comments are resolved and CI is green. Still surface major decisions or contested changes back to me — autonomy is about not asking for permission to start, not about silently shipping judgment calls.
+- **Attach screenshots to PRs with visual changes.** Any PR that touches UI — color/style tweaks, new components, layout changes, new UX flows, new buttons/panels — must include screenshots in the PR body so the reviewer can see what to expect without checking out the branch. Capture each meaningful state (e.g. empty / loaded / error, hover, before/after for restyles). For multi-step flows, prefer a short GIF or an ordered sequence of shots with captions. Use the electron-devtools-testing / browser tooling to capture, since the app is Electron. Non-visual PRs (refactors, backend-only, infra) don't need this.
 
 # Git commands
 You should regularly make commits in the feature branch for major functionality you ship.
@@ -92,13 +111,17 @@ Generally i will give one git worktree one branch to work with and itll be clear
 - When starting work in a new worktree, copy over any gitignored files needed from the main worktree (environment variables, local config, credentials, etc.).
 - Do NOT copy `.claude/` directory contents or `CLAUDE.md` — those are tracked by git and will already be in the worktree.
 - Do NOT use `git -C <path>` or `git -c` flags unnecessarily — you are already working inside the worktree, so just run git commands directly from the current directory.
-- **Worktree dev setup for this project**: The main worktree is at `/Users/ankit/src/mail-app/`. To run `npm run dev` with real accounts, copy `.env` from the main worktree — it's needed at build time for `MAIN_VITE_GOOGLE_CLIENT_ID` / `MAIN_VITE_GOOGLE_CLIENT_SECRET` and `ANTHROPIC_API_KEY`. Everything else (tokens, config, splits) is shared via `~/Library/Application Support/exo/` or `.dev-data/` and does not need to be copied.
+- **Worktree dev setup for this project**: The main worktree is at `/Users/ankit/src/mail-app/`. Copy `.env` and `.env.local` from the main worktree — `.env` provides build-time `MAIN_VITE_GOOGLE_CLIENT_ID` / `MAIN_VITE_GOOGLE_CLIENT_SECRET` and `ANTHROPIC_API_KEY`; `.env.local` provides the `EXOEMAILTEST_*` test-account creds. Dev signs in as the dedicated test account only (set via `EXOEMAILTEST_EMAIL` in `.env.local`) — never the user's real inbox.
+- **Fresh worktrees need two prereqs before `npm run pre-pr` (or any `real-gmail` Playwright run)**:
+  1. `npm run build` — the `real-gmail` project launches `out/main/index.js` directly, and the main process loads the renderer via `loadFile("../renderer/index.html")` (`src/main/window.ts:87`) when `ELECTRON_RENDERER_URL` is unset. The agentic-verify phase of pre-pr runs `electron-vite dev`, which serves the renderer from Vite memory only, so `out/renderer/` is never written to disk. Without a real build, the renderer fails to load and the test times out for 180s waiting on `text=Exo`.
+  2. `node scripts/setup-dev-data.mjs` — `.dev-data/` starts empty on fresh worktrees. This script exchanges `EXOEMAILTEST_REFRESH_TOKEN` from `.env.local` for a fresh access token and writes `.dev-data/credentials.json` + `.dev-data/tokens.json` non-interactively. Do NOT instead run `npm run dev` to OAuth interactively — that's the wrong path for an agent. Real-account state from `~/Library/Application Support/exo/` is **NOT** auto-copied (that bootstrap was removed in May 2026).
+  Both are idempotent and cheap — just run both unconditionally at the start of a session. If you also need realistic test inbox data, run `node scripts/seed-test-inbox.mjs` after `setup-dev-data.mjs`.
 
 ## Code reviews
 - All of my repos are set up to use automatic code review software, either provided by claude or other review apps.
-- After creating a PR, you should check at the 2, 5, and 10 minute marks for if the code review bots have put in a review, or any other users have. If they haven't at the 10 minute mark, alert me.
-- Once the code review bots do their review, you should medodically analyze their review comments, and resolve the high priority ones. anything that is a major security issue or breaking failure should get first priority. for lower priority issues, make your best determination around whether they are critical to solve now or if they can be dealt with later. summarize your findings in a PR comment, both with what issues you chose to solve and which ones you did not.
-- if I ask you to do another pass through the reviews, you should primarily look at the PR comments since the last commit you made to assess what things to fix. i may have gone in and put in manual comments.
+- **The standard post-PR workflow is `/review` then `/reviewloop`** (see Pull requests above). `/reviewloop` handles waiting on bots, fetching comments, fixing actionable issues, resolving threads, and re-checking CI — do not run a parallel manual polling loop alongside it.
+- If `/reviewloop` exits unresolved (max iterations, bot still unsatisfied), prioritize remaining comments by severity: major security or breaking issues first, then judgment-call P2/P3 issues. Summarize what you fixed vs. deferred in a PR comment.
+- If I ask you to do another pass through the reviews, you should primarily look at the PR comments since the last commit you made to assess what things to fix. I may have gone in and put in manual comments.
 
 ## Bash commands
 - This is absolutely critical: you should not syntax like  `2>&1 &` to run in the background because it causes unnecessary permission prompts. Instead, use the `run_in_background` parameter of the Bash tool. This leads to better process management.
@@ -276,7 +299,13 @@ All config lives under `app.getPath("userData")` — `~/Library/Application Supp
 - **Database**: `data/exo.db`
 - **App config**: `config.json` (electron-store)
 
-**IMPORTANT:** Reading from `~/Library/Application Support/exo/` is always fine, but **never write to or modify files in that production directory without explicitly asking first**. This is real user data shared across packaged app installs. Dev runs use `.dev-data/` instead.
+**IMPORTANT:** Reading from `~/Library/Application Support/exo/` is always fine, but **never write to, modify, or delete files in that production directory without explicitly asking first**. This is real user data shared across packaged app installs. Dev runs use `.dev-data/` instead.
+
+Hard rules learned from a real incident (July 2026 — `clean_test_dbs()` in `scripts/run-tests.sh` deleted the production `exo-config.json`, wiping the user's API keys and settings, on every `npm test`):
+
+- **Cleanup code in scripts/tests must only ever target project-local paths** (`.dev-data/`, `.packaged-test-data/`, `test-results/`, tmp dirs). Never construct a cleanup path from `$HOME` or `homedir()`. The `no-global-data-dirs` unit test enforces this for `scripts/` and `tests/`.
+- **Never launch a locally-built packaged binary without `EXO_USER_DATA_DIR`** — it shares the real install's data dir (same productName). `tests/packaged/` sets this automatically.
+- If a task seems to require touching the production directory, stop and ask — describe exactly what would be written or deleted.
 
 ## Recent Bug Fixes (Jan 2025)
 
@@ -351,3 +380,4 @@ Run `npm run eval` before any prompt change. The eval harness (`tests/evals/`) r
 - `ANTHROPIC_API_KEY` - Required for Claude API
 - `EXO_TEST_MODE=true` - Use mock data for testing
 - `EXO_DEMO_MODE=true` - Use demo data without real API calls
+- `EXO_USER_DATA_DIR` - Absolute-path override for the app data dir, honored even when packaged (used by `tests/packaged/` for isolation; never `export` it persistently)

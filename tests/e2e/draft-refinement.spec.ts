@@ -37,10 +37,11 @@ test.describe("Draft Generation and Refinement", () => {
     // Wait for inbox to load
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    // Find an email marked HIGH priority (needs reply)
-    const highPriorityEmail = page.locator("button").filter({ hasText: "HIGH" }).first();
-    await expect(highPriorityEmail).toBeVisible({ timeout: 10000 });
-    await highPriorityEmail.click();
+    // Priority pills were collapsed in issue #143. In demo mode the default
+    // Priority tab only contains needs-reply emails, so the first row is one.
+    const needsReplyEmail = page.locator("[data-thread-id]").first();
+    await expect(needsReplyEmail).toBeVisible({ timeout: 10000 });
+    await needsReplyEmail.click();
     await page.waitForTimeout(500);
 
     // Email detail should show the subject
@@ -177,9 +178,10 @@ test.describe("Draft Generation - Multiple Emails", () => {
     // Wait for inbox to load
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    // Select first HIGH priority email
-    const highPriorityEmails = page.locator("button").filter({ hasText: "HIGH" });
-    const firstEmail = highPriorityEmails.first();
+    // Priority pills were collapsed in issue #143. Pick the first thread —
+    // in demo mode all default-Priority-tab rows are needs-reply emails.
+    const needsReplyEmails = page.locator("[data-thread-id]");
+    const firstEmail = needsReplyEmails.first();
 
     if (!(await firstEmail.isVisible())) {
       test.skip();
@@ -227,15 +229,16 @@ test.describe("Draft Generation - From Full View", () => {
     // Wait for inbox to load
     await expect(page.locator("text=Inbox").first()).toBeVisible({ timeout: 10000 });
 
-    // Select a HIGH priority email
-    const highPriorityEmail = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority pills were collapsed in issue #143. Pick the first thread —
+    // in demo mode all default-Priority-tab rows are needs-reply emails.
+    const needsReplyEmail = page.locator("[data-thread-id]").first();
 
-    if (!(await highPriorityEmail.isVisible())) {
+    if (!(await needsReplyEmail.isVisible())) {
       test.skip();
       return;
     }
 
-    await highPriorityEmail.click();
+    await needsReplyEmail.click();
     await page.waitForTimeout(500);
 
     // Enter full view

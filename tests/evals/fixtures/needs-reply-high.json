@@ -12,7 +12,6 @@
     "snippet": "Hi — we're seeing intermittent 500 errors on the production API."
   },
   "expected": {
-    "needs_reply": true,
-    "priority": "high"
+    "needs_reply": true
   }
 }

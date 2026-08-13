@@ -3,7 +3,11 @@ import type {
   ExtensionAPI,
   ExtensionModule,
 } from "../../../shared/extension-types";
-import { getModelIdForFeature } from "../../../main/ipc/settings.ipc";
+import {
+  getFeatureModelConfig,
+  getModelIdForFeature,
+  getSenderLookupConfig,
+} from "../../../main/ipc/settings.ipc";
 import { createWebSearchProvider } from "./web-search-provider";
 
 /**
@@ -15,9 +19,17 @@ const extension: ExtensionModule = {
     context.logger.info("Activating web-search extension");
 
     // Register the enrichment provider.
-    // Model resolver is injected here (entry point) rather than deep in the provider,
-    // keeping the provider decoupled from Electron main-process internals.
-    const provider = createWebSearchProvider(context, () => getModelIdForFeature("senderLookup"));
+    // Settings resolvers are injected here (entry point) rather than deep in the
+    // provider, keeping the provider decoupled from Electron main-process internals.
+    // - getModelId: model for the Anthropic web_search path (provider==="anthropic")
+    // - getSearchConfig: which search backend + Exa key
+    // - getParsingModelConfig: provider+model for the LLM that parses Exa results
+    //   (so users can route the parsing step through Ollama if they want)
+    const provider = createWebSearchProvider(context, {
+      getModelId: () => getModelIdForFeature("senderLookup"),
+      getSearchConfig: () => getSenderLookupConfig(),
+      getParsingModelConfig: () => getFeatureModelConfig("senderLookup"),
+    });
     api.registerEnrichmentProvider(provider);
 
     context.logger.info("Web-search extension activated");

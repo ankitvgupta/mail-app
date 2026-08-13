@@ -1,7 +1,8 @@
 /**
  * Analysis Edit Learner
  *
- * When a user overrides an email's priority/needs_reply classification, this service:
+ * When a user overrides an email's needs-reply classification (Priority vs Other),
+ * this service:
  *
  * 1. If the user provides a reason:
  *    - Classifies scope (person/domain/category/global) via Claude
@@ -16,7 +17,8 @@
  * Analysis memories are injected into the analysis prompt (not the draft prompt).
  */
 import { randomUUID } from "crypto";
-import { createMessage } from "./anthropic-service";
+import { createMessage } from "./llm-service";
+import { getFeatureModelConfig } from "../ipc/settings.ipc";
 import {
   getDraftMemories,
   saveDraftMemory,
@@ -47,9 +49,7 @@ interface AnalysisOverride {
   subject: string;
   bodySnippet: string; // first ~500 chars of email body
   originalNeedsReply: boolean;
-  originalPriority: string | null; // "high" | "medium" | "low" | null
   newNeedsReply: boolean;
-  newPriority: string | null;
 }
 
 interface AnalysisObservation {
@@ -290,16 +290,22 @@ async function analyzeOverride(override: AnalysisOverride): Promise<AnalysisObse
     return null;
   }
 
+  // Honor the user's provider choice for analysis. When routed to Ollama, we
+  // use the configured Ollama model — the hardcoded Claude model below would
+  // be invalid there. (For Anthropic the hardcoded model wins as before.)
+  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
+  const isOllama = provider === "ollama-cloud";
+
   const overrideDesc = formatOverrideDescription(override);
 
   const response = await createMessage(
     {
-      model: "claude-sonnet-4-20250514",
+      model: isOllama ? ollamaModel : "claude-sonnet-4-20250514",
       max_tokens: 2048,
       messages: [
         {
           role: "user",
-          content: `You are analyzing why a user changed the priority classification of an email. Extract up to 3 generalizable rules about how this type of email should be prioritized in the future.
+          content: `You are analyzing why a user changed the Priority/Other classification of an email. Each email is classified as either Priority (needs a reply from the user) or Other (no reply needed). Extract up to 3 generalizable rules about how this type of email should be classified in the future.
 
 CONTEXT:
 - From: <sender_email>${override.senderEmail}</sender_email> (domain: <sender_domain>${override.senderDomain}</sender_domain>)
@@ -313,7 +319,7 @@ ANALYSIS FRAMEWORK:
 Think about WHY the user changed this classification:
 1. Is it about this specific sender? (e.g., "emails from my manager always need a reply")
 2. Is it about the domain/organization? (e.g., "emails from @ourcompany.com are always important")
-3. Is it about the type of email? (e.g., "recruiter emails should be medium, not low")
+3. Is it about the type of email? (e.g., "recruiter outreach always needs a reply")
 4. Is it a global rule? (e.g., "emails with direct questions always need replies")
 
 SCOPE RULES:
@@ -328,8 +334,8 @@ Return a JSON array. Each item:
 
 Content should be a clear directive for an email triage system, like:
 - "Emails from this sender always need a reply — they are my manager"
-- "GitHub review requests (not just notifications) should be medium priority"
-- "Recruiter outreach should be medium priority, not low"
+- "GitHub review requests (not just notifications) should be marked as priority"
+- "Recruiter outreach should be marked as priority"
 - "Emails with direct questions to me should never be skipped"
 
 Return [] if the override seems purely situational with no generalizable pattern.
@@ -339,6 +345,7 @@ Respond with ONLY the JSON array.`,
     },
     {
       caller: "analysis-edit-learner-analyze",
+      provider,
       emailId: override.emailId,
       accountId: override.accountId,
     },
@@ -388,9 +395,12 @@ async function matchAnalysisDraftMemories(
     return observations.map((_, i) => ({ observationIndex: i, matchedDraftMemoryId: null }));
   }
 
+  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
+  const isOllama = provider === "ollama-cloud";
+
   const response = await createMessage(
     {
-      model: "claude-sonnet-4-5-20250929",
+      model: isOllama ? ollamaModel : "claude-sonnet-4-5-20250929",
       max_tokens: 1024,
       messages: [
         {
@@ -408,10 +418,14 @@ Respond with ONLY a JSON array: [{"observationIndex": 0, "matchedDraftMemoryId":
         },
       ],
     },
-    { caller: "analysis-edit-learner-match" },
+    { caller: "analysis-edit-learner-match", provider },
   );
 
-  const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+  // Find the first text block — Ollama-routed thinking models emit a
+  // `thinking` block before the `text` block, so content[0] would be the
+  // wrong type and we'd silently parse "" → degraded match results.
+  const textBlock = response.content.find((b) => b.type === "text");
+  const text = textBlock?.type === "text" ? textBlock.text : "";
   const parsed = parseJsonArray<{
     observationIndex: number;
     matchedDraftMemoryId: string | null;
@@ -444,9 +458,12 @@ async function classifyScope(
     return { scope: "person", scopeValue: senderEmail.toLowerCase() };
   }
 
+  const { provider, model: ollamaModel } = getFeatureModelConfig("analysis");
+  const isOllama = provider === "ollama-cloud";
+
   const response = await createMessage(
     {
-      model: "claude-haiku-4-5-20251001",
+      model: isOllama ? ollamaModel : "claude-haiku-4-5-20251001",
       max_tokens: 256,
       messages: [
         {
@@ -470,10 +487,14 @@ For global: scopeValue = null`,
         },
       ],
     },
-    { caller: "analysis-edit-learner-classify-scope" },
+    { caller: "analysis-edit-learner-classify-scope", provider },
   );
 
-  const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+  // Find the first text block — Ollama-routed thinking models emit a
+  // `thinking` block before the `text` block, so content[0] would be the
+  // wrong type and we'd silently parse "" → degraded match results.
+  const textBlock = response.content.find((b) => b.type === "text");
+  const text = textBlock?.type === "text" ? textBlock.text : "";
   try {
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
@@ -495,11 +516,7 @@ For global: scopeValue = null`,
 }
 
 function formatOverrideDescription(override: AnalysisOverride): string {
-  const fromLabel = override.originalNeedsReply
-    ? `needs reply (${override.originalPriority ?? "no"} priority)`
-    : "no reply needed (skipped)";
-  const toLabel = override.newNeedsReply
-    ? `needs reply (${override.newPriority ?? "no"} priority)`
-    : "no reply needed (skipped)";
+  const fromLabel = override.originalNeedsReply ? "Priority (needs reply)" : "Other (no reply)";
+  const toLabel = override.newNeedsReply ? "Priority (needs reply)" : "Other (no reply)";
   return `Changed from "${fromLabel}" to "${toLabel}"`;
 }

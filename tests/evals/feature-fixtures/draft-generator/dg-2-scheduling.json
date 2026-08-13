@@ -1,0 +1,23 @@
+{
+  "id": "dg-2-scheduling",
+  "description": "A scheduling request — draft should propose a concrete time or commit to one of the offered slots.",
+  "input": {
+    "email": {
+      "id": "dg-2-msg",
+      "thread_id": "dg-2-thread",
+      "from": "Frank Lopez <frank@bigcustomer.test>",
+      "to": "you@example.test",
+      "subject": "Quick call next week?",
+      "snippet": "Could we grab 30 minutes next week to catch up on the integration work?",
+      "body": "Hey,\n\nHope you're doing well. Could we grab 30 minutes next week to catch up on the integration work? Tuesday or Wednesday afternoon would be great on my end.\n\nFrank",
+      "date": "2026-05-18T10:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    },
+    "analysis": {
+      "needs_reply": true,
+      "reason": "Scheduling request from a customer"
+    }
+  },
+  "rubric": "Score this draft on a 10-point scale by summing the criteria below. Do not invent additional criteria.\n\n## Criteria (sum these — total caps at 10)\n\n**TIME COMMITMENT (4 points)**\n- +4 if the draft picks ONE specific slot from the offered options (Tuesday afternoon or Wednesday afternoon) OR proposes a specific alternative time/day\n- +2 if it asks Frank to pick which of the two offered slots works for him (acceptable but lazier)\n- +1 if it just says 'either works' or echoes both options back\n- 0 if it offers no time commitment at all\n\n**DURATION ACKNOWLEDGED (2 points)**\n- +2 if the draft confirms the 30-minute duration\n- 0 if it doesn't mention duration\n\n**INTEGRATION-WORK CONTEXT (2 points)**\n- +2 if the draft mentions the integration work or otherwise shows it understood the topic\n- 0 if generic ('happy to chat', 'looking forward to catching up') with no topic-specific content\n\n**TONE (2 points)**\n- +2 if conversational, appropriate for an existing customer relationship\n- +1 if slightly stiff but acceptable\n- 0 if robotic or over-formal\n\n## Penalties (subtract from total)\n\n- -2 if the draft proposes a specific time OUTSIDE the offered Tue/Wed afternoon window WITHOUT acknowledging the original options\n- -2 if it defers to a scheduling assistant (this fixture has EA disabled)\n- -3 if the draft fabricates calendar availability claims\n\n## Output\n\nReturn the clamped integer total (0-10). The reason must enumerate which criteria you scored above 0.",
+  "expectedMinScore": 6
+}

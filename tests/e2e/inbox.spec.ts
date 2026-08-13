@@ -37,12 +37,11 @@ test.describe("Exo E2E - Inbox View", () => {
     const inboxHeader = page.locator("text=Inbox").first();
     await expect(inboxHeader).toBeVisible({ timeout: 10000 });
 
-    // Should show at least one email item with a priority badge (High/Medium/Low)
-    const emailWithPriority = page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low/ })
-      .first();
-    await expect(emailWithPriority).toBeVisible({ timeout: 10000 });
+    // Should show at least one email thread row. (Priority pills were
+    // collapsed in issue #143 — no longer suitable as a presence selector;
+    // every row has data-thread-id regardless of tab.)
+    const emailRow = page.locator("[data-thread-id]").first();
+    await expect(emailRow).toBeVisible({ timeout: 10000 });
   });
 
   test("shows thread count badge for multi-email threads", async () => {
@@ -134,7 +133,10 @@ test.describe("Exo E2E - Email Detail", () => {
 
   test("shows analysis result for analyzed email", async () => {
     // Select an email that should have analysis (Needs Reply section)
-    const needsReplyEmail = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority tab has no per-row pill anymore (issue #143). Pick the first
+    // visible thread row — in demo mode every row in the default Priority
+    // tab is a needs-reply email.
+    const needsReplyEmail = page.locator("[data-thread-id]").first();
 
     if (await needsReplyEmail.isVisible()) {
       await needsReplyEmail.click();
@@ -147,7 +149,10 @@ test.describe("Exo E2E - Email Detail", () => {
 
   test("shows draft section for emails needing reply", async () => {
     // Find and click an email that needs reply
-    const needsReplyEmail = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority tab has no per-row pill anymore (issue #143). Pick the first
+    // visible thread row — in demo mode every row in the default Priority
+    // tab is a needs-reply email.
+    const needsReplyEmail = page.locator("[data-thread-id]").first();
 
     if (await needsReplyEmail.isVisible()) {
       await needsReplyEmail.click();
@@ -184,7 +189,10 @@ test.describe("Exo E2E - Draft Generation", () => {
 
   test("can generate draft for email", async () => {
     // Find an email that needs reply and doesn't have a draft yet
-    const emailButton = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority tab has no per-row pill anymore (issue #143). Pick the first
+    // visible thread row — in demo mode every row in the default Priority
+    // tab is a needs-reply email.
+    const emailButton = page.locator("[data-thread-id]").first();
 
     if (await emailButton.isVisible()) {
       await emailButton.click();
@@ -209,7 +217,10 @@ test.describe("Exo E2E - Draft Generation", () => {
 
   test("can open generated draft for editing", async () => {
     // Select an email and generate/view draft
-    const emailButton = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority tab has no per-row pill anymore (issue #143). Pick the first
+    // visible thread row — in demo mode every row in the default Priority
+    // tab is a needs-reply email.
+    const emailButton = page.locator("[data-thread-id]").first();
 
     if (await emailButton.isVisible()) {
       await emailButton.click();
@@ -345,7 +356,10 @@ test.describe("Exo E2E - Draft Critique", () => {
 
   test("can refine draft with critique", async () => {
     // Find an email that needs reply
-    const emailButton = page.locator("button").filter({ hasText: "HIGH" }).first();
+    // Priority tab has no per-row pill anymore (issue #143). Pick the first
+    // visible thread row — in demo mode every row in the default Priority
+    // tab is a needs-reply email.
+    const emailButton = page.locator("[data-thread-id]").first();
 
     if (await emailButton.isVisible()) {
       await emailButton.click();

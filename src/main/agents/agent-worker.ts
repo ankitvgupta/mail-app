@@ -8,6 +8,7 @@
 
 import type {
   AgentFrameworkConfig,
+  AgentSessionStartFn,
   CoordinatorMessage,
   DbProxyFn,
   GmailProxyFn,
@@ -100,6 +101,16 @@ const netFetchProxy: NetFetchProxyFn = (
   ) as ReturnType<NetFetchProxyFn>;
 };
 
+// Fire-and-forget. The DB insert is small and synchronous on the main side;
+// we don't need to await it from the provider's hot path.
+const recordAgentSessionStart: AgentSessionStartFn = (args) => {
+  dbProxy("recordAgentSessionStart", args).catch((err: unknown) => {
+    log.warn(
+      `[AgentWorker] recordAgentSessionStart failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+};
+
 // --- Emit to renderer via MessagePort ---
 
 function emitToRenderer(taskId: string, event: ScopedAgentEvent): void {
@@ -141,6 +152,7 @@ function handleMainMessage(msg: WorkerMessage): void {
         dbProxy,
         gmailProxy,
         netFetchProxy,
+        recordAgentSessionStart,
         config: msg.config,
         setActiveTaskId: (taskId) => {
           activeTaskId = taskId;

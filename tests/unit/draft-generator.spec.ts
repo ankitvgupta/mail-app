@@ -133,7 +133,6 @@ class TestDraftGenerator {
 ---
 ANALYSIS (for context):
 Reason for reply: ${analysis.reason}
-Priority: ${analysis.priority || "medium"}
 
 ---
 ORIGINAL EMAIL:
@@ -263,7 +262,6 @@ function makeAnalysis(overrides: Partial<AnalysisResult> = {}): AnalysisResult {
   return {
     needs_reply: true,
     reason: "Direct question about budget review",
-    priority: "medium",
     ...overrides,
   };
 }
@@ -333,14 +331,12 @@ test.describe("DraftGenerator - generateDraft", () => {
       makeEmail(),
       makeAnalysis({
         reason: "Urgent budget question",
-        priority: "high",
       }),
     );
 
     const requests = getCapturedRequests();
     const content = (requests[0].messages[0] as { content: string }).content;
     expect(content).toContain("Reason for reply: Urgent budget question");
-    expect(content).toContain("Priority: high");
   });
 
   test("includes email details in the prompt", async () => {

@@ -1,0 +1,19 @@
+{
+  "id": "ca-3-ambiguous-time",
+  "description": "Vague 'let's catch up sometime' email — borderline scheduling case.",
+  "input": {
+    "email": {
+      "id": "ca-3-msg",
+      "thread_id": "ca-3-thread",
+      "from": "Carol Schmidt <carol@partner-co.test>",
+      "to": "you@example.test",
+      "subject": "Let's catch up",
+      "snippet": "Been a while — let's catch up sometime?",
+      "body": "Hey,\n\nBeen a while — let's catch up sometime? Coffee or a quick call, whatever works.\n\nCarol",
+      "date": "2026-05-18T15:00:00Z",
+      "label_ids": ["INBOX", "UNREAD"]
+    }
+  },
+  "rubric": "Good output:\n- `hasSchedulingContext` is true (a meetup IS being proposed, even if vague)\n- The output may note that no specific time/date is offered\n\nAcceptable alternative: `hasSchedulingContext: false` IF the agent reasons that 'sometime' is too vague to be actionable. We'll accept either as long as the reasoning is coherent.\n\nBad output:\n- Inconsistent: claims hasSchedulingContext is true but doesn't reflect that in any other field\n- Confidently false with no acknowledgment of the meetup proposal",
+  "expectedMinScore": 5
+}

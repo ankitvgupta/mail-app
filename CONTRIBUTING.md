@@ -4,7 +4,7 @@ Thanks for your interest in contributing to Exo! This document covers the expect
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/claude-code) with [gstack](https://github.com/anthropics/gstack) installed
+- [Claude Code](https://claude.ai/claude-code) with [gstack](https://github.com/garrytan/gstack) installed
 - Node.js and npm
 - A working dev environment (see [Getting Started](./CLAUDE.md#commands))
 

@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from "electron";
 import { EmailAnalyzer } from "../services/email-analyzer";
 import { getEmail, saveAnalysis, getInboxEmails, getAccounts } from "../db";
-import { getConfig, getModelIdForFeature } from "./settings.ipc";
+import { getConfig, getFeatureModelConfig } from "./settings.ipc";
 import type { IpcResponse, DashboardEmail, Email } from "../../shared/types";
 import { DEMO_INBOX_EMAILS, DEMO_EXPECTED_ANALYSIS } from "../demo/fake-inbox";
 import {
@@ -39,7 +39,8 @@ let analyzer: EmailAnalyzer | null = null;
 function getAnalyzer(): EmailAnalyzer {
   if (!analyzer) {
     const config = getConfig();
-    analyzer = new EmailAnalyzer(getModelIdForFeature("analysis"), config.analysisPrompt);
+    const { model, provider } = getFeatureModelConfig("analysis");
+    analyzer = new EmailAnalyzer(model, config.analysisPrompt, provider);
   }
   return analyzer;
 }
@@ -81,7 +82,6 @@ export function registerAnalysisIpc(): void {
           analysis: {
             needsReply: expectedAnalysis.needsReply,
             reason: expectedAnalysis.reason,
-            priority: expectedAnalysis.priority,
             analyzedAt: Date.now(),
           },
         };
@@ -111,7 +111,7 @@ export function registerAnalysisIpc(): void {
         const result = await analyzerInstance.analyze(emailForAnalysis, userEmail, email.accountId);
 
         // Save analysis to database
-        saveAnalysis(emailId, result.needs_reply, result.reason, result.priority);
+        saveAnalysis(emailId, result.needs_reply, result.reason);
 
         // Return updated email with analysis
         const updatedEmail = getEmail(emailId);
@@ -147,7 +147,6 @@ export function registerAnalysisIpc(): void {
               ? {
                   needsReply: expectedAnalysis.needsReply,
                   reason: expectedAnalysis.reason,
-                  priority: expectedAnalysis.priority,
                   analyzedAt: Date.now(),
                 }
               : undefined,
@@ -188,7 +187,7 @@ export function registerAnalysisIpc(): void {
               userEmail,
               email.accountId,
             );
-            saveAnalysis(emailId, result.needs_reply, result.reason, result.priority);
+            saveAnalysis(emailId, result.needs_reply, result.reason);
 
             const updatedEmail = getEmail(emailId);
             if (updatedEmail) {
@@ -211,7 +210,9 @@ export function registerAnalysisIpc(): void {
     },
   );
 
-  // Override an email's priority classification and learn from the correction
+  // Override an email's needs-reply classification and learn from the correction.
+  // (Historical name "override-priority" kept for backwards compat — emails are now
+  // simply Priority/Other, no high/medium/low.)
   ipcMain.handle(
     "analysis:override-priority",
     async (
@@ -219,12 +220,10 @@ export function registerAnalysisIpc(): void {
       {
         emailId,
         newNeedsReply,
-        newPriority,
         reason,
       }: {
         emailId: string;
         newNeedsReply: boolean;
-        newPriority: string | null;
         reason?: string;
       },
     ): Promise<IpcResponse<{ analysisUpdated: boolean }>> => {
@@ -237,18 +236,12 @@ export function registerAnalysisIpc(): void {
         // Capture original analysis before overwriting
         const originalAnalysis = email.analysis;
         const originalNeedsReply = originalAnalysis?.needsReply ?? false;
-        const originalPriority = originalAnalysis?.priority ?? null;
 
         // Update the analysis in DB
-        saveAnalysis(
-          emailId,
-          newNeedsReply,
-          originalAnalysis?.reason ?? "User override",
-          newPriority ?? undefined,
-        );
+        saveAnalysis(emailId, newNeedsReply, originalAnalysis?.reason ?? "User override");
 
         log.info(
-          `[Analysis] Priority overridden for ${emailId}: ${originalPriority ?? "skip"} → ${newPriority ?? "skip"}`,
+          `[Analysis] Needs-reply overridden for ${emailId}: ${originalNeedsReply} → ${newNeedsReply}`,
         );
 
         // Learn from the override in the background (don't block the UI)
@@ -308,9 +301,7 @@ export function registerAnalysisIpc(): void {
               subject: email.subject,
               bodySnippet,
               originalNeedsReply,
-              originalPriority,
               newNeedsReply,
-              newPriority,
             });
             if (result.promoted.length > 0 || result.draftMemoriesCreated > 0) {
               sendLearnedEvent(result);

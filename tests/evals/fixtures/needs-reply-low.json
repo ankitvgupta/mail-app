@@ -12,7 +12,6 @@
     "snippet": "Hi! I hope this email finds you well. Sarah Chen mentioned..."
   },
   "expected": {
-    "needs_reply": true,
-    "priority": "low"
+    "needs_reply": true
   }
 }

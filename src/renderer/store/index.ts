@@ -15,7 +15,7 @@ import type {
   SendMessageOptions,
   LocalDraft,
 } from "../../shared/types";
-import { emailMatchesSplit } from "../utils/split-conditions";
+import { threadMatchesSplit as threadMatchesSplitShared } from "../utils/split-conditions";
 import type {
   AgentProviderConfig,
   AgentTaskInfo,
@@ -28,6 +28,7 @@ import type {
 export type SettingsTab =
   | "general"
   | "accounts"
+  | "blocked"
   | "calendar"
   | "splits"
   | "signatures"
@@ -62,7 +63,13 @@ export type ComposeState = {
   restoredDraft?: RestoredDraft;
 } | null;
 
-// Thread representation - a group of emails with the same threadId
+// Thread representation - a group of emails with the same threadId.
+//
+// KEEP IN SYNC: EmailRow's memo comparator (src/renderer/components/EmailRow.tsx)
+// does field-level equality on this type to skip re-renders when only the
+// thread *object identity* changed (groupByThread rebuilds these on every
+// emails mutation). If you add a field here that EmailRow renders, add the
+// same field to the comparator — otherwise rows will silently go stale.
 export type EmailThread = {
   threadId: string;
   emails: DashboardEmail[];
@@ -144,6 +151,7 @@ export type UndoSendItem = {
   recipients: string; // Display string e.g. "john@example.com"
   scheduledAt: number; // Timestamp when added
   delayMs: number; // Delay before actual send
+  archiveThreadId?: string; // If set, archive this thread after the actual send completes
   // Context for reopening the compose UI on undo
   composeContext?: {
     mode: ComposeMode;
@@ -162,7 +170,7 @@ export type UndoSendItem = {
 // Undo archive/delete queue item
 export type UndoActionItem = {
   id: string;
-  type: "archive" | "trash" | "mark-unread" | "star" | "unstar" | "snooze";
+  type: "archive" | "trash" | "mark-unread" | "star" | "unstar" | "snooze" | "block";
   threadCount: number;
   accountId: string;
   emails: DashboardEmail[];
@@ -176,6 +184,11 @@ export type UndoActionItem = {
   archiveReadyThreadIds?: string[];
   // For snooze undo: thread IDs to unsnooze
   snoozedThreadIds?: string[];
+  // For block: the bare sender email that was blocked. The block IPC is
+  // deferred (commitAction in UndoActionToast calls emails:block-sender when
+  // the timer elapses), and undo within the window simply restores the
+  // emails to view — nothing server-side has happened yet.
+  blockedSender?: string;
 };
 
 interface AppState {
@@ -277,6 +290,9 @@ interface AppState {
   undoSendDelaySeconds: number;
   undoSendQueue: UndoSendItem[];
 
+  // Send & Archive — when true, the thread is archived after a successful send
+  sendAndArchive: boolean;
+
   // Draft-edit learned notifications
   draftEditLearned: {
     promoted: Array<{ id: string; content: string; scope: string; scopeValue: string | null }>;
@@ -327,6 +343,12 @@ interface AppState {
   sentEmails: DashboardEmail[];
 
   setEmails: (emails: DashboardEmail[]) => void;
+  // Atomically replace emails for a single account. Use this when refreshing
+  // a per-account slice so concurrent refreshes for different accounts don't
+  // race on a read-modify-write outside the store. See handleRefresh's
+  // fan-out path in unified mode.
+  replaceEmailsForAccount: (accountId: string, emails: DashboardEmail[]) => void;
+  replaceSentEmailsForAccount: (accountId: string, emails: DashboardEmail[]) => void;
   addEmails: (emails: DashboardEmail[]) => void;
   removeEmails: (emailIds: string[]) => void;
   /** Atomically remove emails and update selection in one render — prevents flicker during archive/trash. */
@@ -470,6 +492,9 @@ interface AppState {
   setUndoSendDelay: (seconds: number) => void;
   addUndoSend: (item: UndoSendItem) => void;
   removeUndoSend: (id: string) => void;
+
+  // Send & Archive action
+  setSendAndArchive: (enabled: boolean) => void;
 
   // Undo archive/delete actions
   addUndoAction: (item: UndoActionItem) => void;
@@ -639,6 +664,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   undoSendDelaySeconds: 5,
   undoSendQueue: [],
 
+  // Send & Archive
+  sendAndArchive: false,
+
   // Undo archive/delete state
   undoActionQueue: [],
 
@@ -705,6 +733,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { emails: patched };
     });
   },
+  replaceEmailsForAccount: (accountId, emails) => {
+    // Atomic read-modify-write so concurrent calls (e.g. unified-mode refresh
+    // fanning out across accounts) don't race. Keeps the same undo /
+    // optimistic-read suppression that setEmails uses.
+    set((state) => {
+      const pendingIds = new Set<string>();
+      for (const action of state.undoActionQueue) {
+        if (action.type === "archive" || action.type === "trash") {
+          for (const e of action.emails) pendingIds.add(e.id);
+        }
+      }
+      for (const arr of state.pendingRemovals.values()) {
+        for (const e of arr) pendingIds.add(e.id);
+      }
+      const incoming = pendingIds.size > 0 ? emails.filter((e) => !pendingIds.has(e.id)) : emails;
+      const other = state.emails.filter((e) => e.accountId !== accountId);
+      const patched = applyOptimisticReads([...other, ...incoming]);
+      if (
+        state.viewMode === "full" &&
+        state.selectedEmailId &&
+        state.emails.some((e) => e.id === state.selectedEmailId) &&
+        !patched.some((e) => e.id === state.selectedEmailId)
+      ) {
+        return {
+          emails: patched,
+          viewMode: "split" as const,
+          selectedEmailId: null,
+          selectedThreadId: null,
+        };
+      }
+      return { emails: patched };
+    });
+  },
+  replaceSentEmailsForAccount: (accountId, emails) =>
+    set((state) => {
+      const other = state.sentEmails.filter((e) => e.accountId !== accountId);
+      return { sentEmails: [...other, ...emails] };
+    }),
   addEmails: (newEmails) => {
     set((state) => {
       // Suppress emails pending in the undo action queue (archive/trash).
@@ -815,9 +881,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setAccounts: (accounts) =>
     set({
       accounts,
-      // Set current to primary or first account if not set
+      // Set current to primary or first account if not set. `??` (not `||`)
+      // is critical: `||` treats `null` as falsy, which would silently
+      // overwrite the user's intentional unified ("All Inboxes") selection
+      // every time setAccounts fires — including on re-auth, add account,
+      // and remove account. Only undefined (never-set) should fall through.
       currentAccountId:
-        get().currentAccountId || accounts.find((a) => a.isPrimary)?.id || accounts[0]?.id || null,
+        get().currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null,
     }),
   addAccount: (account) =>
     set((state) => {
@@ -830,15 +900,103 @@ export const useAppStore = create<AppState>((set, get) => ({
       const newAccounts = state.accounts.filter((a) => a.id !== accountId);
       const newSyncStatuses = new Map(state.syncStatuses);
       newSyncStatuses.delete(accountId);
+      const newBackgroundSyncProgress = new Map(state.backgroundSyncProgress);
+      newBackgroundSyncProgress.delete(accountId);
       // If removing current account, switch to primary or first
       let newCurrentId = state.currentAccountId;
       if (state.currentAccountId === accountId) {
         newCurrentId = newAccounts.find((a) => a.isPrimary)?.id || newAccounts[0]?.id || null;
       }
+      // Drop in-memory emails/sent emails/local drafts for the removed
+      // account. The DB cleanup in main happens in removeAccount(accountId),
+      // but state.emails / state.sentEmails / state.localDrafts are the
+      // source of truth for what the UI renders, so without this the removed
+      // account's threads keep rendering until the app restarts.
+      const remainingEmails: DashboardEmail[] = [];
+      const remainingSentEmails: DashboardEmail[] = [];
+      const removedEmailIds = new Set<string>();
+      const removedThreadIds = new Set<string>();
+      // Walk both emails and sentEmails: a sent-only thread (outgoing
+      // message with no reply yet) only exists in sentEmails, so building
+      // the removed id sets from state.emails alone would leave its
+      // selection pointers stale.
+      for (const e of state.emails) {
+        if (e.accountId === accountId) {
+          removedEmailIds.add(e.id);
+          if (e.threadId) removedThreadIds.add(e.threadId);
+        } else {
+          remainingEmails.push(e);
+        }
+      }
+      for (const e of state.sentEmails) {
+        if (e.accountId === accountId) {
+          removedEmailIds.add(e.id);
+          if (e.threadId) removedThreadIds.add(e.threadId);
+        } else {
+          remainingSentEmails.push(e);
+        }
+      }
+      const remainingLocalDrafts: LocalDraft[] = [];
+      const removedDraftIds = new Set<string>();
+      for (const d of state.localDrafts) {
+        if (d.accountId === accountId) {
+          removedDraftIds.add(d.id);
+        } else {
+          remainingLocalDrafts.push(d);
+        }
+      }
+      // Clear selection slices that pointed at the removed account's emails/
+      // threads/drafts. In unified mode currentAccountId stays null after
+      // removal, so the setCurrentAccountId selection-reset path never fires
+      // and the right pane would otherwise render a ghost thread or draft.
+      const newSelectedThreadIds = new Set<string>();
+      for (const tid of state.selectedThreadIds) {
+        if (!removedThreadIds.has(tid)) newSelectedThreadIds.add(tid);
+      }
+      // lastSelectedThreadId is the shift-click range anchor. If the anchor
+      // belonged to the removed account, a subsequent shift-click would
+      // anchor against a thread that no longer exists.
+      const newLastSelectedThreadId =
+        state.lastSelectedThreadId && removedThreadIds.has(state.lastSelectedThreadId)
+          ? null
+          : state.lastSelectedThreadId;
+      // Drain pending undo queues for the removed account. UndoActionToast's
+      // error-recovery path on a failed batch IPC calls addEmails(failedEmails),
+      // which would re-insert this account's emails after the DB is gone.
+      // Drop both queues' entries so timers fire on a no-op and the toast
+      // never tries to restore them.
+      const newUndoActionQueue = state.undoActionQueue.filter((i) => i.accountId !== accountId);
+      const newUndoSendQueue = state.undoSendQueue.filter(
+        (i) => i.sendOptions.accountId !== accountId,
+      );
       return {
         accounts: newAccounts,
         currentAccountId: newCurrentId,
         syncStatuses: newSyncStatuses,
+        backgroundSyncProgress: newBackgroundSyncProgress,
+        emails: remainingEmails,
+        sentEmails: remainingSentEmails,
+        localDrafts: remainingLocalDrafts,
+        selectedEmailId:
+          state.selectedEmailId && removedEmailIds.has(state.selectedEmailId)
+            ? null
+            : state.selectedEmailId,
+        selectedThreadId:
+          state.selectedThreadId && removedThreadIds.has(state.selectedThreadId)
+            ? null
+            : state.selectedThreadId,
+        focusedThreadEmailId:
+          state.focusedThreadEmailId && removedEmailIds.has(state.focusedThreadEmailId)
+            ? null
+            : state.focusedThreadEmailId,
+        selectedThreadIds: newSelectedThreadIds,
+        lastSelectedThreadId: newLastSelectedThreadId,
+        selectedDraftId:
+          state.selectedDraftId && removedDraftIds.has(state.selectedDraftId)
+            ? null
+            : state.selectedDraftId,
+        undoActionQueue: newUndoActionQueue,
+        undoSendQueue: newUndoSendQueue,
       };
     }),
   setCurrentAccountId: (accountId) => {
@@ -856,15 +1014,34 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentSplitId !== null && !ALWAYS_VISIBLE_SPLITS.has(currentSplitId)
         ? "__priority__"
         : currentSplitId;
+    // Reset ALL per-thread selection state, not just selectedEmailId. Leaving
+    // selectedThreadId / focusedThreadEmailId / selectedThreadIds pointing at
+    // a thread from the previous account causes stale highlight, stale
+    // scroll-to-selected attempts, and (in full view) wedges the right pane
+    // until the next user action. The multi-select set across accounts is
+    // also meaningless — every batch action is scoped per-account.
     set({
       currentAccountId: accountId,
       selectedEmailId: null,
+      selectedThreadId: null,
+      focusedThreadEmailId: null,
+      selectedThreadIds: new Set<string>(),
+      selectedDraftId: null,
       globalAgentTaskKey: null,
       currentSplitId: nextSplitId,
     });
+    // Persist so unified-vs-account selection survives app restart. Same path
+    // as inboxDensity/keyboardBindings. Fire-and-forget; UI already updated.
+    void window.api.settings.set({ lastSelectedAccountId: accountId });
   },
   setSyncStatus: (accountId, status) =>
     set((state) => {
+      // Skip no-op transitions. The main process flips syncing/idle for
+      // every periodic sync tick + every sync.now call across every
+      // account, so over a long session this fires hundreds of times per
+      // minute. Without this guard, each emit replaces the syncStatuses
+      // Map reference and notifies every subscriber.
+      if (state.syncStatuses.get(accountId) === status) return state;
       const newStatuses = new Map(state.syncStatuses);
       newStatuses.set(accountId, status);
       return { syncStatuses: newStatuses };
@@ -1180,6 +1357,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Undo send actions
   setUndoSendDelay: (seconds) => set({ undoSendDelaySeconds: seconds }),
+  setSendAndArchive: (enabled) => set({ sendAndArchive: enabled }),
   addUndoSend: (item) => set((state) => ({ undoSendQueue: [...state.undoSendQueue, item] })),
   removeUndoSend: (id) =>
     set((state) => ({ undoSendQueue: state.undoSendQueue.filter((i) => i.id !== id) })),
@@ -1191,14 +1369,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   // trash) or different accounts remain separate items.
   addUndoAction: (item) =>
     set((state) => {
-      const existing = state.undoActionQueue.find(
-        (i) =>
-          i.type === item.type &&
-          i.accountId === item.accountId &&
-          // Don't merge into an item whose timer has already elapsed —
-          // it is executing or about to execute; treat the new press as a fresh action.
-          i.scheduledAt + i.delayMs > Date.now(),
-      );
+      // Block actions never merge — each toast is sender-specific and the undo
+      // path needs the exact senderEmail. Keep them as separate items.
+      const existing =
+        item.type === "block"
+          ? undefined
+          : state.undoActionQueue.find(
+              (i) =>
+                i.type === item.type &&
+                i.accountId === item.accountId &&
+                // Don't merge into an item whose timer has already elapsed —
+                // it is executing or about to execute; treat the new press as a fresh action.
+                i.scheduledAt + i.delayMs > Date.now(),
+            );
       if (existing) {
         const merged: UndoActionItem = {
           ...existing,
@@ -1586,12 +1769,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   markThreadAsRead: (threadId) => {
     const state = get();
-    const accountId = state.currentAccountId;
-    if (!accountId) return;
-
     const threadEmails = state.emails.filter((e) => e.threadId === threadId);
     const unreadEmails = threadEmails.filter((e) => e.labelIds?.includes("UNREAD"));
     if (unreadEmails.length === 0) return;
+
+    // Derive the target account from the thread itself, not from the global
+    // currentAccountId. In unified ("All Inboxes") mode currentAccountId is
+    // null, so the previous early-return broke the most fundamental
+    // interaction (opening an email in unified mode wouldn't mark it read on
+    // Gmail). The thread's emails always carry their owning accountId.
+    const accountId = state.currentAccountId ?? threadEmails[0]?.accountId;
+    if (!accountId) return;
 
     const unreadIds = new Set(unreadEmails.map((e) => e.id));
 
@@ -1617,9 +1805,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
     }));
 
-    // Fire-and-forget Gmail API calls
+    // Fire-and-forget Gmail API calls. Route each per its own account so a
+    // unified-view thread on account B uses B's credentials, not whatever
+    // happened to be selected globally.
     for (const email of unreadEmails) {
-      window.api.emails.setRead(email.id, accountId, true).catch((err: Error) => {
+      const emailAccountId = email.accountId ?? accountId;
+      window.api.emails.setRead(email.id, emailAccountId, true).catch((err: Error) => {
         console.error("Failed to mark email as read:", err);
       });
     }
@@ -1684,32 +1875,61 @@ export function getAppStateSnapshot(): Record<string, unknown> {
 }
 
 // Check if an email is sent by the user (not received)
-function isSentEmail(email: DashboardEmail, currentUserEmail?: string): boolean {
-  // Check labelIds first (most reliable)
+function isSentEmail(
+  email: DashboardEmail,
+  currentUserEmail?: string,
+  userEmailByAccount?: Map<string, string>,
+): boolean {
+  // Check labelIds first (most reliable).
   if (email.labelIds?.includes("SENT")) {
     return true;
   }
 
-  // Fall back to checking the from field
-  if (!currentUserEmail) return false;
+  // Fall back to comparing the from-field against the user's address.
+  // Prefer the per-account map (correct in both single-account and unified
+  // "All Inboxes" mode); fall back to the explicit currentUserEmail for
+  // single-account callers that don't pass a map.
+  const userEmail =
+    (email.accountId ? userEmailByAccount?.get(email.accountId) : undefined) ?? currentUserEmail;
+  if (!userEmail) return false;
+
   const fromLower = email.from.toLowerCase();
-  const userEmailLower = currentUserEmail.toLowerCase();
+  const userEmailLower = userEmail.toLowerCase();
   // Extract email from "Name <email>" format if present
   const emailMatch = fromLower.match(/<([^>]+)>/) || [null, fromLower];
   const fromEmail = emailMatch[1] || fromLower;
   return fromEmail.trim() === userEmailLower.trim();
 }
 
-// Helper to group emails by thread
-export function groupByThread(emails: DashboardEmail[], currentUserEmail?: string): EmailThread[] {
+// Helper to group emails by thread.
+// `currentUserEmail` is the single-account "Me" address; in unified mode it's
+// undefined and the per-account map below handles "Me" detection per email.
+// `userEmailByAccount` maps accountId → user email so sent-detection works
+// for emails from any account in the input (used by unified inbox).
+export function groupByThread(
+  emails: DashboardEmail[],
+  currentUserEmail?: string,
+  userEmailByAccount?: Map<string, string>,
+): EmailThread[] {
   const threadMap = new Map<string, DashboardEmail[]>();
 
   // Pre-compute timestamps once to avoid creating Date objects in every sort
   // comparison. With 1000+ emails and multiple sorts, this avoids tens of
   // thousands of redundant Date allocations per groupByThread call.
+  //
+  // CRITICAL: substitute `0` for any email whose `date` doesn't parse to a
+  // finite number. `new Date("").getTime()` (or any malformed date string)
+  // returns `NaN`, and a single NaN in the sort comparator
+  // `(a, b) => b.latestReceivedDate - a.latestReceivedDate` returns NaN — which
+  // JavaScript's Array.sort treats as "no preference," partially scrambling
+  // the surrounding region of the array. In unified ("All Inboxes") view a
+  // single email with a bad date string would push the freshest threads
+  // arbitrarily far down the list. Substituting 0 sends bad-date threads to
+  // the end of a DESC sort, where they cause no further damage.
   const dateCache = new Map<string, number>();
   for (const email of emails) {
-    dateCache.set(email.id, new Date(email.date).getTime());
+    const ts = new Date(email.date).getTime();
+    dateCache.set(email.id, Number.isFinite(ts) ? ts : 0);
   }
 
   // Group emails by threadId
@@ -1728,7 +1948,9 @@ export function groupByThread(emails: DashboardEmail[], currentUserEmail?: strin
     const latestEmail = threadEmails[threadEmails.length - 1];
 
     // Find the latest RECEIVED email (not sent by user) for inbox sorting
-    const receivedEmails = threadEmails.filter((e) => !isSentEmail(e, currentUserEmail));
+    const receivedEmails = threadEmails.filter(
+      (e) => !isSentEmail(e, currentUserEmail, userEmailByAccount),
+    );
     const latestReceivedEmail =
       receivedEmails.length > 0 ? receivedEmails[receivedEmails.length - 1] : latestEmail; // Fallback to latest if all are sent
 
@@ -1745,7 +1967,7 @@ export function groupByThread(emails: DashboardEmail[], currentUserEmail?: strin
       // latestReceivedEmail is from user - find any non-self email
       const nonSelfEmail = [...threadEmails]
         .reverse()
-        .find((e) => !isSentEmail(e, currentUserEmail));
+        .find((e) => !isSentEmail(e, currentUserEmail, userEmailByAccount));
       if (nonSelfEmail) {
         displaySender = nonSelfEmail.from;
       } else {
@@ -1801,9 +2023,18 @@ export function useThreadedEmails() {
   const snoozedThreadIds = useAppStore((state) => state.snoozedThreadIds);
   const recentlyRepliedThreadIds = useAppStore((state) => state.recentlyRepliedThreadIds);
 
-  // Get current user's email for sent detection
+  // Get current user's email for sent detection (single-account fast path).
   const currentAccount = accounts.find((a) => a.id === currentAccountId);
   const currentUserEmail = currentAccount?.email;
+
+  // Per-account map for sent detection in unified ("All Inboxes") mode:
+  // currentUserEmail above is undefined when currentAccountId is null, so
+  // sent-detection-by-from-field would fail for emails without the SENT
+  // label. The map lets isSentEmail resolve "Me" per email's accountId.
+  const userEmailByAccount = useMemo(
+    () => new Map(accounts.map((a) => [a.id, a.email])),
+    [accounts],
+  );
 
   // Memoize the expensive thread computation. j/k navigation only changes
   // selectedEmailId — none of these deps change, so the memo short-circuits
@@ -1828,8 +2059,8 @@ export function useThreadedEmails() {
     // Then filter out sent-only threads — threads where no email has the INBOX label.
     // Sent emails within inbox threads are kept (for conversation context), but threads
     // consisting solely of sent emails belong in the Sent view, not the inbox.
-    const allThreads = groupByThread(accountEmails, currentUserEmail).filter((t) =>
-      t.emails.some((e) => !e.labelIds || e.labelIds.includes("INBOX")),
+    const allThreads = groupByThread(accountEmails, currentUserEmail, userEmailByAccount).filter(
+      (t) => t.emails.some((e) => !e.labelIds || e.labelIds.includes("INBOX")),
     );
 
     // Separate snoozed threads from active threads
@@ -1864,21 +2095,14 @@ export function useThreadedEmails() {
     );
     const unanalyzed = activeThreads.filter((t) => !t.analysis && !effectiveUserReplied(t));
 
-    // Sort needsReply by priority (high > medium > low)
-    const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-    const sortedNeedsReply = [...needsReply].sort((a, b) => {
-      const aPriority = priorityOrder[a.analysis?.priority || "medium"] ?? 1;
-      const bPriority = priorityOrder[b.analysis?.priority || "medium"] ?? 1;
-      return aPriority - bPriority;
-    });
-
-    // Ordered threads: unanalyzed → needs reply (by priority) → done → skipped
-    const threads = [...unanalyzed, ...sortedNeedsReply, ...done, ...skipped];
+    // Ordered threads: unanalyzed → needs reply → done → skipped.
+    // Within needsReply, preserve the chronological order produced by groupByThread.
+    const threads = [...unanalyzed, ...needsReply, ...done, ...skipped];
 
     return {
       threads,
       chronologicalThreads: activeThreads, // sorted by latestReceivedDate desc (from groupByThread)
-      needsReply: sortedNeedsReply,
+      needsReply,
       done,
       skipped,
       skippedCount: skipped.length,
@@ -1886,11 +2110,22 @@ export function useThreadedEmails() {
       snoozed,
       snoozedCount: snoozed.length,
     };
-  }, [emails, currentAccountId, currentUserEmail, snoozedThreadIds, recentlyRepliedThreadIds]);
+  }, [
+    emails,
+    currentAccountId,
+    currentUserEmail,
+    userEmailByAccount,
+    snoozedThreadIds,
+    recentlyRepliedThreadIds,
+  ]);
 }
 
+// Local thin wrapper around the shared threadMatchesSplit util so the rest
+// of this file can keep passing EmailThread objects around without exposing
+// the split-conditions module to that type (which would create an import
+// cycle).
 function threadMatchesSplit(thread: EmailThread, split: InboxSplit): boolean {
-  return emailMatchesSplit(thread.latestEmail, split);
+  return threadMatchesSplitShared(thread.latestEmail, split);
 }
 
 // Selector for split-filtered threaded emails
@@ -1907,8 +2142,14 @@ export function useSplitFilteredThreads() {
   const sentEmails = useAppStore((state) => state.sentEmails);
 
   return useMemo(() => {
-    // Filter splits for current account
-    const splits = allSplits.filter((s) => s.accountId === currentAccountId);
+    // Filter splits for current account. In unified mode (null) we consider
+    // every account's splits — threadMatchesSplit enforces the per-account
+    // scope so an exclusive split from one account won't hide threads from
+    // another.
+    const splits =
+      currentAccountId === null
+        ? allSplits
+        : allSplits.filter((s) => s.accountId === currentAccountId);
 
     // Helper to filter out threads matching exclusive splits (unless recently unsnoozed)
     const exclusiveSplits = splits.filter((s) => s.exclusive);
@@ -1942,7 +2183,14 @@ export function useSplitFilteredThreads() {
       const sentAccountEmails = currentAccountId
         ? sentEmails.filter((e) => e.accountId === currentAccountId)
         : sentEmails;
-      const sentThreads = groupByThread(sentAccountEmails, currentUserEmail).sort(
+      // Same per-account "Me" map as useThreadedEmails so sent detection
+      // works for emails without a SENT label in unified mode.
+      const userEmailByAccount = new Map(accounts.map((a) => [a.id, a.email] as const));
+      const sentThreads = groupByThread(
+        sentAccountEmails,
+        currentUserEmail,
+        userEmailByAccount,
+      ).sort(
         (a, b) => new Date(b.latestEmail.date).getTime() - new Date(a.latestEmail.date).getTime(),
       );
 

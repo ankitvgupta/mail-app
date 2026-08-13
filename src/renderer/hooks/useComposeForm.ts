@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "../store";
 import { useSignature } from "./useSignature";
+import { excludeEmailAddress, formatAlias } from "../utils/alias-formatting";
 import type { ComposeAttachmentItem } from "../components/AttachmentList";
 import type {
   ReplyInfo,
@@ -133,77 +134,85 @@ export function useComposeForm({
 
   // --- Send-as aliases ---
   const [sendAsAliases, setSendAsAliases] = useState<SendAsAlias[]>([]);
-  const [from, setFrom] = useState<string | undefined>(undefined);
+  // Tracks the user's explicit selection; undefined means "use derived default"
+  const [fromOverride, setFromOverride] = useState<string | undefined>(undefined);
 
-  // Fetch aliases on mount
+  // Account display name acts as the fallback for aliases without their own
+  // (common for Workspace primaries, where the name lives on the OAuth profile).
+  // Subscribed so derivedFrom and FromSelector dropdown labels stay current.
+  const accountDisplayName = useAppStore(
+    (state) => state.accounts.find((a) => a.id === accountId)?.displayName,
+  );
+
+  // Fetch aliases on mount (and when account changes)
   useEffect(() => {
+    setFromOverride(undefined);
+    setSendAsAliases([]);
+    let cancelled = false;
+
     if (typeof window.api.compose.getSendAsAliases !== "function") return;
 
     (window.api.compose.getSendAsAliases(accountId) as Promise<IpcResponse<SendAsAlias[]>>)
       .then((result) => {
+        if (cancelled) return;
         if (result.success && result.data.length > 0) {
           setSendAsAliases(result.data);
-
-          // Smart reply default: auto-select the alias that the original email was sent to.
-          // replyInfo.to/cc only has the REPLY addresses (original sender for plain reply),
-          // so we also check the original email's To/CC from the store — that's where
-          // the user's alias appears as a recipient.
-          if (replyInfo) {
-            const replyRecipients = [...(replyInfo.to || []), ...(replyInfo.cc || [])].map((addr) =>
-              extractBareEmail(addr).toLowerCase(),
-            );
-
-            // Also check the original email's recipients (covers plain reply)
-            const originalEmail = replyToEmailId
-              ? useAppStore.getState().emails.find((e) => e.id === replyToEmailId)
-              : undefined;
-            const originalRecipients = originalEmail
-              ? [
-                  ...(originalEmail.to || "").split(",").map((s) => s.trim()),
-                  ...(originalEmail.cc || "").split(",").map((s) => s.trim()),
-                ].map((addr) => extractBareEmail(addr).toLowerCase())
-              : [];
-
-            const allRecipients = [...replyRecipients, ...originalRecipients];
-            const matchingAlias = result.data.find((a) =>
-              allRecipients.includes(a.email.toLowerCase()),
-            );
-            if (matchingAlias) {
-              setFrom(
-                matchingAlias.displayName
-                  ? `${matchingAlias.displayName} <${matchingAlias.email}>`
-                  : matchingAlias.email,
-              );
-              return;
-            }
-          }
-
-          // Default to the default alias
-          const defaultAlias = result.data.find((a) => a.isDefault);
-          if (defaultAlias) {
-            setFrom(
-              defaultAlias.displayName
-                ? `${defaultAlias.displayName} <${defaultAlias.email}>`
-                : defaultAlias.email,
-            );
-          }
         }
       })
       .catch(() => {
         // Silently fail — compose still works without aliases
       });
+    return () => {
+      cancelled = true;
+    };
   }, [accountId]);
 
-  // When the From alias is resolved, strip it from CC so the user doesn't
-  // CC themselves on reply-all. Only removes the selected From — other aliases
-  // stay since they may be intentional recipients.
+  // Subscribe to the reply email reactively so derivedFrom updates if emails load async
+  const replyEmail = useAppStore((s) =>
+    replyToEmailId ? s.emails.find((e) => e.id === replyToEmailId) : undefined,
+  );
+
+  // Derive the default "from" address from aliases without storing in state.
+  // Smart reply default: pick the alias that the original email was sent to.
+  const derivedFrom = useMemo(() => {
+    if (sendAsAliases.length === 0) return undefined;
+
+    if (replyInfo) {
+      const replyRecipients = [...(replyInfo.to || []), ...(replyInfo.cc || [])].map((addr) =>
+        extractBareEmail(addr).toLowerCase(),
+      );
+
+      const originalRecipients = replyEmail
+        ? [
+            ...(replyEmail.to || "").split(",").map((s) => s.trim()),
+            ...(replyEmail.cc || "").split(",").map((s) => s.trim()),
+          ].map((addr) => extractBareEmail(addr).toLowerCase())
+        : [];
+
+      const allRecipients = [...replyRecipients, ...originalRecipients];
+      const matchingAlias = sendAsAliases.find((a) =>
+        allRecipients.includes(a.email.toLowerCase()),
+      );
+      if (matchingAlias) return formatAlias(matchingAlias, accountDisplayName);
+    }
+
+    const defaultAlias = sendAsAliases.find((a) => a.isDefault);
+    if (defaultAlias) return formatAlias(defaultAlias, accountDisplayName);
+
+    return formatAlias(sendAsAliases[0], accountDisplayName);
+  }, [sendAsAliases, replyInfo, replyEmail, accountDisplayName]);
+
+  // Effective "from": user's explicit pick wins, otherwise use derived default
+  const from = fromOverride ?? derivedFrom;
+  const setFrom = setFromOverride;
+
+  // Reply-all is initially built with only the account's primary address, so a
+  // send-as alias may be present in CC until aliases load and `from` resolves.
+  // Remove the selected From address from state so the editor, send validation,
+  // outgoing payload, and undo-send snapshot all agree on the recipient list.
   useEffect(() => {
     if (!from) return;
-    const fromBare = extractBareEmail(from).toLowerCase();
-    setCc((prev) => {
-      const filtered = prev.filter((addr) => extractBareEmail(addr).toLowerCase() !== fromBare);
-      return filtered.length === prev.length ? prev : filtered;
-    });
+    setCc((previousCc) => excludeEmailAddress(previousCc, from));
   }, [from]);
 
   // --- Send state ---
@@ -295,11 +304,19 @@ export function useComposeForm({
   }, []);
 
   // --- @mention → add to Cc ---
-  const handleMentionAddToCc = useCallback((email: string) => {
+  const handleMentionAddToCc = useCallback((email: string, name?: string) => {
     setCc((prev) => {
       if (prev.some((e) => e.toLowerCase() === email.toLowerCase())) return prev;
       return [...prev, email];
     });
+    const trimmedName = name?.trim();
+    if (trimmedName) {
+      setNameMap((prev) => {
+        const key = email.toLowerCase();
+        if (prev.get(key) === trimmedName) return prev;
+        return new Map(prev).set(key, trimmedName);
+      });
+    }
     setShowCcBcc(true);
   }, []);
 
@@ -496,6 +513,7 @@ export function useComposeForm({
     sendAsAliases,
     from,
     setFrom,
+    accountDisplayName,
 
     // Content state
     subject,

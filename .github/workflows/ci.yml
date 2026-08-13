@@ -3,6 +3,12 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: "Regenerate visual baselines (PNGs) and upload as artifact. Download + commit to tests/e2e/visual-regression.spec.ts-snapshots/."
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -134,3 +140,230 @@ jobs:
           path: playwright-report/
           retention-days: 14
           if-no-files-found: ignore
+
+  migrations:
+    name: Migration Replay
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Rebuild better-sqlite3 for system Node
+        # `npm ci` runs postinstall (electron-builder install-app-deps),
+        # which builds native modules for Electron's Node ABI. The
+        # migrations test runs under plain Node via Playwright — so we
+        # need the system-Node ABI here.
+        run: |
+          rm -rf node_modules/better-sqlite3/build node_modules/better-sqlite3/prebuilds
+          npm rebuild better-sqlite3
+
+      - name: Run migration replay tests
+        run: npx playwright test --project=migrations
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-migrations
+          path: playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  visual-regression:
+    name: Visual Regression
+    runs-on: ubuntu-latest
+    # Informational until baselines are committed. Without baselines,
+    # `toHaveScreenshot` reports "snapshot doesn't match expected" and
+    # fails. To bootstrap: run this job once with EXO_UPDATE_SNAPSHOTS=1
+    # (set via workflow_dispatch), commit the generated PNGs from the
+    # artifact, then this gate becomes real.
+    continue-on-error: true
+    # Pin the docker image version so font rendering stays stable across
+    # CI runs. Bump deliberately when refreshing baselines.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-jammy
+    env:
+      CI: true
+      EXO_DEMO_MODE: true
+      EXO_VISUAL_REGRESSION: "1"
+      ELECTRON_DISABLE_SANDBOX: 1
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Electron app
+        run: npm run build
+
+      - name: Run visual regression
+        # The `visual-regression` spec is in the e2e project but gated on
+        # platform === linux + the screenshot project. Run only it.
+        # xvfb-run is required: Electron needs a display, and the Playwright
+        # docker image doesn't auto-start one (unlike Chromium-only runs).
+        # On workflow_dispatch with update_snapshots=true, regenerate the
+        # baselines instead of comparing — used to bootstrap or refresh.
+        run: |
+          UPDATE_FLAG=""
+          if [ "${{ github.event.inputs.update_snapshots }}" = "true" ]; then
+            UPDATE_FLAG="--update-snapshots"
+            echo "Bootstrap/refresh mode: regenerating baselines"
+          fi
+          xvfb-run --auto-servernum npx playwright test \
+            --project=e2e \
+            tests/e2e/visual-regression.spec.ts \
+            $UPDATE_FLAG
+
+      - name: Upload regenerated baselines (workflow_dispatch only)
+        if: ${{ github.event.inputs.update_snapshots == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-baselines
+          path: tests/e2e/visual-regression.spec.ts-snapshots/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload screenshot diffs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-regression-diffs
+          path: |
+            test-results/**/*.png
+            playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  packaged-smoke:
+    name: Packaged App Smoke
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+      EXO_DEMO_MODE: true
+      ELECTRON_DISABLE_SANDBOX: 1
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends xvfb
+          npx playwright install-deps chromium
+
+      - name: Build + pack
+        run: |
+          npm run build
+          npm run pack
+
+      - name: Smoke test packaged binary
+        run: xvfb-run --auto-servernum npx playwright test --project=packaged
+        env:
+          EXO_PACKAGED_BINARY: release/linux-unpacked/exo
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-packaged
+          path: playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  verify-prepr-report:
+    name: Verify pre-pr report
+    # Hermetic — uses default GITHUB_TOKEN only. No Anthropic key, no
+    # Gmail creds. Makes running `npm run pre-pr` functionally required
+    # before merge: this job fails the PR if the marker block in the PR
+    # body is missing, mode=quick, or verdict != PASS.
+    #
+    # Only meaningful on pull_request events — workflow_dispatch has no
+    # PR context (github.event.pull_request.number is empty), so this
+    # job would fail with a confusing red status on dispatched runs
+    # (e.g., the visual-regression baseline regeneration).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect PR body for the marker block
+        # Behavior:
+        #   - Marker absent → FAIL. The developer must have run pre-pr at
+        #     least once on this PR.
+        #   - Marker present + mode=quick → FAIL. The final report must be
+        #     from a full run (quick skips real-Gmail).
+        #   - Marker present + verdict != PASS → FAIL.
+        #   - Otherwise → pass.
+        #
+        # The marker SHA is intentionally NOT checked against HEAD. Forcing
+        # a fresh pre-pr on every push imposes a ~10min cycle per typo fix
+        # and gates noisy iteration. Trusting "one full passing pre-pr per
+        # PR" is the right granularity — reviewers see when major changes
+        # land after the marker and can ask for a re-run.
+        run: |
+          echo "Inspecting PR #$PR_NUMBER body for pre-pr marker"
+
+          BODY=$(gh pr view "$PR_NUMBER" --json body --jq .body)
+          MARKER=$(echo "$BODY" | grep -E '<!-- PRE-PR-REPORT-START' | head -n1 || true)
+
+          if [ -z "$MARKER" ]; then
+            echo "::error::No <!-- PRE-PR-REPORT-START --> marker in PR body."
+            echo "::error::Run 'npm run pre-pr' locally and push the updated body."
+            exit 1
+          fi
+
+          MARKER_SHA=$(echo "$MARKER" | sed -n 's/.*SHA=\([0-9a-f]*\).*/\1/p')
+          echo "Marker SHA: ${MARKER_SHA:-unknown} (informational; not gated against HEAD)"
+
+          # Parse the mode field. The final pre-pr run before merge must
+          # be a full one — quick mode is fine for iteration but doesn't
+          # exercise the real-Gmail tests. Anything other than `full`
+          # (the default) fails the gate.
+          MARKER_MODE=$(echo "$MARKER" | sed -n 's/.*mode=\([a-z-]*\).*/\1/p')
+          echo "Marker mode: ${MARKER_MODE:-unknown}"
+
+          if [ "$MARKER_MODE" = "quick" ]; then
+            echo "::error::Pre-PR was last run with --quick. Before merging, run a full 'npm run pre-pr' (no --quick) so the real-Gmail tests fire against the test account. Quick mode is fine for iteration but is not sufficient to merge."
+            exit 1
+          fi
+
+          # Also extract the verdict from the report block body. The
+          # marker existing is necessary but not sufficient — the report
+          # itself must say PASS. Otherwise a developer could run pre-pr
+          # with failures and the gate would still let it through.
+          VERDICT=$(echo "$BODY" | grep -E '^\*\*Pre-PR verdict\*\*:' | head -n1 | sed -E 's|.*verdict\*\*:[[:space:]]*([A-Z]+).*|\1|')
+          echo "Pre-PR verdict in report: ${VERDICT:-unknown}"
+
+          if [ "$VERDICT" != "PASS" ]; then
+            echo "::error::Pre-PR report verdict is '${VERDICT:-unknown}', not PASS. Investigate the failing phases (see the report block in this PR's body) and re-run 'npm run pre-pr' once it's clean."
+            exit 1
+          fi
+
+          echo "Pre-PR report is passing (SHA $MARKER_SHA, mode=${MARKER_MODE}, verdict=$VERDICT)."

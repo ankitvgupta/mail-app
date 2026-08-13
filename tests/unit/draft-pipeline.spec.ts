@@ -338,44 +338,32 @@ test.describe("resolveEnableSenderLookup", () => {
 // =============================================================================
 
 test.describe("analysis result shaping", () => {
-  // Mirrors lines 98-102: converting stored analysis to AnalysisResult
-  function shapeAnalysis(stored: { needsReply: boolean; reason: string; priority?: string }): {
+  // Mirrors draft-pipeline.ts: convert stored analysis (camelCase) to
+  // the snake_case AnalysisResult shape consumed by the draft generator.
+  function shapeAnalysis(stored: { needsReply: boolean; reason: string }): {
     needs_reply: boolean;
     reason: string;
-    priority?: string;
   } {
     return {
       needs_reply: stored.needsReply,
       reason: stored.reason,
-      priority: stored.priority,
     };
   }
 
-  test("maps needsReply to needs_reply", () => {
+  test("maps needsReply to needs_reply for Priority emails", () => {
     const result = shapeAnalysis({
       needsReply: true,
       reason: "Direct question",
-      priority: "high",
     });
     expect(result.needs_reply).toBe(true);
     expect(result.reason).toBe("Direct question");
-    expect(result.priority).toBe("high");
   });
 
-  test("handles false needsReply", () => {
+  test("maps needsReply to needs_reply for Other emails", () => {
     const result = shapeAnalysis({
       needsReply: false,
       reason: "Newsletter",
-      priority: "skip",
     });
     expect(result.needs_reply).toBe(false);
-  });
-
-  test("handles missing priority", () => {
-    const result = shapeAnalysis({
-      needsReply: true,
-      reason: "Question",
-    });
-    expect(result.priority).toBeUndefined();
   });
 });

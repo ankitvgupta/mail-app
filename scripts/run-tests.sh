@@ -22,6 +22,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
+# A leftover `export EXO_USER_DATA_DIR` (meant for one-off packaged runs)
+# would redirect every Electron test instance to one shared dir, breaking
+# per-worker isolation. Tests always use the project-local .dev-data/.
+unset EXO_USER_DATA_DIR
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -105,37 +110,30 @@ run_with_display() {
 }
 
 # Clean up per-worker test databases and stale config left by parallel E2E runs.
-# Config files (electron-store) are shared global state — we only clean them
-# before/after the full test suite, never during parallel execution.
+# Config files (electron-store) are shared state across workers — we only clean
+# them before/after the full test suite, never during parallel execution.
+#
+# ONLY the project-local .dev-data/ may be cleaned here (test launches resolve
+# their data dir there via src/main/data-dir.ts — the global "Electron" dirs
+# main's hotfix still cleaned are legacy and no longer written). An earlier
+# version of this function cleaned the global per-user app dirs — the packaged
+# app's REAL user data — which deleted the production exo-config.json (all API
+# keys and settings) on every test run. Never add global paths back; the
+# no-global-data-dirs unit test enforces this.
 clean_test_dbs() {
-    local home="${HOME:-/root}"
+    local dev_data="$PROJECT_DIR/.dev-data"
     local cleaned=0
-    local data_dirs=(
-        "$home/Library/Application Support/Electron/data"
-        "$home/Library/Application Support/exo/data"
-        "$home/.config/Electron/data"
-        "$home/.config/exo/data"
-    )
-    local config_dirs=(
-        "$home/Library/Application Support/Electron"
-        "$home/Library/Application Support/exo"
-        "$home/.config/Electron"
-        "$home/.config/exo"
-    )
-    for dir in "${data_dirs[@]}"; do
-        if [ -d "$dir" ]; then
-            for f in "$dir"/exo-demo-w*.db*; do
-                [ -f "$f" ] && rm -f "$f" && cleaned=$((cleaned + 1))
-            done
-        fi
-    done
-    for dir in "${config_dirs[@]}"; do
-        if [ -d "$dir" ]; then
-            for f in "$dir"/exo-config.json; do
-                [ -f "$f" ] && rm -f "$f" && cleaned=$((cleaned + 1))
-            done
-        fi
-    done
+    if [ -d "$dev_data/data" ]; then
+        for f in "$dev_data/data"/exo-demo-w*.db*; do
+            [ -f "$f" ] && rm -f "$f" && cleaned=$((cleaned + 1))
+        done
+    fi
+    # Note: this intentionally resets any settings configured via `npm run
+    # dev` in this worktree — .dev-data/ is disposable test-account state,
+    # and e2e suites need a deterministic default config.
+    if [ -f "$dev_data/exo-config.json" ]; then
+        rm -f "$dev_data/exo-config.json" && cleaned=$((cleaned + 1))
+    fi
     if [ $cleaned -gt 0 ]; then
         log_info "Cleaned up $cleaned test artifact file(s)"
     fi

@@ -1,7 +1,7 @@
 /**
  * Unit tests for CalendaringAgent service.
  *
- * Strategy: Replace the module-level Anthropic client in anthropic-service.ts
+ * Strategy: Replace the module-level Anthropic client in llm-service.ts
  * with a MockAnthropic instance via _setClientForTesting, so all services
  * that call createMessage() go through the mock.
  */
@@ -13,7 +13,7 @@ import {
   resetAnthropicMock,
   getCapturedRequests,
 } from "../mocks/anthropic-api-mock";
-import { _setClientForTesting } from "../../src/main/services/anthropic-service";
+import { _setClientForTesting } from "../../src/main/services/llm-service";
 import type { Email, EAConfig } from "../../src/shared/types";
 
 // ---------------------------------------------------------------------------

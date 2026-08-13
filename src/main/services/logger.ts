@@ -12,9 +12,18 @@
 import pino, { type Logger, multistream } from "pino";
 import { type SonicBoom } from "sonic-boom";
 import { join } from "path";
-import { mkdirSync, readdirSync, unlinkSync, statSync } from "fs";
+import { mkdirSync, readdirSync, unlinkSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { Writable } from "stream";
+import { createRequire } from "module";
+import { getUserDataOverride } from "../user-data-override";
+
+// This file uses CommonJS `require` to defer-load Electron so it can be
+// imported in non-Electron test contexts. In ESM mode `require` is undefined
+// unless we synthesize it via createRequire — without this, every Electron
+// access fell to the catch and the logger silently used tmpdir for both dev
+// and packaged builds.
+const requireFromHere = createRequire(import.meta.url);
 
 /**
  * Wraps a SonicBoom destination so that writes to a destroyed stream are
@@ -64,8 +73,16 @@ function getLogDir(): string {
     // Resolve the data directory inline to avoid a circular dependency
     // with data-dir.ts (which imports createLogger at module scope).
     // NOTE: Keep this path logic in sync with getDataDir() in data-dir.ts.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { app } = require("electron");
+    // EXO_USER_DATA_DIR must be honored here too: loggers created at module
+    // import time run before index.ts re-anchors userData via app.setPath,
+    // so without this a packaged smoke run would write its first log lines
+    // into the real install's data dir. Shared with getDataDir() via the
+    // leaf helper so validation can't drift; a relative override throws,
+    // lands in the catch below, and falls back to tmpdir — the app then
+    // crashes with the real error when data-dir.ts validates it.
+    const override = getUserDataOverride();
+    if (override) return join(override, "logs");
+    const { app } = requireFromHere("electron");
     // Use app.isPackaged directly — the previous isDev() wrapper used
     // require("@electron-toolkit/utils") which could fail and fall back
     // to NODE_ENV checks that incorrectly returned true in packaged apps.
@@ -79,8 +96,7 @@ function getLogDir(): string {
 
 function isDev(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { app } = require("electron");
+    const { app } = requireFromHere("electron");
     return !app.isPackaged;
   } catch {
     return process.env.NODE_ENV !== "production";
@@ -112,22 +128,80 @@ let _logger: Logger | null = null;
 // SonicBoom (returned by pino.destination()) does.
 let _destinations: SonicBoom[] = [];
 
-function initLogger(): Logger {
-  const logDir = getLogDir();
+// Once resolved at init, callers (and IPC consumers) can read this to find logs.
+let _activeLogPath: string | null = null;
+
+export function getActiveLogPath(): string | null {
+  return _activeLogPath;
+}
+
+// Validates writability by probing the directory with a synchronous write.
+// pino's SonicBoom opens the destination asynchronously and surfaces fd
+// failures via an 'error' event that we silently swallow (issue #97). Without
+// this probe, a logger that has been completely dead for weeks looks identical
+// to a healthy one. If the primary dir is unwritable, fall back to tmpdir so
+// users always have *some* log file to attach to bug reports.
+function resolveWritableLogDir(): string {
+  const primary = getLogDir();
+  const probe = join(primary, ".write-probe");
   try {
-    mkdirSync(logDir, { recursive: true });
-  } catch {
-    /* ignore */
+    mkdirSync(primary, { recursive: true });
+    // Writability is determined by writeFileSync — once it succeeds the dir is
+    // good. Probe cleanup happens in the finally block so a failing unlink
+    // (e.g. EPERM) does not trigger a false-positive fallback.
+    writeFileSync(probe, "");
+  } catch (primaryErr) {
+    const fallback = join(tmpdir(), "exo-logs");
+    // eslint-disable-next-line no-console
+    console.error(
+      `[logger] Primary log dir is not writable (${primary}): ${
+        primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
+      }. Falling back to ${fallback}`,
+    );
+    try {
+      mkdirSync(fallback, { recursive: true });
+    } catch (fallbackErr) {
+      // eslint-disable-next-line no-console
+      console.error(`[logger] Fallback log dir also failed (${fallback}):`, fallbackErr);
+    }
+    return fallback;
+  } finally {
+    // Best-effort probe cleanup. If unlink fails the orphaned empty file is
+    // harmless — cleanOldLogs only touches *.log entries.
+    try {
+      unlinkSync(probe);
+    } catch {
+      /* best effort */
+    }
   }
+  return primary;
+}
+
+function initLogger(): Logger {
+  const logDir = resolveWritableLogDir();
 
   cleanOldLogs(logDir);
 
   const today = new Date().toISOString().split("T")[0];
   const logFile = join(logDir, `${today}.log`);
+  _activeLogPath = logFile;
+  // Print to stderr so the path is visible in the dev terminal and in any
+  // captured stderr from packaged launches. Without this we have no way to
+  // tell where logs are actually going if the primary dir falls through.
+  // eslint-disable-next-line no-console
+  console.error(`[logger] Writing logs to ${logFile}`);
   const dev = isDev();
 
-  // pino.destination() returns SonicBoom at runtime but is typed as DestinationStream
+  // pino.destination() returns SonicBoom at runtime but is typed as DestinationStream.
+  // Attach an error handler immediately so that if the file descriptor fails to
+  // open (fd = -1), the error is swallowed rather than crashing the app with
+  // an unhandled "fd is out of range" RangeError (see GitHub issue #97).
   const fileDest = pino.destination({ dest: logFile, sync: false, mkdir: true }) as SonicBoom;
+  fileDest.on("error", (err) => {
+    // Best-effort: log to stderr so there's a breadcrumb, but never throw.
+    // eslint-disable-next-line no-console
+    console.error("[logger] SonicBoom file destination error:", err);
+  });
   _destinations = [fileDest];
 
   const streams: pino.StreamEntry[] = [
@@ -143,15 +217,23 @@ function initLogger(): Logger {
   if (dev) {
     // In dev, also write pretty output to stdout
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pinoPretty = require("pino-pretty");
+      const pinoPretty = requireFromHere("pino-pretty");
+      const prettyStream = pinoPretty({ colorize: true });
+      prettyStream.on("error", (err: Error) => {
+        // eslint-disable-next-line no-console
+        console.error("[logger] pino-pretty stream error:", err);
+      });
       streams.push({
         level: "debug" as const,
-        stream: pinoPretty({ colorize: true }),
+        stream: prettyStream,
       });
     } catch {
       // pino-pretty not available, fall back to raw JSON to stdout
       const stdoutDest = pino.destination({ dest: 1, sync: true }) as SonicBoom;
+      stdoutDest.on("error", (err) => {
+        // eslint-disable-next-line no-console
+        console.error("[logger] SonicBoom stdout destination error:", err);
+      });
       _destinations.push(stdoutDest);
       streams.push({
         level: "debug" as const,

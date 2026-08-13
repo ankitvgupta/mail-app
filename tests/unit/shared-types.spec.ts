@@ -87,16 +87,15 @@ test.describe("EmailSchema", () => {
 // ============================================================
 
 test.describe("AnalysisResultSchema", () => {
-  test("validates needs_reply=true with priority", () => {
+  test("validates needs_reply=true with reason", () => {
     const result = AnalysisResultSchema.safeParse({
       needs_reply: true,
       reason: "Direct question",
-      priority: "high",
     });
     expect(result.success).toBe(true);
   });
 
-  test("validates needs_reply=false without priority", () => {
+  test("validates needs_reply=false with reason", () => {
     const result = AnalysisResultSchema.safeParse({
       needs_reply: false,
       reason: "Newsletter",
@@ -104,24 +103,19 @@ test.describe("AnalysisResultSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  test("validates all priority levels", () => {
-    for (const priority of ["high", "medium", "low", "skip"]) {
-      const result = AnalysisResultSchema.safeParse({
-        needs_reply: true,
-        reason: "test",
-        priority,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  test("rejects invalid priority", () => {
+  test("strips legacy priority field for backwards compat", () => {
+    // Issue #143: priority is no longer part of the schema. Zod v3 strips
+    // unknown keys by default for z.object(), so legacy callers that still
+    // send "priority" won't break — the field is silently dropped.
     const result = AnalysisResultSchema.safeParse({
       needs_reply: true,
-      reason: "test",
-      priority: "critical", // not a valid enum value
+      reason: "Direct question",
+      priority: "high",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ needs_reply: true, reason: "Direct question" });
+    }
   });
 
   test("rejects missing needs_reply", () => {

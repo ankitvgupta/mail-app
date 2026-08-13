@@ -12,12 +12,9 @@ test.describe("Dark Mode", () => {
     electronApp = result.app;
     page = result.page;
 
-    // Wait for email list to populate
-    await page
-      .locator("button")
-      .filter({ hasText: /High|Medium|Low/ })
-      .first()
-      .waitFor({ timeout: 10000 });
+    // Wait for email list to populate. Priority pills were collapsed in
+    // issue #143, so use the stable per-row data-thread-id attribute.
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 10000 });
   });
 
   test.afterAll(async () => {

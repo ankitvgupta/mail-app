@@ -187,7 +187,7 @@ function flush(): void {
       // These have been optimistically removed from the store but the API calls
       // may not have completed yet — without this, sync resurrects them.
       for (const action of state.undoActionQueue) {
-        if (action.type === "archive" || action.type === "trash") {
+        if (action.type === "archive" || action.type === "trash" || action.type === "block") {
           for (const e of action.emails) {
             pendingRemovalIds.add(e.id);
           }

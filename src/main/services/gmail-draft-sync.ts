@@ -12,6 +12,7 @@ import {
   saveDraft,
 } from "../db";
 import { getClient } from "../ipc/gmail.ipc";
+import { getConfig } from "../ipc/settings.ipc";
 import { createLogger } from "./logger";
 
 const log = createLogger("gmail-draft-sync");
@@ -42,6 +43,11 @@ export async function syncDraftToGmail(
   if (useFakeData) return;
 
   try {
+    const syncEnabled = getConfig().syncDraftsToGmail;
+
+    // If sync is disabled and there's no old draft to clean up, skip entirely.
+    if (!syncEnabled && !oldGmailDraftId) return;
+
     const email = getEmail(emailId);
     if (!email) {
       log.warn(`[GmailDraftSync] Email not found: ${emailId}`);
@@ -61,6 +67,10 @@ export async function syncDraftToGmail(
         // Draft may have been deleted externally — that's fine
       }
     }
+
+    // Stop here if sync is disabled — old draft was cleaned up above,
+    // but we don't create a new Gmail draft.
+    if (!syncEnabled) return;
 
     const isForward = composeMode === "forward";
 

@@ -531,26 +531,17 @@ test.describe("Archive Ready - Thread Archive via 'e' key", () => {
     await projectAlphaRow.click();
     await page.waitForTimeout(500);
 
-    // If clicking went to full view, go back to split so we can see the list
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
-
-    // Verify the Project Alpha thread is still selected after Escape
-    const selected = page.locator(".overflow-y-auto div[data-thread-id].bg-blue-600");
-    await expect(selected).toBeVisible({ timeout: 3000 });
-    const selectedText = await selected.textContent();
-    expect(selectedText).toContain("Project Alpha");
-
-    // Record count before archive
-    const countBeforeArchive = await countInboxThreads(page);
-
     // Press 'e' to archive
     await page.keyboard.press("e");
+
+    // Return to split view before counting rows; the list is hidden while full view is active.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
 
     // Thread should be removed immediately (optimistic UI)
     await expect(async () => {
       const countAfter = await countInboxThreads(page);
-      expect(countAfter).toBe(countBeforeArchive - 1);
+      expect(countAfter).toBe(countBefore - 1);
     }).toPass({ timeout: 2000 });
 
     // The "Project Alpha" text should no longer appear in the thread list
@@ -630,9 +621,11 @@ test.describe("Archive - Click to Select", () => {
     });
     console.log("[DEBUG] Focus after click:", JSON.stringify(focusInfo));
 
-    // Press Escape to go back to split view (if in full view)
+    // Press Escape to go back to split view. Selection is preserved on the row
+    // we were just viewing, so 'e' can archive it directly without reselecting.
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
+    await expect(page.locator("div[data-thread-id][data-selected='true']")).toHaveCount(1);
 
     // Now press 'e' to archive
     const focusBeforeE = await page.evaluate(() => {

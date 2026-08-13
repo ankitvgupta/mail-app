@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "feature": "archive-ready-analyzer",
+  "judgeModel": "claude-opus-4-7",
+  "generatedAt": "2026-05-21T06:08:00Z",
+  "scores": {
+    "ar-1-resolved-thread": {
+      "score": 10,
+      "reason": "Deterministic 10 across 10 runs under Opus. Strong feature."
+    },
+    "ar-2-open-question": {
+      "score": 10,
+      "reason": "Deterministic 10 across 10 runs under Opus. Strong feature."
+    }
+  }
+}

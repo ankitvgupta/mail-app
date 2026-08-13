@@ -1,57 +1,43 @@
 import { useState, useEffect } from "react";
 import type { DashboardEmail } from "../../shared/types";
 
-// Priority options for the override dropdown
-const PRIORITY_OPTIONS = [
-  { value: "skip", label: "Skip", needsReply: false, priority: null },
-  { value: "low", label: "Low", needsReply: true, priority: "low" },
-  { value: "medium", label: "Medium", needsReply: true, priority: "medium" },
-  { value: "high", label: "High", needsReply: true, priority: "high" },
-] as const;
+// Binary classification options: Priority (needs reply) vs Other.
+const OPTIONS = [
+  { value: "priority" as const, label: "Priority", needsReply: true },
+  { value: "other" as const, label: "Other", needsReply: false },
+];
 
-function currentPriorityValue(analysis: { needsReply: boolean; priority?: string }): string {
-  if (!analysis.needsReply) return "skip";
-  return analysis.priority ?? "medium";
+type OptionValue = (typeof OPTIONS)[number]["value"];
+
+function currentValue(analysis: { needsReply: boolean }): OptionValue {
+  return analysis.needsReply ? "priority" : "other";
 }
 
-function priorityColor(value: string): string {
-  switch (value) {
-    case "high":
-      return "text-red-600 dark:text-red-400";
-    case "medium":
-      return "text-yellow-600 dark:text-yellow-400";
-    case "low":
-      return "text-blue-600 dark:text-blue-400";
-    default:
-      return "text-gray-500 dark:text-gray-400";
-  }
-}
-
-/** Interactive analysis section with priority override and optional memory reason. */
+/** Interactive analysis section with Priority/Other override and optional memory reason. */
 export function AnalysisPrioritySection({
   email,
   onAnalysisUpdated,
 }: {
   email: DashboardEmail;
-  onAnalysisUpdated: (newNeedsReply: boolean, newPriority: string | null) => void;
+  onAnalysisUpdated: (newNeedsReply: boolean) => void;
 }) {
   const analysis = email.analysis!;
-  const current = currentPriorityValue(analysis);
+  const current = currentValue(analysis);
 
   const [isEditing, setIsEditing] = useState(false);
-  const [selectedValue, setSelectedValue] = useState(current);
+  const [selectedValue, setSelectedValue] = useState<OptionValue>(current);
   const [reason, setReason] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
   // Reset state when email changes
   useEffect(() => {
     setIsEditing(false);
-    setSelectedValue(currentPriorityValue(analysis));
+    setSelectedValue(currentValue(analysis));
     setReason("");
   }, [email.id]);
 
   const handleSave = async () => {
-    const option = PRIORITY_OPTIONS.find((o) => o.value === selectedValue);
+    const option = OPTIONS.find((o) => o.value === selectedValue);
     if (!option || selectedValue === current) {
       setIsEditing(false);
       return;
@@ -62,14 +48,13 @@ export function AnalysisPrioritySection({
       await window.api.analysis.overridePriority(
         email.id,
         option.needsReply,
-        option.priority,
         reason.trim() || undefined,
       );
-      onAnalysisUpdated(option.needsReply, option.priority);
+      onAnalysisUpdated(option.needsReply);
       setIsEditing(false);
       setReason("");
     } catch (err) {
-      console.error("Failed to override priority:", err);
+      console.error("Failed to override classification:", err);
     } finally {
       setIsSaving(false);
     }
@@ -80,18 +65,14 @@ export function AnalysisPrioritySection({
       <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50">
         <div className="flex items-center gap-3 text-sm">
           <span
-            className={`font-medium ${analysis.needsReply ? "text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400"}`}
+            className={`font-medium ${
+              analysis.needsReply
+                ? "text-blue-600 dark:text-blue-400"
+                : "text-gray-500 dark:text-gray-400"
+            }`}
           >
-            {analysis.needsReply ? "Needs Reply" : "No Reply Needed"}
+            {analysis.needsReply ? "Priority" : "Other"}
           </span>
-          {analysis.priority && (
-            <>
-              <span className="text-gray-300 dark:text-gray-600">·</span>
-              <span className={`capitalize ${priorityColor(analysis.priority)}`}>
-                {analysis.priority} priority
-              </span>
-            </>
-          )}
           <span className="text-gray-300 dark:text-gray-600">·</span>
           <span className="text-gray-400 dark:text-gray-500 flex-1">{analysis.reason}</span>
           <button
@@ -109,21 +90,19 @@ export function AnalysisPrioritySection({
     <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50">
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-sm">
-          <span className="text-gray-500 dark:text-gray-400 text-xs font-medium">Priority:</span>
+          <span className="text-gray-500 dark:text-gray-400 text-xs font-medium">
+            Classification:
+          </span>
           <div className="flex gap-1">
-            {PRIORITY_OPTIONS.map((opt) => (
+            {OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setSelectedValue(opt.value)}
                 className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
                   selectedValue === opt.value
-                    ? opt.value === "skip"
-                      ? "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200"
-                      : opt.value === "high"
-                        ? "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
-                        : opt.value === "medium"
-                          ? "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300"
-                          : "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+                    ? opt.value === "priority"
+                      ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+                      : "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200"
                     : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
                 }`}
               >

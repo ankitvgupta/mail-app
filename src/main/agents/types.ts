@@ -1,5 +1,5 @@
 import { type z } from "zod";
-import type { McpServerConfig, CliToolConfig } from "../../shared/types";
+import type { McpServerConfig, CliToolConfig, LlmProvider } from "../../shared/types";
 
 // Re-export renderer-safe types from the shared module to maintain a single
 // source of truth across the IPC boundary.
@@ -59,10 +59,23 @@ export interface AgentRunParams {
   toolExecutor: ToolExecutorFn;
   /** Fetch a URL through the main process's Chromium networking stack (shared session/cookies). */
   netFetch: NetFetchProxyFn;
+  /** Record one row in llm_calls stamping the harness + LLM backend + model
+   *  chosen for this session. Providers should call this exactly once near
+   *  the start of run(), after they've resolved the actual model they will
+   *  use. The call is fire-and-forget; failures are logged, not thrown. */
+  recordSessionStart: AgentSessionStartFn;
   signal: AbortSignal;
   /** Per-task model override. When set, takes precedence over the framework config model. */
   modelOverride?: string;
 }
+
+export type AgentSessionStartFn = (args: {
+  harness: string;
+  provider: LlmProvider;
+  model: string;
+  accountId?: string;
+  emailId?: string;
+}) => void;
 
 export interface AgentResumeParams {
   taskId: string;
@@ -120,6 +133,8 @@ export interface OrchestratorDeps {
   dbProxy: DbProxyFn;
   gmailProxy: GmailProxyFn;
   netFetchProxy: NetFetchProxyFn;
+  /** Fire-and-forget — record agent-session-start row in llm_calls. */
+  recordAgentSessionStart: AgentSessionStartFn;
   config: AgentFrameworkConfig;
   /** Set the active taskId so proxy requests can be scoped for cancellation. */
   setActiveTaskId: (taskId: string | null) => void;
@@ -156,7 +171,21 @@ export type NetFetchProxyFn = (
 export interface AgentFrameworkConfig {
   model: string;
   anthropicApiKey?: string;
+  ollamaCloud?: { enabled: boolean; apiKey: string; model: string };
+  /** Per-provider settings, keyed by provider id (e.g. "openclaw-agent"). */
   providers?: Record<string, ProviderSettings>;
+  /** OpenCode-specific settings. Kept top-level (not under providers) so the
+   *  provider can read it without going through ProviderSettings's narrow shape. */
+  opencode?: { enabled: boolean; model?: string };
+  /** Hostler-specific settings (hosted cloud agent backend). Kept top-level
+   *  for the same reason as opencode — harness/model don't fit ProviderSettings. */
+  hostler?: {
+    enabled: boolean;
+    apiKey?: string;
+    harness?: string;
+    model?: string;
+    baseUrl?: string;
+  };
   browserConfig?: {
     enabled: boolean;
     chromeDebugPort: number;
