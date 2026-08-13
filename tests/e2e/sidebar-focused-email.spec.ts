@@ -73,14 +73,14 @@ test.describe("Sidebar reflects focused email in thread", () => {
 
       // Click the message row to toggle expand/collapse
       const clickTarget = emailWrapper.locator("button").first();
-      await clickTarget.click();
+      await clickTarget.click({ position: { x: 4, y: 4 } });
       await page.waitForTimeout(500);
 
       // The click toggles the email. If it was already expanded, clicking
       // collapsed it (clearing focus). Re-click to expand and set focus.
-      const expandedContent = emailWrapper.locator("div.group\\/msg");
+      const expandedContent = emailWrapper.locator('[class~="group/msg"]');
       if (!(await expandedContent.isVisible().catch(() => false))) {
-        await clickTarget.click();
+        await clickTarget.click({ position: { x: 4, y: 4 } });
         await page.waitForTimeout(500);
       }
 
