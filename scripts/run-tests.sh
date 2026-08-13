@@ -3,8 +3,8 @@
 # Comprehensive test runner that handles better-sqlite3 ABI compatibility
 #
 # The better-sqlite3 native module must be compiled for the correct Node version:
-# - Unit tests run with system Node (ABI 127)
-# - E2E tests run with Electron's Node (ABI 132)
+# - Unit tests run with system Node's ABI
+# - E2E tests run with Electron's Node ABI
 #
 # This script rebuilds the module appropriately before each test phase,
 # ensuring NO tests are skipped due to ABI mismatch.
@@ -60,7 +60,7 @@ rebuild_for_node() {
 rebuild_for_electron() {
     log_info "Rebuilding better-sqlite3 for Electron..."
     rm -rf node_modules/better-sqlite3/build node_modules/better-sqlite3/prebuilds 2>/dev/null || true
-    npx @electron/rebuild --force --build-from-source 2>/dev/null || {
+    npx @electron/rebuild --force --which-module better-sqlite3 || {
         log_error "Failed to rebuild better-sqlite3 for Electron"
         exit 1
     }
