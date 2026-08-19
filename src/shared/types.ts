@@ -1058,6 +1058,9 @@ export type SnoozedEmail = {
 
 export type ScheduledMessageStatus = "scheduled" | "sending" | "sent" | "failed" | "cancelled";
 
+/** 'scheduled' = user-chosen send-later; 'undo' = the short undo-send delay. */
+export type ScheduledMessageKind = "scheduled" | "undo";
+
 export type ScheduledMessage = {
   id: string;
   accountId: string;
@@ -1072,6 +1075,10 @@ export type ScheduledMessage = {
   inReplyTo?: string;
   references?: string;
   scheduledAt: number; // Unix timestamp in ms
+  kind: ScheduledMessageKind;
+  archiveThreadId?: string;
+  /** Serialized compose state, round-tripped so Undo can reopen the editor. */
+  composeContext?: string;
   status: ScheduledMessageStatus;
   errorMessage?: string;
   createdAt: number;

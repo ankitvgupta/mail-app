@@ -1153,25 +1153,32 @@ export class GmailClient {
   /**
    * Send a new email message
    */
-  async sendMessage(options: SendMessageOptions): Promise<{ id: string; threadId: string }> {
+  async sendMessage(
+    options: SendMessageOptions,
+    requestOptions: { signal?: AbortSignal } = {},
+  ): Promise<{ id: string; threadId: string }> {
     const gmail = this.gmail!;
 
     // Get sender address with display name if not explicitly provided
-    const profile = await this.getProfile();
+    const profile = await this.getProfile(requestOptions);
     const from = options.from || this.getSenderAddress(profile.emailAddress);
 
     const raw = await this.buildMimeMessage({
       ...options,
       from,
     });
+    requestOptions.signal?.throwIfAborted();
 
-    const response = await gmail.users.messages.send({
-      userId: "me",
-      requestBody: {
-        raw,
-        threadId: options.threadId,
+    const response = await gmail.users.messages.send(
+      {
+        userId: "me",
+        requestBody: {
+          raw,
+          threadId: options.threadId,
+        },
       },
-    });
+      requestOptions,
+    );
 
     return {
       id: response.data.id!,
@@ -1514,9 +1521,11 @@ export class GmailClient {
   }
 
   // Get user profile (email address, etc.)
-  async getProfile(): Promise<{ emailAddress: string; messagesTotal: number; historyId: string }> {
+  async getProfile(
+    requestOptions: { signal?: AbortSignal } = {},
+  ): Promise<{ emailAddress: string; messagesTotal: number; historyId: string }> {
     const gmail = this.gmail!;
-    const response = await gmail.users.getProfile({ userId: "me" });
+    const response = await gmail.users.getProfile({ userId: "me" }, requestOptions);
 
     // Store historyId for incremental sync
     this.lastHistoryId = response.data.historyId || null;

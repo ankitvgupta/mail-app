@@ -8,6 +8,7 @@ import {
   stripLargeDataUris,
 } from "../services/email-body-cache";
 import { splitAddressList, extractFirstName } from "../utils/address-parsing";
+import { serializeComposeContext } from "../utils/undo-send-context";
 import { splitQuotedContent } from "../services/quote-elision";
 import { ComposeEditor } from "./ComposeEditor";
 import { formatSnoozeTime } from "./SnoozeMenu";
@@ -1467,25 +1468,44 @@ function InlineReply({
 
     if (undoSendDelaySeconds > 0) {
       const optimisticId = `pending-${Date.now()}`;
+      const delayMs = undoSendDelaySeconds * 1000;
+      const archiveThreadId = shouldArchive ? replyInfo.threadId : undefined;
+      const composeContext = {
+        mode: composeMode,
+        replyToEmailId,
+        threadId: replyInfo.threadId,
+        bodyHtml: form.bodyHtml,
+        bodyText: form.bodyText,
+        to: form.to,
+        cc: form.cc.length > 0 ? form.cc : undefined,
+        bcc: form.bcc.length > 0 ? form.bcc : undefined,
+        subject: replyInfo.subject,
+        optimisticEmailId: optimisticId,
+      };
+
+      // Hand the message to main BEFORE showing the toast. Main owns the timer
+      // and the DB row, so the send survives closing the window mid-delay.
+      const queued = (await window.api.scheduledSend.create({
+        ...sendOptions,
+        scheduledAt: Date.now() + delayMs,
+        kind: "undo",
+        archiveThreadId,
+        composeContext: serializeComposeContext(composeContext),
+      })) as IpcResponse<{ id: string; scheduledAt: number }>;
+
+      if (!queued.success) {
+        form.setError(queued.error || "Failed to send");
+        return;
+      }
+
       addUndoSend({
-        id: crypto.randomUUID(),
+        id: queued.data.id,
         sendOptions,
         recipients: form.to.join(", "),
-        scheduledAt: Date.now(),
-        delayMs: undoSendDelaySeconds * 1000,
-        archiveThreadId: shouldArchive ? replyInfo.threadId : undefined,
-        composeContext: {
-          mode: composeMode,
-          replyToEmailId,
-          threadId: replyInfo.threadId,
-          bodyHtml: form.bodyHtml,
-          bodyText: form.bodyText,
-          to: form.to,
-          cc: form.cc.length > 0 ? form.cc : undefined,
-          bcc: form.bcc.length > 0 ? form.bcc : undefined,
-          subject: replyInfo.subject,
-          optimisticEmailId: optimisticId,
-        },
+        scheduledAt: queued.data.scheduledAt - delayMs,
+        delayMs,
+        archiveThreadId,
+        composeContext,
       });
       onSend({
         id: optimisticId,

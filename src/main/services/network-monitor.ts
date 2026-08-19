@@ -1,8 +1,14 @@
 import { EventEmitter } from "events";
-import { net, powerMonitor } from "electron";
+import { createRequire } from "module";
+import type * as Electron from "electron";
 import { createLogger } from "./logger";
 
 const log = createLogger("network");
+const requireFromHere = createRequire(import.meta.url);
+
+function getElectron(): typeof Electron {
+  return requireFromHere("electron") as typeof Electron;
+}
 
 type NetworkEvent = "online" | "offline";
 
@@ -16,6 +22,7 @@ class NetworkMonitor extends EventEmitter {
    */
   init(): void {
     if (this.initialized) return;
+    const { net, powerMonitor } = getElectron();
 
     // Get initial state from Electron's net module
     this._isOnline = net.isOnline();
@@ -82,6 +89,7 @@ class NetworkMonitor extends EventEmitter {
    * Check and update online status (can be called to verify state)
    */
   checkStatus(): boolean {
+    const { net } = getElectron();
     const current = net.isOnline();
     if (current !== this._isOnline) {
       const wasOnline = this._isOnline;

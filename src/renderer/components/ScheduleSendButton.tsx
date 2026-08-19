@@ -289,7 +289,9 @@ export function ScheduledMessagesList({ accountId }: { accountId: string }) {
 
   const loadMessages = async () => {
     try {
-      const result = await window.api.scheduledSend.list(accountId);
+      // Scope to 'scheduled': undo-send rows share this table but belong to the
+      // toast, not this dropdown.
+      const result = await window.api.scheduledSend.list(accountId, "scheduled");
       if (result.success) {
         setMessages(result.data);
       }
