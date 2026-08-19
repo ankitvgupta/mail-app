@@ -40,6 +40,7 @@ type SyncAccount = {
   intervalId: NodeJS.Timeout | null;
   status: SyncStatus;
   lastError?: string;
+  needsReauth?: boolean;
   // Set at registration when account has no stored emails — consumed by
   // the first fullSync to run triage. Prevents race conditions where emails
   // arrive between registration and the fullSync check.
@@ -50,6 +51,8 @@ const HEALTH_CHECK_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 class EmailSyncService {
   private accounts: Map<string, SyncAccount> = new Map();
+  private syncingAccounts: Set<string> = new Set();
+  private syncPromises: Map<string, Promise<void>> = new Map();
   private syncInterval: number = DEFAULT_SYNC_INTERVAL;
   private healthCheckIntervalId: NodeJS.Timeout | null = null;
   // Tracks whether we've done the one-time sent backfill per account
@@ -154,11 +157,22 @@ class EmailSyncService {
       );
     }
 
+    // Re-authentication and renderer re-initialization can both attempt to
+    // replace a registered client. Clear the previous timer before replacing
+    // the map entry; otherwise the interval handle becomes unreachable while
+    // continuing to call syncAccount forever.
+    const previousAccount = this.accounts.get(accountId);
+    if (previousAccount?.intervalId) {
+      clearInterval(previousAccount.intervalId);
+      log.info(`[Sync] Cleared previous sync interval while replacing ${previousAccount.email}`);
+    }
+
     this.accounts.set(accountId, {
       client,
       email: profile.emailAddress,
       intervalId: null,
       status: "idle",
+      needsReauth: false,
       // Mark for first-sync triage when no full sync has completed before.
       // This is captured at registration to avoid race conditions.
       needsFirstSyncTriage: !hasCompletedFullSync,
@@ -185,6 +199,7 @@ class EmailSyncService {
       if (account.intervalId) {
         clearInterval(account.intervalId);
       }
+      this.syncPromises.delete(accountId);
       this.accounts.delete(accountId);
       log.info(`[Sync] Unregistered account: ${accountId}`);
     }
@@ -197,8 +212,30 @@ class EmailSyncService {
     return Array.from(this.accounts.entries()).map(([accountId, account]) => ({
       accountId,
       email: account.email,
-      isConnected: account.status !== "error",
+      isConnected: account.status !== "error" && !account.needsReauth,
     }));
+  }
+
+  /** Lightweight counters for diagnosing duplicate initialization/timers. */
+  getDiagnostics(): {
+    registeredAccounts: number;
+    activeIntervals: number;
+    inFlightSyncs: number;
+  } {
+    let activeIntervals = 0;
+    for (const account of this.accounts.values()) {
+      if (account.intervalId) activeIntervals += 1;
+    }
+    return {
+      registeredAccounts: this.accounts.size,
+      activeIntervals,
+      inFlightSyncs: this.syncPromises.size,
+    };
+  }
+
+  /** Whether this account currently has a live background sync timer. */
+  hasActiveSync(accountId: string): boolean {
+    return this.accounts.get(accountId)?.intervalId != null;
   }
 
   /**
@@ -466,7 +503,25 @@ class EmailSyncService {
   /**
    * Perform incremental sync for an account using History API
    */
-  private async syncAccount(accountId: string): Promise<void> {
+  private syncAccount(accountId: string): Promise<void> {
+    const inFlight = this.syncPromises.get(accountId);
+    if (inFlight) {
+      log.info(`[Sync] Coalescing sync request for account ${accountId}`);
+      return inFlight;
+    }
+
+    const sync = this.performSyncAccount(accountId);
+    this.syncPromises.set(accountId, sync);
+    const clearInFlight = () => {
+      if (this.syncPromises.get(accountId) === sync) {
+        this.syncPromises.delete(accountId);
+      }
+    };
+    void sync.then(clearInFlight, clearInFlight);
+    return sync;
+  }
+
+  private async performSyncAccount(accountId: string): Promise<void> {
     const account = this.accounts.get(accountId);
     if (!account) return;
 
@@ -509,6 +564,7 @@ class EmailSyncService {
         log.error(`[Sync] Auth error for ${account.email}, stopping sync`);
         this.stopSync(accountId);
         account.status = "error";
+        account.needsReauth = true;
         account.lastError = "Authentication expired";
         this.onSyncStatusChange?.(accountId, "error");
         this.onAuthErrorCallback?.(accountId, account.email);
@@ -524,6 +580,7 @@ class EmailSyncService {
             log.error(`[Sync] Auth error during full sync for ${account.email}`);
             this.stopSync(accountId);
             account.status = "error";
+            account.needsReauth = true;
             account.lastError = "Authentication expired";
             this.onSyncStatusChange?.(accountId, "error");
             this.onAuthErrorCallback?.(accountId, account.email);
@@ -536,6 +593,7 @@ class EmailSyncService {
         }
       } else {
         account.status = "error";
+        account.needsReauth = false;
         account.lastError = errMsg;
         this.onSyncStatusChange?.(accountId, "error");
       }

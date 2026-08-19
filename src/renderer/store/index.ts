@@ -16,6 +16,7 @@ import type {
   LocalDraft,
 } from "../../shared/types";
 import { threadMatchesSplit as threadMatchesSplitShared } from "../utils/split-conditions";
+import { ALWAYS_VISIBLE_SPLITS } from "../navigation-persistence";
 import type {
   AgentProviderConfig,
   AgentTaskInfo,
@@ -1003,12 +1004,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Reset account-scoped and conditionally-rendered splits. Only preserve
     // virtual splits that are always visible regardless of account data.
     // Default to __priority__ when resetting (matches main's convention).
-    const ALWAYS_VISIBLE_SPLITS = new Set([
-      "__priority__",
-      "__other__",
-      "__archive-ready__",
-      "__sent__",
-    ]);
     const { currentSplitId } = get();
     const nextSplitId =
       currentSplitId !== null && !ALWAYS_VISIBLE_SPLITS.has(currentSplitId)

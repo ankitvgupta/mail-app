@@ -55,10 +55,12 @@ import type {
   IpcResponse,
   InboxSplit,
   Snippet,
+  NavigationStateSnapshot,
 } from "../shared/types";
 import type { ScopedAgentEvent, AgentProviderConfig } from "../shared/agent-types";
 import { mergeAndThreadSearchResults } from "./utils/searchResults";
 import type { EmailThread } from "./store";
+import { resolveInitialAccountId, sanitizeNavigationState } from "./navigation-persistence";
 
 function decodeHtmlEntities(text: string): string {
   const textarea = document.createElement("textarea");
@@ -635,6 +637,8 @@ export default function App() {
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>([]);
   const scheduledPanelRef = useRef<HTMLDivElement>(null);
   const extensionsRegistered = useRef(false);
+  const navigationHydrated = useRef(false);
+  const latestNavigationState = useRef<NavigationStateSnapshot | null>(null);
 
   // State values — individual selectors to avoid re-rendering the entire App on unrelated changes
   const showSettings = useAppStore((s) => s.showSettings);
@@ -648,6 +652,10 @@ export default function App() {
   const isAgentPaletteOpen = useAppStore((s) => s.isAgentPaletteOpen);
   const isAgentsSidebarOpen = useAppStore((s) => s.isAgentsSidebarOpen);
   const viewMode = useAppStore((s) => s.viewMode);
+  const selectedEmailId = useAppStore((s) => s.selectedEmailId);
+  const selectedThreadId = useAppStore((s) => s.selectedThreadId);
+  const focusedThreadEmailId = useAppStore((s) => s.focusedThreadEmailId);
+  const currentSplitId = useAppStore((s) => s.currentSplitId);
   const activeSearchQuery = useAppStore((s) => s.activeSearchQuery);
   const _activeSearchResults = useAppStore((s) => s.activeSearchResults);
   const expiredAccountIds = useAppStore((s) => s.expiredAccountIds);
@@ -865,23 +873,22 @@ export default function App() {
           // Fall back to primary/first if the persisted account no longer
           // exists (account was removed) or this is a first run.
           const settingsResult = await window.api.settings.get();
-          const persisted = (settingsResult as { data?: { lastSelectedAccountId?: string | null } })
-            ?.data?.lastSelectedAccountId;
+          const persistedSettings = (
+            settingsResult as {
+              data?: {
+                lastSelectedAccountId?: string | null;
+                navigationState?: NavigationStateSnapshot;
+              };
+            }
+          )?.data;
+          const persisted = persistedSettings?.lastSelectedAccountId;
+          const persistedNavigation = persistedSettings?.navigationState;
           const primaryAccount = fullAccounts.find((a) => a.isPrimary) || fullAccounts[0];
-          let initialAccountId: string | null;
-          if (persisted === null && fullAccounts.length > 1) {
-            // Unified ("All Inboxes") only makes sense with 2+ accounts. If
-            // the user persisted unified previously but has since removed
-            // every account but one, fall back to that one account.
-            initialAccountId = null;
-          } else if (
-            typeof persisted === "string" &&
-            fullAccounts.some((a) => a.id === persisted)
-          ) {
-            initialAccountId = persisted;
-          } else {
-            initialAccountId = primaryAccount?.id ?? null;
-          }
+          const initialAccountId = resolveInitialAccountId(
+            fullAccounts,
+            persisted,
+            persistedNavigation,
+          );
 
           // Load cached emails for ALL accounts BEFORE flipping
           // currentAccountId. Without this ordering, the first render in
@@ -927,7 +934,19 @@ export default function App() {
           // Now safe to flip currentAccountId — store.emails has every
           // account's data, so useThreadedEmails will resolve the full
           // union on first paint.
+          // setCurrentAccountId intentionally clears account-scoped selection;
+          // restore the persisted navigation snapshot immediately afterwards.
           setCurrentAccountId(initialAccountId);
+
+          const restoredNavigation = sanitizeNavigationState(
+            persistedNavigation,
+            initialAccountId,
+            [...allEmails, ...allSentEmails],
+          );
+          if (restoredNavigation) {
+            useAppStore.setState(restoredNavigation);
+          }
+          navigationHydrated.current = true;
 
           if (primaryAccount) {
             // Identify user in PostHog using primary email
@@ -957,6 +976,64 @@ export default function App() {
       });
     }
   }, [setAccounts, setCurrentAccountId, addEmails, setSentEmails]);
+
+  // Persist only after initialization has consumed the previous snapshot, so
+  // the store's empty boot defaults cannot overwrite a valid saved selection.
+  useEffect(() => {
+    if (!navigationHydrated.current) return;
+
+    latestNavigationState.current = {
+      accountId: currentAccountId,
+      currentSplitId,
+      selectedEmailId,
+      selectedThreadId,
+      focusedThreadEmailId,
+      viewMode,
+    };
+
+    const timeout = window.setTimeout(() => {
+      const navigationState = latestNavigationState.current;
+      if (navigationState) {
+        void window.api.settings.set({
+          lastSelectedAccountId: navigationState.accountId,
+          navigationState,
+        });
+      }
+    }, 150);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    currentAccountId,
+    currentSplitId,
+    focusedThreadEmailId,
+    selectedEmailId,
+    selectedThreadId,
+    viewMode,
+  ]);
+
+  // Flush the latest selection before Chromium hides or tears down the
+  // renderer. This closes the debounce window used by the normal persistence
+  // path without adding synchronous work to every navigation change.
+  useEffect(() => {
+    const flushNavigationState = () => {
+      const navigationState = latestNavigationState.current;
+      if (navigationState) {
+        void window.api.settings.set({
+          lastSelectedAccountId: navigationState.accountId,
+          navigationState,
+        });
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushNavigationState();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("beforeunload", flushNavigationState);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", flushNavigationState);
+    };
+  }, []);
 
   // Set up sync event listeners
   useEffect(() => {

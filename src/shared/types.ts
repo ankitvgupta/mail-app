@@ -416,6 +416,17 @@ export const OllamaCloudConfigSchema = z.object({
  *  Extensions card — renderer-safe (same pattern as DEFAULT_OLLAMA_MODEL). */
 export const DEFAULT_HOSTLER_HARNESS = "opencode";
 
+export const NavigationStateSnapshotSchema = z.object({
+  accountId: z.string().nullable(),
+  currentSplitId: z.string().nullable(),
+  selectedEmailId: z.string().nullable(),
+  selectedThreadId: z.string().nullable(),
+  focusedThreadEmailId: z.string().nullable(),
+  viewMode: z.enum(["split", "full"]),
+});
+
+export type NavigationStateSnapshot = z.infer<typeof NavigationStateSnapshotSchema>;
+
 // Config schema
 export const ConfigSchema = z.object({
   maxEmails: z.number().default(50),
@@ -475,6 +486,9 @@ export const ConfigSchema = z.object({
   //   null       → unified "All Inboxes" view
   //   undefined  → first run; renderer falls back to primary account
   lastSelectedAccountId: z.string().nullable().optional(),
+  // Compact renderer navigation fallback for genuine renderer loss/app restart.
+  // Normal macOS window close keeps the live renderer and does not need this.
+  navigationState: NavigationStateSnapshotSchema.optional(),
   openclaw: z
     .object({
       enabled: z.boolean().default(false),
