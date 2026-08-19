@@ -62,7 +62,10 @@ export function AnalysisPrioritySection({
 
   if (!isEditing) {
     return (
-      <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50">
+      <div
+        data-testid="analysis-priority-section"
+        className="flex-shrink-0 px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50"
+      >
         <div className="flex items-center gap-3 text-sm">
           <span
             className={`font-medium ${
@@ -87,7 +90,10 @@ export function AnalysisPrioritySection({
   }
 
   return (
-    <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50">
+    <div
+      data-testid="analysis-priority-section"
+      className="flex-shrink-0 px-6 py-4 border-t border-gray-100 dark:border-gray-700/50 bg-gray-50 dark:bg-gray-800/50"
+    >
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-sm">
           <span className="text-gray-500 dark:text-gray-400 text-xs font-medium">

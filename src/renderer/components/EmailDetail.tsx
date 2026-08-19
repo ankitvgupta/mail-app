@@ -822,7 +822,7 @@ function ThreadMessage({
   // White card for rich HTML emails in dark mode, dark card otherwise
   return (
     <div
-      className={`group/msg ${
+      className={`group/msg flex-1 ${
         useWhiteCard
           ? `bg-white rounded-lg${isFocused ? " ring-1 ring-blue-300 dark:ring-blue-500" : ""}`
           : `relative before:absolute before:left-[-6px] before:top-0 before:bottom-0 before:rounded-full bg-gray-50/50 dark:bg-gray-800/30 ${
@@ -3586,7 +3586,11 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
       )}
 
       {/* Single scroll container for entire thread */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollContainerRef}
+        data-testid="email-detail-scroll"
+        className="flex-1 min-h-0 overflow-y-auto flex flex-col"
+      >
         {/* Thread header */}
         <div className="px-6 pt-6 pb-4 border-b border-gray-100 dark:border-gray-700/50">
           <div className="flex items-start justify-between">
@@ -3812,9 +3816,13 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
         )}
 
         {/* Thread messages - single scroll, no nested scrolls */}
-        <div className="px-6">
-          {threadEmails.map((email) => (
-            <div key={email.id} data-email-id={email.id}>
+        <div data-testid="email-thread-messages" className="px-6 flex-1 flex flex-col">
+          {threadEmails.map((email, index) => (
+            <div
+              key={email.id}
+              data-email-id={email.id}
+              className={index === threadEmails.length - 1 ? "flex-1 flex flex-col" : undefined}
+            >
               <ThreadMessage
                 email={email}
                 isExpanded={expandedMessagesRef.current.has(email.id)}
