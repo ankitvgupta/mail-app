@@ -7,6 +7,7 @@
 import { registerPanelComponent } from "../ExtensionPanelSlot";
 import { SenderProfilePanel } from "./SenderProfilePanel";
 import { CalendarPanel } from "../../../extensions/mail-ext-calendar/src/renderer/CalendarPanel";
+import { LabelsPanel } from "./LabelsPanel";
 import { registerPrivateExtensions } from "../private-extensions";
 import { loadInstalledExtensionPanels } from "../installed-extensions";
 
@@ -20,6 +21,9 @@ export function registerBundledExtensions(): void {
 
   // Register calendar extension's day-view panel
   registerPanelComponent("calendar", "day-view", CalendarPanel);
+
+  // Register labels extension's panel
+  registerPanelComponent("labels", "email-labels", LabelsPanel);
 
   // Register private extension panels (loaded from extensions-private/)
   registerPrivateExtensions();

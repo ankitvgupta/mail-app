@@ -11,6 +11,14 @@ export const AttachmentMetaSchema = z.object({
 
 export type AttachmentMeta = z.infer<typeof AttachmentMetaSchema>;
 
+// Gmail label metadata
+export interface LabelInfo {
+  id: string;
+  name: string;
+  type: string;
+  color?: { textColor: string; backgroundColor: string };
+}
+
 // Email from Gmail API
 export const EmailSchema = z.object({
   id: z.string(),

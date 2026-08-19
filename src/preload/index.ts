@@ -200,6 +200,37 @@ const api = {
       ipcRenderer.invoke("emails:list-blocked-senders", { accountId }),
   },
 
+  // Label operations
+  labels: {
+    list: (accountId: string): Promise<unknown> => ipcRenderer.invoke("labels:list", { accountId }),
+    create: (accountId: string, name: string): Promise<unknown> =>
+      ipcRenderer.invoke("labels:create", { accountId, name }),
+    modifyMessage: (
+      accountId: string,
+      emailId: string,
+      addLabelIds: string[],
+      removeLabelIds: string[],
+    ): Promise<unknown> =>
+      ipcRenderer.invoke("labels:modify-message", {
+        accountId,
+        emailId,
+        addLabelIds,
+        removeLabelIds,
+      }),
+    modifyThread: (
+      accountId: string,
+      threadId: string,
+      addLabelIds: string[],
+      removeLabelIds: string[],
+    ): Promise<unknown> =>
+      ipcRenderer.invoke("labels:modify-thread", {
+        accountId,
+        threadId,
+        addLabelIds,
+        removeLabelIds,
+      }),
+  },
+
   // Style operations
   style: {
     getContext: (toAddress: string): Promise<unknown> =>

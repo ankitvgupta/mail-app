@@ -17,6 +17,7 @@ import type {
   ComposeMessageOptions,
   AttachmentMeta,
   SendAsAlias,
+  LabelInfo,
 } from "../../shared/types";
 import { getAccounts } from "../db";
 import { DATA_URI_STRIP_THRESHOLD, inlineImagePlaceholder } from "../../shared/body-sanitizer";
@@ -541,6 +542,81 @@ export class GmailClient {
     } while (pageToken);
 
     return allMessages;
+  }
+
+  /**
+   * List all labels for the authenticated account.
+   * Returns id, name, type, and optional color for each label.
+   */
+  async listLabels(): Promise<LabelInfo[]> {
+    const gmail = this.gmail!;
+    const response = await gmail.users.labels.list({ userId: "me" });
+    const rawLabels = response.data.labels || [];
+    return rawLabels.map((l) => ({
+      id: l.id!,
+      name: l.name!,
+      type: l.type || "user",
+      ...(l.color
+        ? { color: { textColor: l.color.textColor!, backgroundColor: l.color.backgroundColor! } }
+        : {}),
+    }));
+  }
+
+  /**
+   * Create a new Gmail label. Returns the created label's id and name.
+   */
+  async createLabel(name: string): Promise<LabelInfo> {
+    const gmail = this.gmail!;
+    const response = await gmail.users.labels.create({
+      userId: "me",
+      requestBody: {
+        name,
+        labelListVisibility: "labelShow",
+        messageListVisibility: "show",
+      },
+    });
+    const l = response.data;
+    return { id: l.id!, name: l.name!, type: "user" };
+  }
+
+  /**
+   * Modify labels on a message (add and/or remove arbitrary labels)
+   */
+  async modifyMessageLabels(
+    messageId: string,
+    addLabelIds: string[],
+    removeLabelIds: string[],
+  ): Promise<void> {
+    if (addLabelIds.length === 0 && removeLabelIds.length === 0) return;
+    const gmail = this.gmail!;
+    await gmail.users.messages.modify({
+      userId: "me",
+      id: messageId,
+      requestBody: {
+        addLabelIds: addLabelIds.length > 0 ? addLabelIds : undefined,
+        removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : undefined,
+      },
+    });
+  }
+
+  /**
+   * Modify labels on all messages in a thread
+   */
+  async modifyThreadLabels(
+    threadId: string,
+    addLabelIds: string[],
+    removeLabelIds: string[],
+  ): Promise<void> {
+    if (addLabelIds.length === 0 && removeLabelIds.length === 0) return;
+    const gmail = this.gmail!;
+    await gmail.users.threads.modify({
+      userId: "me",
+      id: threadId,
+      requestBody: {
+        addLabelIds: addLabelIds.length > 0 ? addLabelIds : undefined,
+        removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : undefined,
+      },
+    });
   }
 
   /**

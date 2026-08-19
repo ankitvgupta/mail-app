@@ -1,0 +1,23 @@
+{
+  "name": "mail-ext-labels",
+  "version": "1.0.0",
+  "description": "View Gmail labels on emails",
+  "main": "./src/index.ts",
+  "mailExtension": {
+    "id": "labels",
+    "displayName": "Labels",
+    "description": "View Gmail labels on emails",
+    "builtIn": true,
+    "activationEvents": ["onEmail"],
+    "contributes": {
+      "sidebarPanels": [
+        {
+          "id": "email-labels",
+          "title": "Labels",
+          "priority": 80,
+          "scope": "sender"
+        }
+      ]
+    }
+  }
+}

@@ -1056,6 +1056,15 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           }
           break;
 
+        // Labels — open label picker (Gmail's native shortcut)
+        case "l":
+          if (selectedEmailId) {
+            e.preventDefault();
+            state.setSidebarTab("sender");
+            state.openLabelPicker();
+          }
+          break;
+
         // Search (exclude Shift+/ which is "?" for help)
         case "/":
           if (!e.shiftKey) {
