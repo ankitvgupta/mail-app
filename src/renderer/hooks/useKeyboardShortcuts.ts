@@ -118,6 +118,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
       } = state;
 
       const isGmail = keyboardBindings === "gmail";
+      const isSuperhuman = keyboardBindings === "superhuman";
 
       // Store actions are stable references — safe to read from getState()
       const {
@@ -755,13 +756,27 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
       };
 
       // --- Helper: navigate to next/prev split tab ---
-      const cycleSplit = (direction: "next" | "prev") => {
+      const focusSplitTab = (splitId: string) => {
+        // Focus after the active-tab DOM/styling has committed for the store
+        // change. CSS.escape because custom split IDs are user-derived.
+        window.requestAnimationFrame(() => {
+          const tab = document.querySelector<HTMLButtonElement>(
+            `[data-split-tab-id="${CSS.escape(splitId)}"]`,
+          );
+          tab?.focus();
+        });
+      };
+
+      const cycleSplit = (direction: "next" | "prev", options: { focusTab?: boolean } = {}) => {
         const ids = getOrderedSplitIds();
         const currentIdx = ids.indexOf(currentSplitId ?? ALL_SENTINEL);
         const step = direction === "next" ? 1 : -1;
         const nextIdx = (currentIdx + step + ids.length) % ids.length;
         const nextId = ids[nextIdx];
         state.setCurrentSplitId(nextId === ALL_SENTINEL ? null : nextId);
+        if (options.focusTab) {
+          focusSplitTab(nextId);
+        }
       };
 
       // Normal mode shortcuts (single-key, no modifiers)
@@ -825,6 +840,13 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           if (isGmail) {
             e.preventDefault();
             cycleSplit("prev");
+          }
+          break;
+
+        case "Tab":
+          if (isSuperhuman && !showSettings && mode === "normal") {
+            e.preventDefault();
+            cycleSplit(e.shiftKey ? "prev" : "next", { focusTab: true });
           }
           break;
 
@@ -1153,6 +1175,9 @@ export function getKeyboardShortcuts(bindings: "superhuman" | "gmail") {
       { key: "k / ↑", description: "Move up" },
       { key: isGmail ? "o / Enter" : "Enter", description: "Open conversation" },
       { key: "Escape", description: "Back / Deselect" },
+      ...(!isGmail
+        ? [{ key: "Tab / Shift+Tab", description: "Next / previous section" }]
+        : []),
       ...(isGmail
         ? [
             { key: "n", description: "Next message in thread" },

@@ -1,4 +1,4 @@
-import { test, expect, Page, ElectronApplication } from "@playwright/test";
+import { test, expect, Page, ElectronApplication, Locator } from "@playwright/test";
 import { _electron as electron } from "@playwright/test";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -71,9 +71,56 @@ async function getTabCount(page: Page, tabName: string): Promise<number> {
   return match ? parseInt(match[1], 10) : 0;
 }
 
+async function expectNoVisibleBoxShadow(tab: Locator): Promise<void> {
+  const boxShadow = await tab.evaluate((element) => window.getComputedStyle(element).boxShadow);
+  const hasVisibleBoxShadow =
+    boxShadow !== "none" &&
+    !boxShadow.split(/,(?![^(]*\))/).every((layer) => {
+      const lengths = [...layer.matchAll(/-?\d+(?:\.\d+)?px/g)].map((match) =>
+        Number.parseFloat(match[0]),
+      );
+      const hasOnlyZeroLengths =
+        lengths.length > 0 && lengths.every((value) => Object.is(value, -0) || value === 0);
+      const hasTransparentColor = /rgba\([^)]*,\s*0(?:\.0+)?\s*\)/.test(layer);
+      return hasOnlyZeroLengths || hasTransparentColor;
+    });
+
+  expect(hasVisibleBoxShadow, `expected no visible box-shadow, got "${boxShadow}"`).toBe(false);
+}
+
 /** Count visible thread rows in the email list */
 async function getVisibleThreadCount(page: Page): Promise<number> {
   return page.locator("div[data-thread-id]").count();
+}
+
+async function setKeyboardBindings(page: Page, bindings: "superhuman" | "gmail"): Promise<void> {
+  await page.evaluate((value) => {
+    const store = (window as unknown as {
+      __ZUSTAND_STORE__?: {
+        getState: () => {
+          setKeyboardBindings: (bindings: "superhuman" | "gmail") => void;
+        };
+      };
+    }).__ZUSTAND_STORE__;
+
+    if (!store) throw new Error("Zustand store not exposed");
+    store.getState().setKeyboardBindings(value);
+  }, bindings);
+}
+
+async function getCurrentSplitId(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const store = (window as unknown as {
+      __ZUSTAND_STORE__?: {
+        getState: () => {
+          currentSplitId: string | null;
+        };
+      };
+    }).__ZUSTAND_STORE__;
+
+    if (!store) throw new Error("Zustand store not exposed");
+    return store.getState().currentSplitId;
+  });
 }
 
 test.describe("Inbox Tabs - Default and Ordering", () => {
@@ -122,7 +169,98 @@ test.describe("Inbox Tabs - Default and Ordering", () => {
     expect(labels[labels.length - 1]).toBe("All");
   });
 
+  test("Tab key switches active split tabs in visible order", async () => {
+    const priorityTab = page.getByRole("tab", { name: /^Priority/ }).first();
+    const otherTab = page.getByRole("tab", { name: /^Other/ }).first();
+    const archiveReadyTab = page.getByRole("tab", { name: /Archive Ready/ }).first();
+
+    await setKeyboardBindings(page, "superhuman");
+    await priorityTab.click();
+    await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+
+    await page.keyboard.press("Tab");
+    await expect(otherTab).toHaveAttribute("aria-selected", "true");
+    await expect(otherTab).toBeFocused();
+    await expectNoVisibleBoxShadow(otherTab);
+
+    await page.keyboard.press("Tab");
+    await expect(archiveReadyTab).toHaveAttribute("aria-selected", "true");
+    await expect(archiveReadyTab).toBeFocused();
+    await expectNoVisibleBoxShadow(archiveReadyTab);
+
+    await page.keyboard.press("Shift+Tab");
+    await expect(otherTab).toHaveAttribute("aria-selected", "true");
+    await expect(otherTab).toBeFocused();
+
+    await priorityTab.click();
+    await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("Gmail keyboard shortcuts keep Tab as native focus traversal", async () => {
+    const priorityTab = page.getByRole("tab", { name: /^Priority/ }).first();
+    const otherTab = page.getByRole("tab", { name: /^Other/ }).first();
+
+    await setKeyboardBindings(page, "gmail");
+    try {
+      await priorityTab.click();
+      await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+      await expect(otherTab).toHaveAttribute("aria-selected", "false");
+      await expect(priorityTab).toBeFocused();
+
+      await page.keyboard.press("`");
+      await expect(otherTab).toHaveAttribute("aria-selected", "true");
+      await expect(priorityTab).toBeFocused();
+
+      await priorityTab.click();
+      await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+      await expect(otherTab).toHaveAttribute("aria-selected", "false");
+
+      await page.keyboard.press("Tab");
+      await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+      await expect(otherTab).toHaveAttribute("aria-selected", "false");
+    } finally {
+      await setKeyboardBindings(page, "superhuman");
+      await priorityTab.click();
+      await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+    }
+  });
+
+  test("Tab key does not switch split tabs while compose controls are focused", async () => {
+    const priorityTab = page.getByRole("tab", { name: /^Priority/ }).first();
+    const otherTab = page.getByRole("tab", { name: /^Other/ }).first();
+
+    await setKeyboardBindings(page, "superhuman");
+    await priorityTab.click();
+    await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+    await expect(otherTab).toHaveAttribute("aria-selected", "false");
+
+    await page.keyboard.press("c");
+    await expect(page.getByText("New Message")).toBeVisible({ timeout: 5000 });
+
+    const discardButton = page.locator("button[title='Discard draft']").first();
+    try {
+      await expect(discardButton).toBeVisible();
+      await discardButton.focus();
+      await expect(discardButton).toBeFocused();
+
+      await page.keyboard.press("Tab");
+      await expect.poll(() => getCurrentSplitId(page)).toBe("__priority__");
+    } finally {
+      if (await discardButton.isVisible().catch(() => false)) {
+        await discardButton.click();
+      }
+      await expect(page.getByText("New Message")).not.toBeVisible({ timeout: 5000 });
+    }
+  });
+
   test("Priority tab shows only priority emails (needsReply + done)", async () => {
+    const priorityTab = tabBar(page)
+      .locator("button")
+      .filter({ hasText: /^Priority/ })
+      .first();
+    await priorityTab.click();
+    await expect(priorityTab).toHaveAttribute("aria-selected", "true");
+
     // Priority should be active by default — verify we see threads. The per-row
     // pill was suppressed in the Priority tab by issue #143 (every row in this
     // tab is implicitly priority, so the pill would be noise), so this test

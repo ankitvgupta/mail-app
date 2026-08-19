@@ -11,19 +11,24 @@ function threadMatchesSplit(thread: EmailThread, split: InboxSplit): boolean {
 }
 
 interface TabProps {
+  splitId: string;
   active: boolean;
   onClick: () => void;
   count?: number;
   children: React.ReactNode;
 }
 
-function Tab({ active, onClick, count, children }: TabProps) {
+function Tab({ splitId, active, onClick, count, children }: TabProps) {
   return (
     <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      data-split-tab-id={splitId}
       onClick={onClick}
       className={`
         px-3 py-2 text-sm font-medium whitespace-nowrap
-        border-b-2 transition-colors focus:outline-none
+        border-b-2 rounded-sm transition-colors focus:outline-none
         ${
           active
             ? "border-blue-500 dark:border-blue-400 text-blue-600 dark:text-blue-400"
@@ -134,9 +139,14 @@ function SplitTabsImpl() {
 
   // Always show the tab bar — Priority, Other, Archive Ready always visible; All on the far right
   return (
-    <div className="flex h-10 border-b border-gray-200 dark:border-gray-700 px-2 overflow-x-auto">
+    <div
+      role="tablist"
+      aria-label="Inbox split tabs"
+      className="flex h-10 border-b border-gray-200 dark:border-gray-700 px-2 overflow-x-auto"
+    >
       {/* Primary tabs: Priority, Other */}
       <Tab
+        splitId="__priority__"
         active={currentSplitId === "__priority__"}
         onClick={() => setCurrentSplitId("__priority__")}
         count={counts.get("__priority__")}
@@ -144,6 +154,7 @@ function SplitTabsImpl() {
         Priority
       </Tab>
       <Tab
+        splitId="__other__"
         active={currentSplitId === "__other__"}
         onClick={() => setCurrentSplitId("__other__")}
         count={counts.get("__other__")}
@@ -153,6 +164,7 @@ function SplitTabsImpl() {
 
       {/* Middle tabs: Archive Ready, custom splits, conditional tabs */}
       <Tab
+        splitId="__archive-ready__"
         active={currentSplitId === "__archive-ready__"}
         onClick={() => setCurrentSplitId("__archive-ready__")}
         count={archiveReadyCount}
@@ -174,6 +186,7 @@ function SplitTabsImpl() {
       {sortedSplits.map(({ split, displayName }) => (
         <Tab
           key={split.id}
+          splitId={split.id}
           active={currentSplitId === split.id}
           onClick={() => setCurrentSplitId(split.id)}
           count={counts.get(split.id)}
@@ -186,6 +199,7 @@ function SplitTabsImpl() {
       {/* Conditional virtual tabs */}
       {draftsCount > 0 && (
         <Tab
+          splitId="__drafts__"
           active={currentSplitId === "__drafts__"}
           onClick={() => setCurrentSplitId("__drafts__")}
           count={draftsCount}
@@ -205,6 +219,7 @@ function SplitTabsImpl() {
       )}
       {snoozedCount > 0 && (
         <Tab
+          splitId="__snoozed__"
           active={currentSplitId === "__snoozed__"}
           onClick={() => setCurrentSplitId("__snoozed__")}
           count={snoozedCount}
@@ -225,6 +240,7 @@ function SplitTabsImpl() {
 
       {/* All tab on the far right */}
       <Tab
+        splitId="__all__"
         active={currentSplitId === null}
         onClick={() => setCurrentSplitId(null)}
         count={counts.get(null)}
