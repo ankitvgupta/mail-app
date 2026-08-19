@@ -1,5 +1,6 @@
 import { ScheduleSendButton } from "./ScheduleSendButton";
 import type { Signature } from "../../shared/types";
+import { formatPlatformShortcut } from "../utils/platform";
 
 interface ComposeToolbarProps {
   onSend: () => void;
@@ -53,7 +54,9 @@ export function ComposeToolbar({
           />
         </svg>
       </button>
-      <span className="text-xs text-gray-500 dark:text-gray-400">Cmd+Enter to send</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400">
+        {formatPlatformShortcut("Enter")} to send
+      </span>
       {availableSignatures.length > 0 && (
         <select
           value={activeSignatureId ?? ""}

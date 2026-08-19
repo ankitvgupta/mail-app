@@ -230,6 +230,7 @@ interface AppState {
 
   // Command palette state
   isCommandPaletteOpen: boolean;
+  isOpenLinksAttachmentsOpen: boolean;
 
   // Search state
   isSearchOpen: boolean;
@@ -393,6 +394,8 @@ interface AppState {
   // Command palette actions
   openCommandPalette: () => void;
   closeCommandPalette: () => void;
+  openLinksAttachments: () => void;
+  closeLinksAttachments: () => void;
 
   // Find-in-page
   isFindBarOpen: boolean;
@@ -596,6 +599,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Command palette state
   isCommandPaletteOpen: false,
+  isOpenLinksAttachmentsOpen: false,
 
   // Find-in-page state
   isFindBarOpen: false,
@@ -1078,6 +1082,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Command palette actions
   openCommandPalette: () => set({ isCommandPaletteOpen: true }),
   closeCommandPalette: () => set({ isCommandPaletteOpen: false }),
+  openLinksAttachments: () => set({ isOpenLinksAttachmentsOpen: true }),
+  closeLinksAttachments: () => set({ isOpenLinksAttachmentsOpen: false }),
 
   // Find-in-page actions
   openFindBar: () => set({ isFindBarOpen: true }),

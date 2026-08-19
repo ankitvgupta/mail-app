@@ -4,6 +4,7 @@ import { useExtensionPanels, ExtensionPanelSlot } from "../extensions";
 import { AgentTabContent } from "./AgentPanel";
 import { deriveTraceProviderIds } from "../../shared/agent-types";
 import type { ScopedAgentEvent } from "../../shared/agent-types";
+import { formatPlatformShortcut } from "../utils/platform";
 
 // SVG icon components for sidebar tabs
 function PersonIcon({ active }: { active: boolean }) {
@@ -308,7 +309,7 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
             <p className="text-gray-300 dark:text-gray-500 text-xs mt-1">
               Press{" "}
               <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-gray-600 dark:text-gray-400 font-mono text-xs">
-                Cmd+J
+                {formatPlatformShortcut("J")}
               </kbd>{" "}
               to ask agent about this draft
             </p>
@@ -321,7 +322,7 @@ export const EmailPreviewSidebar = memo(function EmailPreviewSidebar() {
         <div className="text-center px-6">
           <p className="text-gray-600 dark:text-gray-400 text-sm">Select an email to see details</p>
           <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
-            Use j/k to navigate, Cmd+J for agent
+            Use j/k to navigate, {formatPlatformShortcut("J")} for agent
           </p>
         </div>
       </div>

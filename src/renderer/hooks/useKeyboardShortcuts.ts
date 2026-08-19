@@ -5,6 +5,7 @@ import { markNavigationActive } from "./useSyncBuffer";
 import { mergeAndThreadSearchResults } from "../utils/searchResults";
 import { draftMatchesSplit } from "../utils/split-conditions";
 import { trackEvent } from "../services/posthog";
+import { formatPlatformShortcut, isMacPlatform } from "../utils/platform";
 
 declare global {
   interface Window {
@@ -48,12 +49,25 @@ function isInputFocused(): boolean {
   );
 }
 
+// Cmd/Ctrl combos that are app-level shortcuts and must be forwarded from the
+// email-body iframe to the parent window (see EmailDetail's iframeKeydownHandler):
+// agent palette (j), command palette (k), settings (,), find-in-page (f),
+// open links & attachments (o).
+export const APP_SHORTCUT_MODIFIER_KEYS = new Set(["j", "k", ",", "f", "o"]);
+
 // Read current keyboard mode directly from store (no closure dependency)
 function getKeyboardMode(): KeyboardMode {
-  const { composeState, isSearchOpen, isCommandPaletteOpen, isAgentPaletteOpen } =
-    useAppStore.getState();
+  const {
+    composeState,
+    isSearchOpen,
+    isCommandPaletteOpen,
+    isAgentPaletteOpen,
+    isOpenLinksAttachmentsOpen,
+  } = useAppStore.getState();
   if (composeState?.isOpen) return "compose";
-  if (isSearchOpen || isCommandPaletteOpen || isAgentPaletteOpen) return "search";
+  if (isSearchOpen || isCommandPaletteOpen || isAgentPaletteOpen || isOpenLinksAttachmentsOpen) {
+    return "search";
+  }
   return "normal";
 }
 
@@ -172,6 +186,11 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
           }
           return;
         }
+        if (state.isOpenLinksAttachmentsOpen) {
+          e.preventDefault();
+          state.closeLinksAttachments();
+          return;
+        }
         if (mode === "compose") {
           // New compose: always let the compose component handle Esc (it saves the draft)
           // Reply/forward compose (InlineReply): only defer when input is focused
@@ -242,10 +261,19 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions = {}) 
 
       // Cmd+F (macOS) / Ctrl+F (Windows/Linux) for find-in-page
       // Don't intercept Ctrl+F on macOS — it's Emacs cursor-forward in text inputs
-      const isMac = navigator.platform.startsWith("Mac");
+      const isMac = isMacPlatform();
       if (e.key === "f" && (isMac ? e.metaKey : e.ctrlKey)) {
         e.preventDefault();
         openAndFocusFindBar();
+        return;
+      }
+
+      // Cmd+O (macOS) / Ctrl+O (Windows/Linux): open links and attachments for
+      // the currently focused email. Do not intercept Ctrl+O on macOS, where it
+      // is the native Emacs-style open-line binding in text inputs.
+      if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        state.openLinksAttachments();
         return;
       }
 
@@ -1178,6 +1206,7 @@ export function getKeyboardShortcuts(bindings: "superhuman" | "gmail") {
       ...(isGmail ? [{ key: "Shift+I", description: "Mark as read" }] : []),
       { key: "s", description: "Star / unstar" },
       { key: "h", description: "Snooze" },
+      { key: formatPlatformShortcut("O"), description: "Open links and attachments" },
       ...(isGmail
         ? [
             { key: "z", description: "Undo last action" },
@@ -1186,7 +1215,7 @@ export function getKeyboardShortcuts(bindings: "superhuman" | "gmail") {
         : []),
       { key: "x", description: "Select / deselect thread" },
       { key: "Shift+J/K", description: "Extend selection down/up" },
-      { key: "Cmd+A", description: "Select all threads" },
+      { key: formatPlatformShortcut("A"), description: "Select all threads" },
     ],
     compose: [
       { key: "c", description: "Compose new email" },
@@ -1196,13 +1225,13 @@ export function getKeyboardShortcuts(bindings: "superhuman" | "gmail") {
     ],
     search: [
       { key: "/", description: "Open search" },
-      { key: "Cmd+F", description: "Find in page" },
-      { key: "Cmd+K", description: "Command palette" },
-      { key: "Cmd+J", description: "Agent action palette" },
+      { key: formatPlatformShortcut("F"), description: "Find in page" },
+      { key: formatPlatformShortcut("K"), description: "Command palette" },
+      { key: formatPlatformShortcut("J"), description: "Agent action palette" },
     ],
     other: [
       { key: "b", description: "Switch sidebar tab" },
-      { key: "Cmd+,", description: "Settings" },
+      { key: formatPlatformShortcut(","), description: "Settings" },
       { key: "?", description: "Show shortcuts" },
     ],
   };

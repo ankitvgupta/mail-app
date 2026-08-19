@@ -1,4 +1,5 @@
 import { useAppStore } from "../store";
+import { formatPlatformShortcut } from "../utils/platform";
 
 type Hint = {
   key: string;
@@ -15,14 +16,15 @@ const DEFAULT_HINTS: Hint[] = [
   { key: "c", label: "compose" },
   { key: "/", label: "search" },
   { key: "b", label: "sidebar" },
-  { key: "\u2318K", label: "commands" },
+  { key: formatPlatformShortcut("K"), label: "commands" },
+  { key: formatPlatformShortcut("O"), label: "open links" },
 ];
 
 const BATCH_HINTS: Hint[] = [
   { key: "e", label: "archive" },
   { key: "#", label: "trash" },
   { key: "u", label: "unread" },
-  { key: "Cmd+A", label: "select all" },
+  { key: formatPlatformShortcut("A"), label: "select all" },
   { key: "Esc", label: "deselect" },
 ];
 
@@ -34,6 +36,7 @@ const FULL_VIEW_HINTS: Hint[] = [
   { key: "f", label: "forward" },
   { key: "e", label: "archive" },
   { key: "u", label: "unread" },
+  { key: formatPlatformShortcut("O"), label: "open links" },
 ];
 
 const SEARCH_RESULTS_HINTS: Hint[] = [
@@ -45,7 +48,7 @@ const SEARCH_RESULTS_HINTS: Hint[] = [
 ];
 
 const COMPOSE_HINTS: Hint[] = [
-  { key: "Cmd+Enter", label: "send" },
+  { key: formatPlatformShortcut("Enter"), label: "send" },
   { key: "Esc", label: "cancel" },
 ];
 
@@ -66,12 +69,13 @@ export function KeyboardHints() {
     composeState,
     isSearchOpen,
     isCommandPaletteOpen,
+    isOpenLinksAttachmentsOpen,
     activeSearchQuery,
     selectedThreadIds,
   } = useAppStore();
 
   // Don't show hints when search or command palette is open
-  if (isSearchOpen || isCommandPaletteOpen) {
+  if (isSearchOpen || isCommandPaletteOpen || isOpenLinksAttachmentsOpen) {
     return null;
   }
 

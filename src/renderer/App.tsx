@@ -15,6 +15,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { SetupWizard } from "./components/SetupWizard";
 import { SearchBar } from "./components/SearchBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { OpenLinksAttachmentsPalette } from "./components/OpenLinksAttachmentsPalette";
 import { AgentCommandPalette } from "./components/AgentCommandPalette";
 import { AgentsSidebar } from "./components/AgentsSidebar";
 import { ShortcutHelp } from "./components/ShortcutHelp";
@@ -644,6 +645,7 @@ export default function App() {
   const composeState = useAppStore((s) => s.composeState);
   const isSearchOpen = useAppStore((s) => s.isSearchOpen);
   const isCommandPaletteOpen = useAppStore((s) => s.isCommandPaletteOpen);
+  const isOpenLinksAttachmentsOpen = useAppStore((s) => s.isOpenLinksAttachmentsOpen);
   const isFindBarOpen = useAppStore((s) => s.isFindBarOpen);
   const isAgentPaletteOpen = useAppStore((s) => s.isAgentPaletteOpen);
   const isAgentsSidebarOpen = useAppStore((s) => s.isAgentsSidebarOpen);
@@ -676,6 +678,7 @@ export default function App() {
   const openSearch = useAppStore((s) => s.openSearch);
   const closeSearch = useAppStore((s) => s.closeSearch);
   const closeCommandPalette = useAppStore((s) => s.closeCommandPalette);
+  const closeLinksAttachments = useAppStore((s) => s.closeLinksAttachments);
   const setAgentPaletteOpen = useAppStore((s) => s.setAgentPaletteOpen);
   const setViewMode = useAppStore((s) => s.setViewMode);
   const _clearActiveSearch = useAppStore((s) => s.clearActiveSearch);
@@ -2297,6 +2300,12 @@ export default function App() {
             setTimeout(() => document.querySelector<HTMLElement>(".ProseMirror")?.focus(), 0);
           }
         }}
+      />
+
+      {/* Open Links & Attachments Palette */}
+      <OpenLinksAttachmentsPalette
+        isOpen={isOpenLinksAttachmentsOpen}
+        onClose={closeLinksAttachments}
       />
 
       {/* Agent Command Palette */}

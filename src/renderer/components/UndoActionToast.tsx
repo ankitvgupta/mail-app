@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAppStore, type UndoActionItem } from "../store";
+import { formatPlatformShortcut } from "../utils/platform";
 
 // Map of item ID -> cancel function for keyboard shortcut access
 const cancelHandlers = new Map<string, () => void>();
@@ -346,7 +347,7 @@ function UndoActionToastItem({ item }: { item: UndoActionItem }) {
         <button
           onClick={handleUndo}
           className="ml-4 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
-          title={navigator.platform.includes("Mac") ? "Cmd+Z" : "Ctrl+Z"}
+          title={formatPlatformShortcut("Z")}
         >
           Undo
         </button>

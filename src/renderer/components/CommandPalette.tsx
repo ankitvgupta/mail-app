@@ -1,5 +1,12 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAppStore, useThreadedEmails } from "../store";
+import {
+  PaletteFooter,
+  PaletteHeader,
+  PaletteResults,
+  PaletteShell,
+  usePaletteSelection,
+} from "./PaletteShell";
 import { splitAddressList, extractFirstName } from "../utils/address-parsing";
 import type { DashboardEmail, IpcResponse } from "../../shared/types";
 
@@ -99,9 +106,6 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const {
     accounts,
@@ -699,28 +703,16 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   // Flat list for keyboard navigation
   const flatList = useMemo(() => groupedActions.flatMap((g) => g.actions), [groupedActions]);
 
-  // Reset state when opened/closed
+  const { selectedIndex, setSelectedIndex, inputRef, listRef, moveSelection } = usePaletteSelection(
+    { isOpen, query, itemCount: flatList.length },
+  );
+
+  // Reset query when opened
   useEffect(() => {
     if (isOpen) {
       setQuery("");
-      setSelectedIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [isOpen]);
-
-  // Reset selection when query changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const el = listRef.current.querySelector(`[data-index="${selectedIndex}"]`);
-    if (el) {
-      el.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedIndex]);
 
   const executeAction = useCallback(
     (action: CommandAction) => {
@@ -741,11 +733,11 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           break;
         case "ArrowDown":
           e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, flatList.length - 1));
+          moveSelection(1);
           break;
         case "ArrowUp":
           e.preventDefault();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
+          moveSelection(-1);
           break;
         case "Enter":
           e.preventDefault();
@@ -756,7 +748,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           break;
       }
     },
-    [flatList, selectedIndex, executeAction, onClose],
+    [flatList, selectedIndex, moveSelection, executeAction, onClose],
   );
 
   if (!isOpen) return null;
@@ -765,14 +757,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   let flatIndex = 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-      {/* Palette panel */}
-      <div className="relative w-full max-w-xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl dark:shadow-black/40 overflow-hidden border border-gray-200 dark:border-gray-700">
-        {/* Input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+    <PaletteShell label="Command Palette" onClose={onClose}>
+      <PaletteHeader
+        icon={
           <svg
             className="w-5 h-5 text-gray-400 flex-shrink-0"
             fill="none"
@@ -782,77 +769,57 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a command..."
-            className="flex-1 text-base outline-none placeholder-gray-400 dark:text-gray-100 dark:placeholder-gray-500 bg-transparent"
-          />
-          <kbd className="px-2 py-0.5 text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 rounded">
-            esc
-          </kbd>
-        </div>
+        }
+        inputRef={inputRef}
+        query={query}
+        onQueryChange={setQuery}
+        onKeyDown={handleKeyDown}
+        placeholder="Type a command..."
+      />
 
-        {/* Results */}
-        <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
-          {groupedActions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-              No matching commands
-            </div>
-          ) : (
-            groupedActions.map(({ category, actions: catActions }) => (
-              <div key={category}>
-                <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                  {category}
-                </div>
-                {catActions.map((action) => {
-                  const idx = flatIndex++;
-                  const isSelected = idx === selectedIndex;
-                  return (
-                    <button
-                      key={action.id}
-                      data-index={idx}
-                      onClick={() => executeAction(action)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`w-full px-4 py-2 flex items-center gap-3 text-left text-sm transition-colors ${
-                        isSelected
-                          ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                          : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                      }`}
-                    >
-                      <ActionIcon path={action.icon} />
-                      <span className="flex-1">{action.label}</span>
-                      {action.shortcut && (
-                        <kbd className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-mono text-gray-500 dark:text-gray-400">
-                          {action.shortcut}
-                        </kbd>
-                      )}
-                    </button>
-                  );
-                })}
+      <PaletteResults listRef={listRef}>
+        {groupedActions.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            No matching commands
+          </div>
+        ) : (
+          groupedActions.map(({ category, actions: catActions }) => (
+            <div key={category}>
+              <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                {category}
               </div>
-            ))
-          )}
-        </div>
+              {catActions.map((action) => {
+                const idx = flatIndex++;
+                const isSelected = idx === selectedIndex;
+                return (
+                  <button
+                    key={action.id}
+                    data-index={idx}
+                    onClick={() => executeAction(action)}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    className={`w-full px-4 py-2 flex items-center gap-3 text-left text-sm transition-colors ${
+                      isSelected
+                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                        : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                    }`}
+                  >
+                    <ActionIcon path={action.icon} />
+                    <span className="flex-1">{action.label}</span>
+                    {action.shortcut && (
+                      <kbd className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-mono text-gray-500 dark:text-gray-400">
+                        {action.shortcut}
+                      </kbd>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))
+        )}
+      </PaletteResults>
 
-        {/* Footer */}
-        <div className="flex items-center gap-4 px-4 py-2 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">&uarr;&darr;</kbd>{" "}
-            navigate
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Enter</kbd> execute
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Esc</kbd> close
-          </span>
-        </div>
-      </div>
-    </div>
+      <PaletteFooter enterLabel="execute" />
+    </PaletteShell>
   );
 }
 

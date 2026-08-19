@@ -29,7 +29,7 @@ import type {
 } from "../../shared/types";
 import type { RestoredDraft } from "../store";
 import { useComposeForm } from "../hooks/useComposeForm";
-import { THREAD_NAV_EVENT } from "../hooks/useKeyboardShortcuts";
+import { APP_SHORTCUT_MODIFIER_KEYS, THREAD_NAV_EVENT } from "../hooks/useKeyboardShortcuts";
 import type { ComposeFormState } from "../hooks/useComposeForm";
 import { ComposeToolbar } from "./ComposeToolbar";
 import { FromSelector } from "./FromSelector";
@@ -306,8 +306,8 @@ function EmailBodyRenderer({
     const iframeKeydownHandler = (e: KeyboardEvent) => {
       // Let modifier combos (Cmd+C, Cmd+V, etc.) work natively in the iframe
       if (e.metaKey || e.ctrlKey) {
-        // Only forward Cmd+K, Cmd+, and Cmd+F which are app-level shortcuts
-        if (e.key !== "k" && e.key !== "," && e.key !== "f") return;
+        // Only forward app-level shortcuts.
+        if (!APP_SHORTCUT_MODIFIER_KEYS.has(e.key)) return;
       }
       window.dispatchEvent(
         new KeyboardEvent("keydown", {

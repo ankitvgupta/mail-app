@@ -47,6 +47,7 @@ const RICH_HTML_EMAIL_BODY = `<html>
     </ul>
 
     <p>You can view the full dashboard here: <a href="https://dashboard.example.com/q3-report" style="color: #1a73e8;">Q3 Report Dashboard</a></p>
+    <p>Backup link: <a href="https://dashboard.example.com/q3-report">Dashboard mirror</a>. Questions? <a href="mailto:analytics@example.com">Email analytics</a>.</p>
 
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ddd;">
       <p style="margin: 0;">Best regards,</p>

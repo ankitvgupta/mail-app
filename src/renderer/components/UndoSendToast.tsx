@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAppStore, type UndoSendItem } from "../store";
+import { formatPlatformShortcut } from "../utils/platform";
 
 // Map of item ID → cancel function, so the parent (or keyboard shortcut) can
 // trigger a clean undo on any queued item without race conditions.
@@ -156,7 +157,7 @@ function UndoSendToastItem({ item }: { item: UndoSendItem }) {
         <button
           onClick={handleUndo}
           className="ml-4 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
-          title={navigator.platform.includes("Mac") ? "Cmd+Z" : "Ctrl+Z"}
+          title={formatPlatformShortcut("Z")}
         >
           Undo
         </button>

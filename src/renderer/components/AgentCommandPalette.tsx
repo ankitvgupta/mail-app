@@ -1,5 +1,12 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAppStore } from "../store";
+import {
+  PaletteFooter,
+  PaletteHeader,
+  PaletteResults,
+  PaletteShell,
+  usePaletteSelection,
+} from "./PaletteShell";
 import type { AgentContext } from "../../shared/agent-types";
 import { trackEvent } from "../services/posthog";
 
@@ -155,9 +162,6 @@ interface AgentCommandPaletteProps {
 
 export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProps) {
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const {
     selectedAgentIds,
@@ -234,27 +238,16 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
     setAvailableProviders,
   ]);
 
-  // Reset state when opened/closed
+  const { selectedIndex, setSelectedIndex, inputRef, listRef, moveSelection } = usePaletteSelection(
+    { isOpen, query, itemCount: filteredActions.length },
+  );
+
+  // Reset query when opened
   useEffect(() => {
     if (isOpen) {
       setQuery("");
-      setSelectedIndex(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [isOpen]);
-
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const el = listRef.current.querySelector(`[data-index="${selectedIndex}"]`);
-    if (el) {
-      el.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedIndex]);
 
   const handleSubmit = useCallback(
     async (prompt: string) => {
@@ -359,11 +352,11 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
           break;
         case "ArrowDown":
           e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, filteredActions.length - 1));
+          moveSelection(1);
           break;
         case "ArrowUp":
           e.preventDefault();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
+          moveSelection(-1);
           break;
         case "Enter":
           e.preventDefault();
@@ -376,20 +369,15 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
           break;
       }
     },
-    [filteredActions, selectedIndex, query, handleSubmit, onClose],
+    [filteredActions, selectedIndex, query, handleSubmit, moveSelection, onClose],
   );
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-      {/* Palette panel */}
-      <div className="relative w-full max-w-xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl dark:shadow-black/40 overflow-hidden border border-gray-200 dark:border-gray-700">
-        {/* Input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+    <PaletteShell label="Agent Command Palette" onClose={onClose}>
+      <PaletteHeader
+        icon={
           <svg
             className="w-5 h-5 text-purple-500 flex-shrink-0"
             fill="none"
@@ -403,158 +391,138 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
               d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 14.5M14.25 3.104c.251.023.501.05.75.082M19.8 14.5l-2.425 2.425a2.25 2.25 0 00-.659 1.591v2.234"
             />
           </svg>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              hasEmail
-                ? "Ask agent about this email..."
-                : hasDraft
-                  ? "Ask agent about this draft..."
-                  : "Ask agent anything..."
-            }
-            className="flex-1 text-base outline-none placeholder-gray-400 dark:text-gray-100 dark:placeholder-gray-500 bg-transparent"
-          />
-          <kbd className="px-2 py-0.5 text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 rounded">
-            esc
-          </kbd>
-        </div>
+        }
+        inputRef={inputRef}
+        query={query}
+        onQueryChange={setQuery}
+        onKeyDown={handleKeyDown}
+        placeholder={
+          hasEmail
+            ? "Ask agent about this email..."
+            : hasDraft
+              ? "Ask agent about this draft..."
+              : "Ask agent anything..."
+        }
+      />
 
-        {/* Agent selector + context indicator */}
-        <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700/50 flex items-center gap-2 flex-wrap">
-          {availableProviders.length > 0 ? (
-            availableProviders.map((p) => {
-              const isSelected = selectedAgentIds.includes(p.id);
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    // Single-select: clicking a provider selects it exclusively
-                    setSelectedAgentIds([p.id]);
-                  }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
-                    isSelected
-                      ? "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 ring-1 ring-purple-300 dark:ring-purple-700"
-                      : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
-                  }`}
-                >
-                  {p.icon && <span>{p.icon}</span>}
-                  {p.name}
-                </button>
-              );
-            })
-          ) : (
-            <span className="text-xs text-gray-400 dark:text-gray-500">No agents available</span>
-          )}
+      {/* Agent selector + context indicator */}
+      <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700/50 flex items-center gap-2 flex-wrap">
+        {availableProviders.length > 0 ? (
+          availableProviders.map((p) => {
+            const isSelected = selectedAgentIds.includes(p.id);
+            return (
+              <button
+                key={p.id}
+                onClick={() => {
+                  // Single-select: clicking a provider selects it exclusively
+                  setSelectedAgentIds([p.id]);
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
+                  isSelected
+                    ? "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 ring-1 ring-purple-300 dark:ring-purple-700"
+                    : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {p.icon && <span>{p.icon}</span>}
+                {p.name}
+              </button>
+            );
+          })
+        ) : (
+          <span className="text-xs text-gray-400 dark:text-gray-500">No agents available</span>
+        )}
 
-          {selectedEmail ? (
-            <>
-              <span className="text-gray-300 dark:text-gray-600">|</span>
-              <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]">
-                {selectedEmail.subject}
-              </span>
-            </>
-          ) : selectedDraft ? (
-            <>
-              <span className="text-gray-300 dark:text-gray-600">|</span>
-              <span className="text-xs text-orange-500 dark:text-orange-400 truncate max-w-[200px]">
-                Draft: {selectedDraft.subject || "(no subject)"}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="text-gray-300 dark:text-gray-600">|</span>
-              <span className="text-xs text-purple-500 dark:text-purple-400">No email context</span>
-            </>
-          )}
-        </div>
-
-        {/* Quick actions */}
-        <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
-          {filteredActions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-              No matching actions. Press Enter to send custom prompt.
-            </div>
-          ) : (
-            <>
-              {suggestedActions.length > 0 && !query.trim() && (
-                <div className="px-4 py-1.5 text-xs font-medium text-purple-500 dark:text-purple-400 uppercase tracking-wider">
-                  Suggested
-                </div>
-              )}
-              {filteredActions.map((action, idx) => {
-                const isSelected = idx === selectedIndex;
-                const isSuggested = suggestedActions.some((s) => s.id === action.id);
-
-                // Show "Quick Actions" header before the first non-suggested action
-                const showQuickHeader =
-                  !query.trim() &&
-                  !isSuggested &&
-                  (idx === 0 ||
-                    suggestedActions.some((s) => s.id === filteredActions[idx - 1]?.id));
-
-                return (
-                  <div key={action.id}>
-                    {showQuickHeader && (
-                      <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                        Quick Actions
-                      </div>
-                    )}
-                    <button
-                      data-index={idx}
-                      onClick={() => handleSubmit(action.label)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`w-full px-4 py-2 flex items-center gap-3 text-left text-sm transition-colors ${
-                        isSelected
-                          ? "bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300"
-                          : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                      }`}
-                    >
-                      <svg
-                        className={`w-5 h-5 flex-shrink-0 ${
-                          isSuggested
-                            ? "text-purple-400 dark:text-purple-500"
-                            : "text-gray-400 dark:text-gray-500"
-                        }`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        strokeWidth={1.5}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d={action.icon} />
-                      </svg>
-                      <span className="flex-1">{action.label}</span>
-                      {isSuggested && (
-                        <span className="text-xs text-purple-400 dark:text-purple-500">
-                          suggested
-                        </span>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center gap-4 px-4 py-2 text-xs text-gray-400 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">&uarr;&darr;</kbd>{" "}
-            navigate
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Enter</kbd> run
-          </span>
-          <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded">Esc</kbd> close
-          </span>
-        </div>
+        {selectedEmail ? (
+          <>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]">
+              {selectedEmail.subject}
+            </span>
+          </>
+        ) : selectedDraft ? (
+          <>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
+            <span className="text-xs text-orange-500 dark:text-orange-400 truncate max-w-[200px]">
+              Draft: {selectedDraft.subject || "(no subject)"}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
+            <span className="text-xs text-purple-500 dark:text-purple-400">No email context</span>
+          </>
+        )}
       </div>
-    </div>
+
+      {/* Quick actions */}
+      <PaletteResults listRef={listRef}>
+        {filteredActions.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            No matching actions. Press Enter to send custom prompt.
+          </div>
+        ) : (
+          <>
+            {suggestedActions.length > 0 && !query.trim() && (
+              <div className="px-4 py-1.5 text-xs font-medium text-purple-500 dark:text-purple-400 uppercase tracking-wider">
+                Suggested
+              </div>
+            )}
+            {filteredActions.map((action, idx) => {
+              const isSelected = idx === selectedIndex;
+              const isSuggested = suggestedActions.some((s) => s.id === action.id);
+
+              // Show "Quick Actions" header before the first non-suggested action
+              const showQuickHeader =
+                !query.trim() &&
+                !isSuggested &&
+                (idx === 0 || suggestedActions.some((s) => s.id === filteredActions[idx - 1]?.id));
+
+              return (
+                <div key={action.id}>
+                  {showQuickHeader && (
+                    <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                      Quick Actions
+                    </div>
+                  )}
+                  <button
+                    data-index={idx}
+                    onClick={() => handleSubmit(action.label)}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    className={`w-full px-4 py-2 flex items-center gap-3 text-left text-sm transition-colors ${
+                      isSelected
+                        ? "bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300"
+                        : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                    }`}
+                  >
+                    <svg
+                      className={`w-5 h-5 flex-shrink-0 ${
+                        isSuggested
+                          ? "text-purple-400 dark:text-purple-500"
+                          : "text-gray-400 dark:text-gray-500"
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d={action.icon} />
+                    </svg>
+                    <span className="flex-1">{action.label}</span>
+                    {isSuggested && (
+                      <span className="text-xs text-purple-400 dark:text-purple-500">
+                        suggested
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </PaletteResults>
+
+      <PaletteFooter enterLabel="run" />
+    </PaletteShell>
   );
 }
 
