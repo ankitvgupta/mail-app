@@ -58,6 +58,7 @@ import type {
 } from "../shared/types";
 import type { ScopedAgentEvent, AgentProviderConfig } from "../shared/agent-types";
 import { mergeAndThreadSearchResults } from "./utils/searchResults";
+import { buildSnoozeThreadAccounts } from "./utils/snooze-accounts";
 import type { EmailThread } from "./store";
 
 function decodeHtmlEntities(text: string): string {
@@ -2346,8 +2347,9 @@ function SnoozeOverlay() {
   const { threads: currentThreads } = useThreadedEmails();
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
+  const selectedAccountId = currentAccountId ?? selectedEmail?.accountId ?? null;
 
-  if (!showSnoozeMenu || !selectedEmail || !currentAccountId) return null;
+  if (!showSnoozeMenu || !selectedEmail || !selectedAccountId) return null;
 
   // Determine if we're in batch mode (any multi-select, even 1 thread via 'x')
   const isBatchSnooze = selectedThreadIds.size > 0;
@@ -2367,12 +2369,22 @@ function SnoozeOverlay() {
         <SnoozeMenu
           emailId={selectedEmail.id}
           threadId={selectedEmail.threadId}
-          accountId={currentAccountId}
+          accountId={selectedAccountId}
           onSnooze={(snoozedEmail: SnoozedEmail) => {
             if (isBatchSnooze) {
               // Batch snooze: snooze all selected threads using the same snoozeUntil time
               const snoozeUntil = snoozedEmail.snoozeUntil;
               const threadIdsToSnooze = Array.from(selectedThreadIds);
+              const threadAccountById = buildSnoozeThreadAccounts(
+                threadIdsToSnooze,
+                (tid) => {
+                  const thread = currentThreads.find((t) => t.threadId === tid);
+                  return thread ? { threadId: tid, accountId: thread.latestEmail.accountId } : undefined;
+                },
+                snoozedEmail.threadId,
+                snoozedEmail.accountId || selectedAccountId,
+                selectedAccountId,
+              );
 
               // Close menu and clear selection immediately
               useAppStore.setState({
@@ -2398,7 +2410,9 @@ function SnoozeOverlay() {
                 newSnoozedIds.add(snoozedEmail.threadId);
                 newSnoozedMap.set(snoozedEmail.threadId, snoozedEmail);
 
-                // Add remaining threads with unique ids and explicit accountId
+                // Add remaining threads with unique ids and explicit accountId.
+                // buildSnoozeThreadAccounts guarantees an entry for every thread,
+                // so the only skip is a thread that's no longer in the list.
                 for (const tid of otherThreadIds) {
                   const thread = currentThreads.find((t) => t.threadId === tid);
                   if (thread) {
@@ -2407,7 +2421,7 @@ function SnoozeOverlay() {
                       id: `snooze-${tid}-${Date.now()}`,
                       emailId: thread.latestEmail.id,
                       threadId: tid,
-                      accountId: currentAccountId,
+                      accountId: threadAccountById[tid],
                       snoozeUntil: snoozedEmail.snoozeUntil,
                       snoozedAt: snoozedEmail.snoozedAt,
                     });
@@ -2422,11 +2436,12 @@ function SnoozeOverlay() {
                 id: `snooze-batch-${Date.now()}`,
                 type: "snooze",
                 threadCount: threadIdsToSnooze.length,
-                accountId: currentAccountId,
+                accountId: selectedAccountId,
                 emails: [],
                 scheduledAt: Date.now(),
                 delayMs: 5000,
                 snoozedThreadIds: threadIdsToSnooze,
+                snoozedThreadAccounts: threadAccountById,
               });
 
               // Fire API calls for remaining threads in background
@@ -2434,7 +2449,7 @@ function SnoozeOverlay() {
                 const thread = currentThreads.find((t) => t.threadId === tid);
                 if (thread) {
                   window.api.snooze
-                    .snooze(thread.latestEmail.id, tid, currentAccountId, snoozeUntil)
+                    .snooze(thread.latestEmail.id, tid, threadAccountById[tid], snoozeUntil)
                     .catch((err: unknown) =>
                       console.error("Batch snooze failed for thread", tid, err),
                     );
@@ -2475,16 +2490,21 @@ function SnoozeOverlay() {
                 return { snoozedThreadIds: newSnoozedIds, snoozedThreads: newSnoozedMap };
               });
 
+              // Prefer the account of the email that was actually snoozed, matching
+              // the batch path; fall back to the selected account.
+              const snoozedAccountId = snoozedEmail.accountId || selectedAccountId;
+
               // Queue undo synchronously to avoid race with other actions in the rAF delay
               addUndoAction({
                 id: `snooze-${snoozedThreadId}-${Date.now()}`,
                 type: "snooze",
                 threadCount: 1,
-                accountId: currentAccountId,
+                accountId: snoozedAccountId,
                 emails: [],
                 scheduledAt: Date.now(),
                 delayMs: 5000,
                 snoozedThreadIds: [snoozedThreadId],
+                snoozedThreadAccounts: { [snoozedThreadId]: snoozedAccountId },
               });
             }
           }}

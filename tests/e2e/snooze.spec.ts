@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp , closeApp } from "./launch-helpers";
+import { launchElectronApp, closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for Snooze Feature
@@ -153,6 +153,86 @@ test.describe("Snooze Feature — Menu & Presets", () => {
       expect(hasIcon).toBe(true);
     }
   });
+});
+
+test.describe("Snooze Feature — All Inboxes", () => {
+  let electronApp: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async ({}, testInfo) => {
+    const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+    electronApp = result.app;
+    page = result.page;
+
+    await page.locator("[data-thread-id]").first().waitFor({ timeout: 15000 });
+  });
+
+  test.afterAll(async () => {
+    if (electronApp) {
+      await closeApp(electronApp);
+    }
+  });
+
+  test("opens snooze menu for a selected email in All Inboxes", async () => {
+    const selected = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __ZUSTAND_STORE__: {
+            getState: () => {
+              emails: Array<{ id: string; threadId: string; accountId?: string }>;
+            };
+            setState: (state: Record<string, unknown>) => void;
+          };
+        }
+      ).__ZUSTAND_STORE__;
+      const state = store.getState();
+      const email = state.emails.find((item) => item.accountId) ?? state.emails[0];
+
+      store.setState({
+        currentAccountId: null,
+        selectedEmailId: email.id,
+        selectedThreadId: email.threadId,
+        showSnoozeMenu: false,
+        viewMode: "split",
+      });
+
+      return { accountId: email.accountId, threadId: email.threadId };
+    });
+
+    expect(selected.accountId).toBeTruthy();
+
+    await page.keyboard.press("h");
+
+    await expect(page.locator("text=Later Today")).toBeVisible({ timeout: 3000 });
+
+    await page.locator("button:has-text('Tomorrow')").first().click();
+    await expect(page.locator("text=Later Today")).not.toBeVisible({ timeout: 5000 });
+
+    const undoAccountId = await page.evaluate((threadId) => {
+      const store = (
+        window as unknown as {
+          __ZUSTAND_STORE__: {
+            getState: () => {
+              undoActionQueue: Array<{
+                type: string;
+                snoozedThreadAccounts?: Record<string, string>;
+              }>;
+            };
+          };
+        }
+      ).__ZUSTAND_STORE__;
+
+      const snoozeUndo = store.getState().undoActionQueue.find((item) => item.type === "snooze");
+      return snoozeUndo?.snoozedThreadAccounts?.[threadId] ?? null;
+    }, selected.threadId);
+
+    expect(undoAccountId).toBe(selected.accountId);
+  });
+
+  // NOTE: A faithful cross-account *batch* E2E isn't possible in demo mode — the
+  // snooze IPC only accepts the single real demo account, so a second account
+  // can't round-trip. The cross-account thread→account mapping is covered by a
+  // unit test instead (tests/unit/snooze-accounts.spec.ts).
 });
 
 test.describe("Snooze Feature — Natural Language Input", () => {

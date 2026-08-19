@@ -184,6 +184,8 @@ export type UndoActionItem = {
   archiveReadyThreadIds?: string[];
   // For snooze undo: thread IDs to unsnooze
   snoozedThreadIds?: string[];
+  // For cross-account snooze batches: thread ID -> owning account ID.
+  snoozedThreadAccounts?: Record<string, string>;
   // For block: the bare sender email that was blocked. The block IPC is
   // deferred (commitAction in UndoActionToast calls emails:block-sender when
   // the timer elapses), and undo within the window simply restores the
@@ -1399,6 +1401,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           snoozedThreadIds:
             existing.snoozedThreadIds || item.snoozedThreadIds
               ? [...(existing.snoozedThreadIds || []), ...(item.snoozedThreadIds || [])]
+              : undefined,
+          snoozedThreadAccounts:
+            existing.snoozedThreadAccounts || item.snoozedThreadAccounts
+              ? { ...(existing.snoozedThreadAccounts || {}), ...(item.snoozedThreadAccounts || {}) }
               : undefined,
         };
         return {

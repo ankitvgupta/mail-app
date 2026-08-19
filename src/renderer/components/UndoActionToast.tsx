@@ -257,8 +257,9 @@ function UndoActionToastItem({ item }: { item: UndoActionItem }) {
           const store = useAppStore.getState();
           for (const threadId of item.snoozedThreadIds) {
             store.removeSnoozedThread(threadId);
+            const threadAccountId = item.snoozedThreadAccounts?.[threadId] ?? item.accountId;
             api()
-              .snooze.unsnooze(threadId, item.accountId)
+              .snooze.unsnooze(threadId, threadAccountId)
               .catch((err: unknown) => {
                 console.error("Failed to unsnooze:", err);
               });
