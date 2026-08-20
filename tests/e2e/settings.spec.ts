@@ -186,6 +186,35 @@ test.describe("Settings Panel - Tab Navigation", () => {
     await expect(memoriesTab).toHaveAttribute("data-active", "true");
   });
 
+  test("can configure the Personal Brain integration", async () => {
+    const settingsPanel = page.getByTestId("settings-panel");
+    if (!(await settingsPanel.isVisible())) {
+      await page.locator("button[title='Settings']").click();
+      await expect(settingsPanel).toBeVisible({ timeout: 5000 });
+    }
+
+    const gbrainTab = settingsPanel.getByRole("button", { name: "Personal Brain", exact: true });
+    await gbrainTab.click();
+
+    await expect(gbrainTab).toHaveAttribute("data-active", "true");
+    await expect(page.getByRole("heading", { name: "Personal Brain", exact: true })).toBeVisible();
+    await expect(page.getByTestId("gbrain-endpoint")).toBeVisible();
+    await expect(page.getByTestId("gbrain-token")).toHaveAttribute("type", "password");
+
+    const useInDrafts = page.getByTestId("gbrain-use-in-drafts");
+    const enabled = page.getByTestId("gbrain-enabled");
+    if (await useInDrafts.isEnabled()) {
+      await enabled.click();
+    }
+    await expect(useInDrafts).toBeDisabled();
+    await enabled.click();
+    await expect(useInDrafts).toBeEnabled();
+
+    await page.getByTestId("gbrain-endpoint").fill("https://brain.example.com/mcp");
+    await page.getByTestId("gbrain-token").fill("test-token");
+    await expect(page.getByRole("button", { name: "Test connection" })).toBeEnabled();
+  });
+
   test("can navigate to Queue tab", async () => {
     const queueTab = page.locator("button:has-text('Queue')");
     await queueTab.click();

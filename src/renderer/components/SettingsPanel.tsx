@@ -36,6 +36,7 @@ import { SnippetsEditor } from "./SnippetsEditor";
 import { MemoriesTab } from "./MemoriesTab";
 import { ExtensionsTab } from "./ExtensionsTab";
 import { OllamaModelSelect } from "./OllamaModelSelect";
+import { GBrainSettingsTab } from "./GBrainSettingsTab";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -951,6 +952,17 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
             }`}
           >
             AI Memories
+          </button>
+          <button
+            onClick={() => setActiveTab("gbrain")}
+            data-active={activeTab === "gbrain" ? "true" : undefined}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              activeTab === "gbrain"
+                ? "bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300"
+                : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            }`}
+          >
+            Personal Brain
           </button>
           <button
             onClick={() => setActiveTab("queue")}
@@ -2641,6 +2653,8 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
             highlightMemoryIds={highlightMemoryIds}
           />
         )}
+
+        {activeTab === "gbrain" && <GBrainSettingsTab />}
 
         {activeTab === "queue" && (
           <div className="max-w-3xl mx-auto space-y-6">

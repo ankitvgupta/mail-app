@@ -753,6 +753,11 @@ function buildSystemPrompt(
     parts.push(memoryContext);
   }
 
+  if (context.knowledgeContext) {
+    parts.push("");
+    parts.push(context.knowledgeContext);
+  }
+
   parts.push("");
   parts.push("## Writing Emails");
   parts.push(

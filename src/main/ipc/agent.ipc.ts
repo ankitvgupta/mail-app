@@ -8,6 +8,7 @@ import { getAgentTrace } from "../db";
 import type { AgentContext } from "../agents/types";
 import type { ScopedAgentEvent } from "../agents/types";
 import type { IpcResponse } from "../../shared/types";
+import { buildGBrainAgentQuery, fetchGBrainAgentContext } from "../services/gbrain-service";
 
 /** Check if `claude` CLI is available on PATH. Cached after first check. */
 let claudeCliAvailable: boolean | null = null;
@@ -53,9 +54,21 @@ export function registerAgentIpc(): void {
         // If only agentChat is set to ollama-cloud (mismatched config), the
         // worker is still on Anthropic and would 400 with invalid_model
         // unless we send an Anthropic name.
-        const ollamaConfig = resolveAgentOllamaConfig(getConfig());
+        const config = getConfig();
+        const ollamaConfig = resolveAgentOllamaConfig(config);
         const modelOverride = ollamaConfig?.model ?? getModelIdForFeature("agentChat");
-        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
+        const knowledgeContext = await fetchGBrainAgentContext(
+          config.gbrain,
+          buildGBrainAgentQuery(prompt, context),
+        );
+        const enrichedContext = knowledgeContext ? { ...context, knowledgeContext } : context;
+        await agentCoordinator.runAgent(
+          taskId,
+          providerIds,
+          prompt,
+          enrichedContext,
+          modelOverride,
+        );
         return { success: true, data: { taskId } };
       } catch (error) {
         return {

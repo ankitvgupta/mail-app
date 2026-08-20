@@ -22,6 +22,8 @@ import {
   DEFAULT_BACKGROUND_AGENT_PROVIDER,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_HOSTLER_HARNESS,
+  DEFAULT_GBRAIN_CONFIG,
+  type GBrainConfig,
 } from "../../shared/types";
 import { resetAnalyzer } from "./analysis.ipc";
 import { resetArchiveReadyAnalyzer } from "./archive-ready.ipc";
@@ -46,6 +48,7 @@ import { autoUpdateService } from "../services/auto-updater";
 import { existsSync } from "fs";
 import { getDataDir } from "../data-dir";
 import { createLogger } from "../services/logger";
+import { GBrainService } from "../services/gbrain-service";
 
 const log = createLogger("settings-ipc");
 
@@ -87,6 +90,7 @@ function getStore(): Store<{ config: Config }> {
           autoDraft: {
             enabled: true,
           },
+          gbrain: DEFAULT_GBRAIN_CONFIG,
           // posthog intentionally omitted from defaults — getConfig() applies
           // a version-aware default so pre-existing installs (configVersion < 2)
           // are not silently opted in to analytics + session replay.
@@ -337,6 +341,21 @@ export function registerSettingsIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    "settings:test-gbrain",
+    async (_, connection: Pick<GBrainConfig, "endpoint" | "token">): Promise<IpcResponse<void>> => {
+      try {
+        await new GBrainService(connection).testConnection();
+        return { success: true, data: undefined };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown GBrain connection error",
+        };
+      }
+    },
+  );
+
   // Get current config
   ipcMain.handle("settings:get", async (): Promise<IpcResponse<Config>> => {
     try {
@@ -417,6 +436,24 @@ export function registerSettingsIpc(): void {
               }
             : undefined,
         };
+      }
+      // Preserve stored GBrain values when the settings UI sends only a
+      // partial update, while still allowing an explicit reset.
+      if ("gbrain" in config) {
+        const incoming = config.gbrain;
+        const existing = currentConfig.gbrain;
+        if (incoming === undefined) {
+          newConfig = { ...newConfig, gbrain: undefined };
+        } else {
+          newConfig = {
+            ...newConfig,
+            gbrain: {
+              ...DEFAULT_GBRAIN_CONFIG,
+              ...existing,
+              ...incoming,
+            },
+          };
+        }
       }
       getStore().set("config", newConfig);
 

@@ -36,6 +36,7 @@ export type SettingsTab =
   | "style"
   | "assistant"
   | "memories"
+  | "gbrain"
   | "queue"
   | "agents"
   | "analytics"

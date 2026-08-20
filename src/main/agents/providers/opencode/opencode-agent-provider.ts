@@ -930,6 +930,10 @@ function buildSystemPrompt(context: AgentContext): string {
   if (context.memoryContext) {
     parts.push("", context.memoryContext);
   }
+
+  if (context.knowledgeContext) {
+    parts.push("", context.knowledgeContext);
+  }
   return parts.join("\n");
 }
 

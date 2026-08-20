@@ -21,6 +21,7 @@ import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/pro
 import type { IpcResponse } from "../../shared/types";
 import { DEMO_INBOX_EMAILS } from "../demo/fake-inbox";
 import { createLogger } from "../services/logger";
+import { buildGBrainEmailQuery, fetchGBrainKnowledgeContext } from "../services/gbrain-service";
 
 const log = createLogger("drafts-ipc");
 
@@ -107,7 +108,7 @@ export function registerDraftsIpc(): void {
           return { success: false, error: "Email not found" };
         }
 
-        const _config = getConfig();
+        const config = getConfig();
 
         // Include relevant memories so refinement doesn't contradict saved preferences
         const senderMatch = email.from.match(/<([^>]+)>/) ?? email.from.match(/([^\s<]+@[^\s>]+)/);
@@ -116,6 +117,15 @@ export function registerDraftsIpc(): void {
           ? buildMemoryContext(senderEmail, email.accountId || "default")
           : "";
         const memorySection = memoryContext ? `\n${memoryContext}\n---\n` : "";
+        const knowledgeContext = await fetchGBrainKnowledgeContext(
+          config.gbrain,
+          buildGBrainEmailQuery({
+            from: email.from,
+            subject: email.subject,
+            body: email.body ?? "",
+          }),
+        );
+        const knowledgeSection = knowledgeContext ? `\n${knowledgeContext}\n---\n` : "";
 
         const refinementConfig = getFeatureModelConfig("refinement");
         const response = await createMessage(
@@ -128,6 +138,7 @@ export function registerDraftsIpc(): void {
                 role: "user",
                 content: `Refine this email draft based on the feedback provided.
 ${memorySection}
+${knowledgeSection}
 ORIGINAL EMAIL BEING REPLIED TO:
 ${wrapUntrustedEmail(`From: ${email.from}\nSubject: ${email.subject}\n---\n${email.body}`)}
 ---

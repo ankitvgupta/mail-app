@@ -86,7 +86,11 @@ export class DraftGenerator {
     email: Email,
     analysis: AnalysisResult,
     eaConfig?: EAConfig,
-    options?: { enableSenderLookup?: boolean; userEmail?: string },
+    options?: {
+      enableSenderLookup?: boolean;
+      userEmail?: string;
+      knowledgeContext?: string;
+    },
   ): Promise<GeneratedDraftResponse> {
     const cc: string[] = [];
 
@@ -148,7 +152,8 @@ Do NOT propose specific times yourself - defer to the assistant.`;
         messages: [
           {
             role: "user",
-            content: `${senderContext}
+            content: `${options?.knowledgeContext ?? ""}
+${senderContext}
 ${calendaringContext}
 ---
 ANALYSIS (for context):
@@ -180,7 +185,7 @@ ${wrapUntrustedEmail(`From: ${email.from}\nTo: ${email.to}\nSubject: ${email.sub
     to: string[],
     subject: string,
     instructions: string,
-    options?: { enableSenderLookup?: boolean },
+    options?: { enableSenderLookup?: boolean; knowledgeContext?: string },
   ): Promise<GeneratedDraftResponse> {
     let recipientContext = "";
 
@@ -211,7 +216,8 @@ ${profile.summary}
         messages: [
           {
             role: "user",
-            content: `${recipientContext}
+            content: `${options?.knowledgeContext ?? ""}
+${recipientContext}
 ---
 Compose a new email (not a reply to an existing thread).
 
@@ -237,7 +243,7 @@ ${instructions}`,
   async generateForward(
     email: Email,
     instructions: string,
-    options?: { enableSenderLookup?: boolean },
+    options?: { enableSenderLookup?: boolean; knowledgeContext?: string },
   ): Promise<GeneratedDraftResponse> {
     let recipientContext = "";
 
@@ -272,7 +278,8 @@ ${profile.summary}
         messages: [
           {
             role: "user",
-            content: `${recipientContext}
+            content: `${options?.knowledgeContext ?? ""}
+${recipientContext}
 ---
 Write the text for a forwarded email. The original email will be automatically appended as quoted content, so do not reproduce it.
 
