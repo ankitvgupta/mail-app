@@ -416,6 +416,24 @@ export const OllamaCloudConfigSchema = z.object({
  *  Extensions card — renderer-safe (same pattern as DEFAULT_OLLAMA_MODEL). */
 export const DEFAULT_HOSTLER_HARNESS = "opencode";
 
+export const GBrainConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  endpoint: z.string().max(2_048).default(""),
+  token: z.string().max(8_192).default(""),
+  includeInDrafts: z.boolean().default(true),
+  accountIds: z.array(z.string().min(1).max(512)).max(50).default([]),
+});
+
+export type GBrainConfig = z.infer<typeof GBrainConfigSchema>;
+
+export const DEFAULT_GBRAIN_CONFIG: GBrainConfig = {
+  enabled: false,
+  endpoint: "",
+  token: "",
+  includeInDrafts: true,
+  accountIds: [],
+};
+
 // Config schema
 export const ConfigSchema = z.object({
   maxEmails: z.number().default(50),
@@ -546,6 +564,7 @@ export const ConfigSchema = z.object({
   // resolveBackgroundAgentProviderId below.
   backgroundAgentProvider: z.string().optional(),
   ollamaCloud: OllamaCloudConfigSchema.optional(),
+  gbrain: GBrainConfigSchema.optional(),
   featureProviders: z.record(z.string(), LlmProviderSchema).optional(),
   configVersion: z.number().optional(),
 });
@@ -978,6 +997,7 @@ export type IpcChannels = {
   // Settings operations
   "settings:get": void;
   "settings:set": Partial<Config>;
+  "settings:test-gbrain": Pick<GBrainConfig, "endpoint" | "token">;
   "settings:get-prompts": void;
   "settings:set-prompts": { analysisPrompt?: string; draftPrompt?: string; stylePrompt?: string };
   "settings:get-ea": void;

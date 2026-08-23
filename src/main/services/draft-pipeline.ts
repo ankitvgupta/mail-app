@@ -13,6 +13,12 @@ import { buildStyleContext } from "./style-profiler";
 import { buildMemoryContext } from "./memory-context";
 import { EmailAnalyzer } from "./email-analyzer";
 import { DraftGenerator } from "./draft-generator";
+import {
+  buildGBrainEmailQuery,
+  buildGBrainForwardQuery,
+  buildGBrainReplyQuery,
+  fetchGBrainKnowledgeContext,
+} from "./gbrain-service";
 import { getAccounts } from "../db";
 import { DEFAULT_STYLE_PROMPT } from "../../shared/types";
 import type {
@@ -48,29 +54,57 @@ async function buildDraftPipeline(
   emailId: string,
   accountId: string | undefined,
   recipientEmail: string,
+  buildKnowledgeQuery: (email: Email, mailbox: string) => string = buildGBrainEmailQuery,
 ): Promise<{
   email: DashboardEmail;
   emailForDraft: Email;
   config: ReturnType<typeof getConfig>;
   prompt: string;
+  knowledgeContext: string;
   generator: DraftGenerator;
   emailAccountId: string;
+  userEmail?: string;
 }> {
   const email = getEmail(emailId);
   if (!email) throw new Error(`Email not found: ${emailId}`);
 
   const config = getConfig();
-  const emailAccountId = accountId || email.accountId || "default";
+  const emailAccountId = email.accountId || "default";
+  if (accountId && accountId !== emailAccountId) {
+    throw new Error("The requested account does not own this email.");
+  }
   const gmailClient = getEmailSyncService().getClientForAccount(emailAccountId);
+  const accounts = getAccounts();
+  const userEmail = accounts.find((candidate) => candidate.id === emailAccountId)?.email;
+  const mailbox = userEmail || emailAccountId;
 
-  const styleContext = recipientEmail
-    ? await buildStyleContext(
-        recipientEmail,
-        emailAccountId,
-        config.stylePrompt ?? DEFAULT_STYLE_PROMPT,
-        gmailClient,
-      )
-    : "";
+  const emailForDraft: Email = {
+    id: email.id,
+    threadId: email.threadId,
+    subject: email.subject,
+    from: email.from,
+    to: email.to,
+    cc: email.cc,
+    date: email.date,
+    body: email.body ?? "",
+    snippet: email.snippet,
+  };
+
+  const [styleContext, knowledgeContext] = await Promise.all([
+    recipientEmail
+      ? buildStyleContext(
+          recipientEmail,
+          emailAccountId,
+          config.stylePrompt ?? DEFAULT_STYLE_PROMPT,
+          gmailClient,
+        )
+      : Promise.resolve(""),
+    fetchGBrainKnowledgeContext(
+      config.gbrain,
+      buildKnowledgeQuery(emailForDraft, mailbox),
+      emailAccountId,
+    ),
+  ]);
 
   const memoryContext = recipientEmail
     ? buildMemoryContext(recipientEmail.toLowerCase(), emailAccountId)
@@ -85,18 +119,6 @@ async function buildDraftPipeline(
     prompt = `${memoryContext}\n\n${prompt}`;
   }
 
-  const emailForDraft: Email = {
-    id: email.id,
-    threadId: email.threadId,
-    subject: email.subject,
-    from: email.from,
-    to: email.to,
-    cc: email.cc,
-    date: email.date,
-    body: email.body ?? "",
-    snippet: email.snippet,
-  };
-
   const draftsConfig = getFeatureModelConfig("drafts");
   const calendaringConfig = getFeatureModelConfig("calendaring");
   const generator = new DraftGenerator(
@@ -107,7 +129,16 @@ async function buildDraftPipeline(
     calendaringConfig.provider,
   );
 
-  return { email, emailForDraft, config, prompt, generator, emailAccountId };
+  return {
+    email,
+    emailForDraft,
+    config,
+    prompt,
+    knowledgeContext,
+    generator,
+    emailAccountId,
+    userEmail,
+  };
 }
 
 /** Extract an email address from a "Name <email>" or bare "email" string. */
@@ -133,8 +164,10 @@ export async function generateDraftForEmail(
     return email ? extractEmail(email.from) : "";
   })();
 
-  const pipeline = await buildDraftPipeline(emailId, accountId, recipientEmail);
-  const { email, emailForDraft, config, emailAccountId } = pipeline;
+  const pipeline = await buildDraftPipeline(emailId, accountId, recipientEmail, (email, mailbox) =>
+    buildGBrainReplyQuery(email, instructions, mailbox),
+  );
+  const { email, emailForDraft, config, knowledgeContext, userEmail } = pipeline;
 
   // Auto-analyze if not already done (e.g. freshly synced email)
   if (!email.analysis) {
@@ -174,11 +207,10 @@ export async function generateDraftForEmail(
   };
 
   const enableSenderLookup = config.enableSenderLookup ?? true;
-  const accounts = getAccounts();
-  const userEmail = accounts.find((a) => a.id === emailAccountId)?.email;
   const result = await generator.generateDraft(emailForDraft, analysis, config.ea, {
     enableSenderLookup,
     userEmail,
+    knowledgeContext,
   });
 
   saveDraftAndSync(emailId, result.body, "pending", result.cc, result.bcc);
@@ -205,15 +237,17 @@ export async function generateForwardForEmail(
   const primaryRecipient = to && to.length > 0 ? to[0] : "";
   const recipientEmail = extractEmail(primaryRecipient);
 
-  const { emailForDraft, config, generator } = await buildDraftPipeline(
+  const { emailForDraft, config, knowledgeContext, generator } = await buildDraftPipeline(
     emailId,
     accountId,
     recipientEmail,
+    (email, mailbox) => buildGBrainForwardQuery(email, { to, cc, bcc }, instructions, mailbox),
   );
 
   const enableSenderLookup = config.enableSenderLookup ?? true;
   const result = await generator.generateForward(emailForDraft, instructions, {
     enableSenderLookup,
+    knowledgeContext,
   });
 
   // Save only the intro text as a draft on the existing email, just like replies.

@@ -286,10 +286,10 @@ export function MemoriesTab({
       <div>
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">AI Memories</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Exo Memories</h3>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Persistent preferences that influence how drafts are generated. Memories are
-              automatically included in AI context when relevant.
+              Preferences learned or saved inside Exo. They are automatically included in AI context
+              when relevant.
             </p>
           </div>
           <button

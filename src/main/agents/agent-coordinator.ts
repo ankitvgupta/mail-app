@@ -22,6 +22,7 @@ import { DEFAULT_STYLE_PROMPT } from "../../shared/types";
 import { populatePrivateProviderConfig } from "./private-providers-main";
 import { recordAgentSessionStart } from "../services/llm-service";
 import { createLogger } from "../services/logger";
+import { buildGBrainComposeQuery, fetchGBrainKnowledgeContext } from "../services/gbrain-service";
 
 // __dirname is undefined in ESM. After the @anthropic-ai/claude-agent-sdk
 // 0.3.x upgrade, electron-vite emits the main bundle as ESM.
@@ -192,14 +193,23 @@ export class AgentCoordinator {
       const emailMatch = primaryRecipient.match(/<([^>]+)>/);
       const primaryEmail = emailMatch ? emailMatch[1] : primaryRecipient;
       const gmailClient = getEmailSyncService().getClientForAccount(accountId);
-      const styleContext = primaryEmail
-        ? await buildStyleContext(
-            primaryEmail,
-            accountId,
-            config.stylePrompt ?? DEFAULT_STYLE_PROMPT,
-            gmailClient,
-          )
-        : "";
+      const mailbox =
+        db.getAccounts().find((account) => account.id === accountId)?.email ?? accountId;
+      const [styleContext, knowledgeContext] = await Promise.all([
+        primaryEmail
+          ? buildStyleContext(
+              primaryEmail,
+              accountId,
+              config.stylePrompt ?? DEFAULT_STYLE_PROMPT,
+              gmailClient,
+            )
+          : Promise.resolve(""),
+        fetchGBrainKnowledgeContext(
+          config.gbrain,
+          buildGBrainComposeQuery(to, subject, instructions, mailbox),
+          accountId,
+        ),
+      ]);
 
       let prompt = config.draftPrompt;
       if (styleContext) {
@@ -216,7 +226,10 @@ export class AgentCoordinator {
         dConfig.provider,
         cConfig.provider,
       );
-      return generator.composeNewEmail(to, subject, instructions, { enableSenderLookup });
+      return generator.composeNewEmail(to, subject, instructions, {
+        enableSenderLookup,
+        knowledgeContext,
+      });
     },
     generateForward: async (
       emailId: string,
@@ -368,13 +381,16 @@ export class AgentCoordinator {
     prompt: string,
     context: AgentContext,
     modelOverride?: string,
+    preflightSignal?: AbortSignal,
   ): Promise<void> {
+    if (preflightSignal?.aborted) return;
     const worker = this.ensureWorker();
 
     // Wait for worker init (including private provider config enrichment) to complete
     if (this.workerReady) {
       await this.workerReady;
     }
+    if (preflightSignal?.aborted) return;
 
     // Build memory context in the main process (where DB access is available)
     // and attach it to context so the worker can include it in the system prompt

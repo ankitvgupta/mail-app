@@ -4,7 +4,7 @@ import { readFileSync, existsSync, readdirSync } from "fs";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import Store from "electron-store";
 
-import { getDataDir } from "./data-dir";
+import { getConfigStoreName, getDataDir } from "./data-dir";
 import { createLogger, closeLogs } from "./services/logger";
 
 const log = createLogger("app");
@@ -177,7 +177,7 @@ if (app.isPackaged && process.platform === "darwin") {
   // as the settings module (which hasn't been imported yet at this point in startup).
   try {
     const earlyStore = new Store<{ config: { extraPathDirs?: string[] } }>({
-      name: "exo-config",
+      name: getConfigStoreName(),
       encryptionKey: "exo-encryption-key",
       cwd: getDataDir(),
     });

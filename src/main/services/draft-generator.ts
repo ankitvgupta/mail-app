@@ -12,7 +12,11 @@ import {
   type GeneratedDraftResponse,
   type LlmProvider,
 } from "../../shared/types";
-import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/prompt-safety";
+import {
+  UNTRUSTED_DATA_INSTRUCTION,
+  UNTRUSTED_KNOWLEDGE_INSTRUCTION,
+  wrapUntrustedEmail,
+} from "../../shared/prompt-safety";
 import { createLogger } from "./logger";
 
 const log = createLogger("draft-generator");
@@ -86,7 +90,11 @@ export class DraftGenerator {
     email: Email,
     analysis: AnalysisResult,
     eaConfig?: EAConfig,
-    options?: { enableSenderLookup?: boolean; userEmail?: string },
+    options?: {
+      enableSenderLookup?: boolean;
+      userEmail?: string;
+      knowledgeContext?: string;
+    },
   ): Promise<GeneratedDraftResponse> {
     const cc: string[] = [];
 
@@ -144,11 +152,17 @@ Do NOT propose specific times yourself - defer to the assistant.`;
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",
-            content: `${senderContext}
+            content: `${options?.knowledgeContext ?? ""}
+${senderContext}
 ${calendaringContext}
 ---
 ANALYSIS (for context):
@@ -180,7 +194,7 @@ ${wrapUntrustedEmail(`From: ${email.from}\nTo: ${email.to}\nSubject: ${email.sub
     to: string[],
     subject: string,
     instructions: string,
-    options?: { enableSenderLookup?: boolean },
+    options?: { enableSenderLookup?: boolean; knowledgeContext?: string },
   ): Promise<GeneratedDraftResponse> {
     let recipientContext = "";
 
@@ -207,11 +221,17 @@ ${profile.summary}
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",
-            content: `${recipientContext}
+            content: `${options?.knowledgeContext ?? ""}
+${recipientContext}
 ---
 Compose a new email (not a reply to an existing thread).
 
@@ -237,7 +257,7 @@ ${instructions}`,
   async generateForward(
     email: Email,
     instructions: string,
-    options?: { enableSenderLookup?: boolean },
+    options?: { enableSenderLookup?: boolean; knowledgeContext?: string },
   ): Promise<GeneratedDraftResponse> {
     let recipientContext = "";
 
@@ -268,11 +288,17 @@ ${profile.summary}
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",
-            content: `${recipientContext}
+            content: `${options?.knowledgeContext ?? ""}
+${recipientContext}
 ---
 Write the text for a forwarded email. The original email will be automatically appended as quoted content, so do not reproduce it.
 

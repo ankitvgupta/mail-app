@@ -4,10 +4,13 @@ import { agentCoordinator } from "../agents/agent-coordinator";
 import { authenticateProvider } from "../agents/private-providers-main";
 import { getConfig, getModelIdForFeature } from "./settings.ipc";
 import { resolveAgentOllamaConfig } from "../../shared/types";
-import { getAgentTrace } from "../db";
-import type { AgentContext } from "../agents/types";
+import { getAccounts, getAgentTrace, getEmail, getLocalDraft } from "../db";
+import { canAnyAgentProviderUseKnowledgeContext, type AgentContext } from "../agents/types";
 import type { ScopedAgentEvent } from "../agents/types";
 import type { IpcResponse } from "../../shared/types";
+import { buildGBrainAgentQuery, fetchGBrainAgentContext } from "../services/gbrain-service";
+
+const pendingAgentRuns = new Map<string, AbortController>();
 
 /** Check if `claude` CLI is available on PATH. Cached after first check. */
 let claudeCliAvailable: boolean | null = null;
@@ -45,6 +48,9 @@ export function registerAgentIpc(): void {
         context: AgentContext;
       },
     ): Promise<IpcResponse<{ taskId: string }>> => {
+      const pendingRun = new AbortController();
+      pendingAgentRuns.get(taskId)?.abort();
+      pendingAgentRuns.set(taskId, pendingRun);
       try {
         // Interactive agent tasks use the agentChat model (defaults to opus).
         // Pick the model based on the worker's actual destination — using
@@ -53,15 +59,97 @@ export function registerAgentIpc(): void {
         // If only agentChat is set to ollama-cloud (mismatched config), the
         // worker is still on Anthropic and would 400 with invalid_model
         // unless we send an Anthropic name.
-        const ollamaConfig = resolveAgentOllamaConfig(getConfig());
+        const config = getConfig();
+        const ollamaConfig = resolveAgentOllamaConfig(config);
         const modelOverride = ollamaConfig?.model ?? getModelIdForFeature("agentChat");
-        await agentCoordinator.runAgent(taskId, providerIds, prompt, context, modelOverride);
+        const account = getAccounts().find((candidate) => candidate.id === context.accountId);
+        if (!account) {
+          return { success: false, error: "The selected email account is not connected." };
+        }
+        if (context.currentEmailId && context.currentDraftId) {
+          return {
+            success: false,
+            error: "Agent context cannot target an email and draft together.",
+          };
+        }
+
+        const trustedContext: AgentContext = {
+          accountId: account.id,
+          userEmail: account.email,
+          userName: account.displayName,
+          selectedEmailIds: context.selectedEmailIds,
+          providerConversationIds: context.providerConversationIds,
+          conversationHistory: context.conversationHistory,
+          memoryContext: context.memoryContext,
+          knowledgeQuery: context.knowledgeQuery,
+        };
+
+        if (context.currentEmailId) {
+          const email = getEmail(context.currentEmailId);
+          if (!email) return { success: false, error: "The selected email no longer exists." };
+          const ownerAccountId = email.accountId || "default";
+          if (ownerAccountId !== account.id) {
+            return { success: false, error: "The selected account does not own this email." };
+          }
+          trustedContext.currentEmailId = email.id;
+          trustedContext.currentThreadId = email.threadId;
+          trustedContext.emailSubject = email.subject;
+          trustedContext.emailFrom = email.from;
+          trustedContext.emailTo = email.to;
+          trustedContext.emailBody = email.body;
+        } else if (context.currentDraftId) {
+          const draft = getLocalDraft(context.currentDraftId);
+          if (!draft) return { success: false, error: "The selected draft no longer exists." };
+          if (draft.accountId !== account.id) {
+            return { success: false, error: "The selected account does not own this draft." };
+          }
+          trustedContext.currentDraftId = draft.id;
+          trustedContext.currentThreadId = draft.threadId;
+          trustedContext.emailSubject = draft.subject;
+          trustedContext.emailTo = draft.to.join(", ");
+          trustedContext.emailBody = draft.bodyText || draft.bodyHtml;
+        }
+
+        if (trustedContext.selectedEmailIds) {
+          const selectionIsOwned = trustedContext.selectedEmailIds.every((emailId) => {
+            const selected = getEmail(emailId);
+            return selected && (selected.accountId || "default") === account.id;
+          });
+          if (!selectionIsOwned) {
+            return { success: false, error: "The selected emails span multiple accounts." };
+          }
+        }
+
+        const knowledgeContext = canAnyAgentProviderUseKnowledgeContext(providerIds)
+          ? await fetchGBrainAgentContext(
+              config.gbrain,
+              buildGBrainAgentQuery(prompt, trustedContext),
+              trustedContext.accountId,
+              pendingRun.signal,
+            )
+          : "";
+        if (pendingRun.signal.aborted) return { success: true, data: { taskId } };
+        const enrichedContext = knowledgeContext
+          ? { ...trustedContext, knowledgeContext }
+          : trustedContext;
+        await agentCoordinator.runAgent(
+          taskId,
+          providerIds,
+          prompt,
+          enrichedContext,
+          modelOverride,
+          pendingRun.signal,
+        );
         return { success: true, data: { taskId } };
       } catch (error) {
         return {
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         };
+      } finally {
+        if (pendingAgentRuns.get(taskId) === pendingRun) {
+          pendingAgentRuns.delete(taskId);
+        }
       }
     },
   );
@@ -70,6 +158,7 @@ export function registerAgentIpc(): void {
     "agent:cancel",
     async (_, { taskId }: { taskId: string }): Promise<IpcResponse<void>> => {
       try {
+        pendingAgentRuns.get(taskId)?.abort();
         agentCoordinator.cancel(taskId);
         return { success: true, data: undefined };
       } catch (error) {

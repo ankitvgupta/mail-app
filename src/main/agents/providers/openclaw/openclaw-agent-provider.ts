@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import type {
+  AgentContext,
   AgentFrameworkConfig,
   AgentProvider,
   AgentProviderConfig,
@@ -18,6 +20,31 @@ function isDemoMode(): boolean {
 
 const TIMEOUT_MS = 300_000;
 const SLOW_WARNING_MS = 30_000;
+const OPENCLAW_PROVIDER_ID = "openclaw-agent";
+
+export function buildOpenClawPrompt(_context: AgentContext, prompt: string): string {
+  // The OpenClaw CLI has no per-request system-instruction channel. Do not put
+  // retrieved knowledge beside the user request at equal authority. Email
+  // drafts created through OpenClaw's mail tools are still enriched inside the
+  // main-process draft pipeline, where a system-level trust boundary exists.
+  return prompt;
+}
+
+function shortDigest(value: string, length: number): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, length);
+}
+
+export function buildOpenClawSessionKey(context: AgentContext, taskId: string): string {
+  const accountPrefix = `exo-${shortDigest(context.accountId, 12)}-`;
+  const prior = context.providerConversationIds?.[OPENCLAW_PROVIDER_ID];
+  if (prior?.startsWith(accountPrefix) && /^exo-[a-f0-9]{12}-[a-f0-9]{24}$/.test(prior)) {
+    return prior;
+  }
+
+  // A new Exo task must start a new OpenClaw session even when it targets the
+  // same email. True follow-ups carry the validated prior key above.
+  return `${accountPrefix}${shortDigest(taskId, 24)}`;
+}
 
 /**
  * Demo mode canned responses, rotated by a hash of the query string.
@@ -51,6 +78,7 @@ export function getDemoResponse(query: string): string {
 export function execOpenClaw(
   message: string,
   signal: AbortSignal,
+  sessionKey: string,
   onSlow?: () => void,
   extraEnv?: Record<string, string>,
 ): Promise<string> {
@@ -71,7 +99,7 @@ export function execOpenClaw(
 
     childRef.current = execFile(
       "openclaw",
-      ["agent", "--agent", "main", "--message", message, "--json"],
+      ["agent", "--agent", "main", "--session-key", sessionKey, "--message", message, "--json"],
       { timeout: TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1", ...extraEnv } },
       (error, stdout, stderr) => {
         if (slowTimer) clearTimeout(slowTimer);
@@ -199,6 +227,7 @@ export class OpenClawAgentProvider implements AgentProvider {
     // Create our own controller so cancel() can abort the CLI process.
     // Also listen to the caller's signal so external cancellation works too.
     const controller = new AbortController();
+    const sessionKey = buildOpenClawSessionKey(params.context, params.taskId);
     this.inFlight.set(params.taskId, controller);
     const onParentAbort = () => controller.abort();
     params.signal.addEventListener("abort", onParentAbort, { once: true });
@@ -207,7 +236,11 @@ export class OpenClawAgentProvider implements AgentProvider {
       // Race a 30s slow-warning timer against the CLI call so the warning
       // is yielded while the CLI is still running (not after it finishes).
       const slowWarning = Symbol("slow");
-      const cliPromise = this.queryOpenClaw(params.prompt, controller.signal);
+      const cliPromise = this.queryOpenClaw(
+        buildOpenClawPrompt(params.context, params.prompt),
+        controller.signal,
+        sessionKey,
+      );
       const timerPromise = new Promise<typeof slowWarning>((resolve) => {
         const id = setTimeout(() => resolve(slowWarning), SLOW_WARNING_MS);
         // If CLI finishes first (success or failure), cancel the timer.
@@ -229,15 +262,15 @@ export class OpenClawAgentProvider implements AgentProvider {
 
       yield { type: "text_delta", text: response };
       yield { type: "done", summary: "OpenClaw query completed" };
-      return { state: "completed" };
+      return { state: "completed", providerTaskId: sessionKey };
     } catch (err) {
       if (controller.signal.aborted || params.signal.aborted) {
         yield { type: "state", state: "cancelled" };
-        return { state: "cancelled" };
+        return { state: "cancelled", providerTaskId: sessionKey };
       }
       const msg = err instanceof Error ? err.message : String(err);
       yield { type: "error", message: msg };
-      return { state: "failed" };
+      return { state: "failed", providerTaskId: sessionKey };
     } finally {
       params.signal.removeEventListener("abort", onParentAbort);
       this.inFlight.delete(params.taskId);
@@ -283,7 +316,11 @@ Pass a natural language question as the 'query' parameter. Be specific about wha
 
   // --- Private ---
 
-  private async queryOpenClaw(query: string, signal: AbortSignal): Promise<string> {
+  private async queryOpenClaw(
+    query: string,
+    signal: AbortSignal,
+    sessionKey: string,
+  ): Promise<string> {
     // Use canned responses only in demo mode when OpenClaw is NOT enabled.
     // When the user has explicitly enabled OpenClaw, always use the real CLI
     // even in demo mode — this allows testing the real integration with mock Gmail data.
@@ -295,6 +332,6 @@ Pass a natural language question as the 'query' parameter. Be specific about wha
     const env: Record<string, string> = {};
     if (this.gatewayUrl) env.OPENCLAW_GATEWAY_URL = this.gatewayUrl;
     if (this.gatewayToken) env.OPENCLAW_GATEWAY_TOKEN = this.gatewayToken;
-    return execOpenClaw(query, signal, undefined, env);
+    return execOpenClaw(query, signal, sessionKey, undefined, env);
   }
 }

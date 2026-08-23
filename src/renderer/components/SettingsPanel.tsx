@@ -36,15 +36,23 @@ import { SnippetsEditor } from "./SnippetsEditor";
 import { MemoriesTab } from "./MemoriesTab";
 import { ExtensionsTab } from "./ExtensionsTab";
 import { OllamaModelSelect } from "./OllamaModelSelect";
+import { GBrainSettingsTab } from "./GBrainSettingsTab";
 
 interface SettingsPanelProps {
   onClose: () => void;
   initialTab?: SettingsTab;
 }
 
+type ContextSection = "memories" | "gbrain";
+
 export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? "general");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
+    initialTab === "memories" || initialTab === "gbrain" ? "context" : (initialTab ?? "general"),
+  );
+  const [contextSection, setContextSection] = useState<ContextSection>(
+    initialTab === "gbrain" ? "gbrain" : "memories",
+  );
 
   // Account management state
   const {
@@ -942,15 +950,15 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
             Executive Assistant
           </button>
           <button
-            onClick={() => setActiveTab("memories")}
-            data-active={activeTab === "memories" ? "true" : undefined}
+            onClick={() => setActiveTab("context")}
+            data-active={activeTab === "context" ? "true" : undefined}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              activeTab === "memories"
+              activeTab === "context"
                 ? "bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300"
                 : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
             }`}
           >
-            AI Memories
+            Context
           </button>
           <button
             onClick={() => setActiveTab("queue")}
@@ -2630,16 +2638,77 @@ export function SettingsPanel({ onClose, initialTab }: SettingsPanelProps) {
           </div>
         )}
 
-        {activeTab === "memories" && (
-          <MemoriesTab
-            accountId={
-              currentAccountId ||
-              accounts.find((a) => a.isPrimary)?.id ||
-              accounts[0]?.id ||
-              "default"
-            }
-            highlightMemoryIds={highlightMemoryIds}
-          />
+        {activeTab === "context" && (
+          <div className="max-w-3xl mx-auto">
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                Context
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                Manage what Exo remembers and references when it writes.
+              </p>
+              <div
+                role="tablist"
+                aria-label="Writing context"
+                className="inline-flex rounded-lg bg-gray-100 dark:bg-gray-800 p-1"
+              >
+                <button
+                  id="context-memories-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected={contextSection === "memories"}
+                  aria-controls="context-memories-panel"
+                  onClick={() => setContextSection("memories")}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    contextSection === "memories"
+                      ? "bg-white dark:bg-gray-700 text-blue-700 dark:text-blue-300 shadow-sm"
+                      : "text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
+                  }`}
+                >
+                  Exo Memories
+                </button>
+                <button
+                  id="context-gbrain-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected={contextSection === "gbrain"}
+                  aria-controls="context-gbrain-panel"
+                  onClick={() => setContextSection("gbrain")}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    contextSection === "gbrain"
+                      ? "bg-white dark:bg-gray-700 text-blue-700 dark:text-blue-300 shadow-sm"
+                      : "text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
+                  }`}
+                >
+                  Personal Brain
+                </button>
+              </div>
+            </div>
+
+            {contextSection === "memories" && (
+              <div
+                id="context-memories-panel"
+                role="tabpanel"
+                aria-labelledby="context-memories-tab"
+              >
+                <MemoriesTab
+                  accountId={
+                    currentAccountId ||
+                    accounts.find((a) => a.isPrimary)?.id ||
+                    accounts[0]?.id ||
+                    "default"
+                  }
+                  highlightMemoryIds={highlightMemoryIds}
+                />
+              </div>
+            )}
+
+            {contextSection === "gbrain" && (
+              <div id="context-gbrain-panel" role="tabpanel" aria-labelledby="context-gbrain-tab">
+                <GBrainSettingsTab />
+              </div>
+            )}
+          </div>
         )}
 
         {activeTab === "queue" && (

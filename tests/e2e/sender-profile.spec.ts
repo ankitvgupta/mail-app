@@ -1,5 +1,5 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, pressKeyUntilVisible , closeApp } from "./launch-helpers";
+import { launchElectronApp, pressKeyUntilVisible, closeApp } from "./launch-helpers";
 
 /**
  * E2E Tests for the sender profile panel.
@@ -97,11 +97,16 @@ test.describe("Sender Profile - Display", () => {
 
   test("leaving full view preserves row selection and sender sidebar", async () => {
     const selectedRow = page.locator("div[data-thread-id][data-selected='true']");
-    await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
+    if ((await selectedRow.count()) === 0) {
+      await pressKeyUntilVisible(page, "j", selectedRow, { timeout: 15000 });
+    }
+    await expect(selectedRow).toHaveCount(1);
     const selectedThreadIdBefore = await selectedRow.getAttribute("data-thread-id");
 
     const replyButton = page.locator("button[title='Reply All']").first();
-    await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 10000 });
+    if (!(await replyButton.isVisible().catch(() => false))) {
+      await pressKeyUntilVisible(page, "Enter", replyButton, { timeout: 10000 });
+    }
 
     const senderName = page.locator("[data-testid='sidebar-sender-name']");
     await expect(senderName).toBeVisible({ timeout: 5000 });

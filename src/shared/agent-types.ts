@@ -81,6 +81,10 @@ export interface AgentContext {
   conversationHistory?: string;
   /** Pre-built memory context string for injection into the agent system prompt */
   memoryContext?: string;
+  /** Bounded, read-only GBrain recall context for the current interactive request. */
+  knowledgeContext?: string;
+  /** Raw current user request used for retrieval when the provider prompt also contains history. */
+  knowledgeQuery?: string;
 }
 
 // --- Store-level types ---

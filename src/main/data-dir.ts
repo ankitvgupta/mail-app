@@ -35,6 +35,19 @@ const requireFromHere = createRequire(import.meta.url);
 
 let _devDataDir: string | null = null;
 
+/**
+ * Give parallel Playwright workers independent electron-store files. Their
+ * databases are already worker-scoped, but a shared config file still lets
+ * concurrent Settings tests overwrite one another's read-modify-write saves.
+ * Production and ordinary development always keep the canonical filename.
+ */
+export function getConfigStoreName(): string {
+  const workerIndex = process.env.TEST_WORKER_INDEX;
+  return process.env.NODE_ENV === "test" && workerIndex && /^\d+$/.test(workerIndex)
+    ? `exo-config-w${workerIndex}`
+    : "exo-config";
+}
+
 interface ElectronShape {
   app: { isPackaged: boolean; getPath: (k: string) => string; getAppPath: () => string };
   is?: { dev: boolean };

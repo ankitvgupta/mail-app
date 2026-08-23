@@ -832,6 +832,7 @@ export const AgentTabContent = memo(function AgentTabContent({ emailId }: { emai
         ...providerConversationIds,
       },
       conversationHistory: history,
+      knowledgeQuery: prompt,
     };
 
     // Generate new taskId and update the mapping before sending to backend

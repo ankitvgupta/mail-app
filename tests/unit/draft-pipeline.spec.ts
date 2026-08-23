@@ -4,7 +4,7 @@
  * The pipeline (src/main/services/draft-pipeline.ts) imports from ../db and
  * electron, so we cannot import it directly. Instead, we re-implement and test
  * the pure logic: recipient email extraction, prompt assembly, account ID
- * fallback, and email-for-draft shaping.
+ * ownership, and email-for-draft shaping.
  */
 import { test, expect } from "@playwright/test";
 
@@ -23,13 +23,18 @@ function extractRecipientEmail(from: string): string {
 
 /**
  * Resolve the effective account ID.
- * Mirrors line 62: `accountId || email.accountId || "default"`
+ * The stored email owns the account scope. A caller may confirm that scope,
+ * but cannot override it with another mailbox.
  */
 function resolveAccountId(
   optAccountId: string | undefined,
   emailAccountId: string | undefined,
 ): string {
-  return optAccountId || emailAccountId || "default";
+  const ownerAccountId = emailAccountId || "default";
+  if (optAccountId && optAccountId !== ownerAccountId) {
+    throw new Error("The requested account does not own this email.");
+  }
+  return ownerAccountId;
 }
 
 /**
@@ -149,16 +154,19 @@ test.describe("extractRecipientEmail", () => {
 // =============================================================================
 
 test.describe("resolveAccountId", () => {
-  test("prefers explicit accountId option", () => {
-    expect(resolveAccountId("acct-1", "acct-2")).toBe("acct-1");
+  test("rejects an explicit account that does not own the email", () => {
+    expect(() => resolveAccountId("acct-1", "acct-2")).toThrow("does not own");
+  });
+
+  test("accepts an explicit account that matches the stored owner", () => {
+    expect(resolveAccountId("acct-2", "acct-2")).toBe("acct-2");
   });
 
   test("falls back to email's accountId", () => {
     expect(resolveAccountId(undefined, "acct-2")).toBe("acct-2");
   });
 
-  test("falls back to empty string accountId from option", () => {
-    // Empty string is falsy, so falls through
+  test("ignores an empty account option", () => {
     expect(resolveAccountId("", "acct-2")).toBe("acct-2");
   });
 

@@ -178,12 +178,70 @@ test.describe("Settings Panel - Tab Navigation", () => {
     });
   });
 
-  test("can navigate to AI Memories tab", async () => {
-    const memoriesTab = page.locator("button:has-text('AI Memories')");
-    await memoriesTab.click();
+  test("can navigate Context and defaults to Exo Memories", async () => {
+    const contextTab = page.getByRole("button", { name: "Context", exact: true });
+    await contextTab.click();
     await page.waitForTimeout(300);
 
-    await expect(memoriesTab).toHaveAttribute("data-active", "true");
+    await expect(contextTab).toHaveAttribute("data-active", "true");
+    await expect(page.getByRole("heading", { name: "Context", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Exo Memories", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByRole("heading", { name: "Exo Memories", exact: true })).toBeVisible();
+  });
+
+  test("can configure the Personal Brain integration", async () => {
+    const settingsPanel = page.getByTestId("settings-panel");
+    if (!(await settingsPanel.isVisible())) {
+      await page.locator("button[title='Settings']").click();
+      await expect(settingsPanel).toBeVisible({ timeout: 5000 });
+    }
+
+    const contextTab = settingsPanel.getByRole("button", { name: "Context", exact: true });
+    await contextTab.click();
+    const gbrainTab = settingsPanel.getByRole("tab", { name: "Personal Brain", exact: true });
+    await gbrainTab.click();
+
+    await expect(contextTab).toHaveAttribute("data-active", "true");
+    await expect(gbrainTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "Personal Brain", exact: true })).toBeVisible();
+    await expect(page.getByTestId("gbrain-endpoint")).toBeVisible();
+    await expect(page.getByTestId("gbrain-token")).toHaveAttribute("type", "password");
+
+    const useInDrafts = page.getByTestId("gbrain-use-in-drafts");
+    const enabled = page.getByTestId("gbrain-enabled");
+    if (await useInDrafts.isEnabled()) {
+      await enabled.click();
+    }
+    await expect(useInDrafts).toBeDisabled();
+    await enabled.click();
+    await expect(useInDrafts).toBeEnabled();
+    const mailbox = page.locator('input[data-testid^="gbrain-account-"]').first();
+    await expect(mailbox).toBeVisible();
+    await expect(mailbox).toBeChecked();
+
+    await page.getByTestId("gbrain-endpoint").fill("https://brain.example-tailnet.ts.net/mcp");
+    await page.getByTestId("gbrain-token").fill("test-token");
+    const testConnection = page.getByRole("button", { name: "Test connection" });
+    await expect(testConnection).toBeEnabled();
+    await testConnection.click();
+    await expect(
+      page.getByText("Connected. The read-only recall tool is available."),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Save settings" }).click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+    await settingsPanel.getByRole("button", { name: "General", exact: true }).click();
+    await contextTab.click();
+    await gbrainTab.click();
+    await expect(page.getByTestId("gbrain-endpoint")).toHaveValue(
+      "https://brain.example-tailnet.ts.net/mcp",
+    );
+    await expect(page.getByTestId("gbrain-token")).toHaveValue("test-token");
+    await expect(page.locator('input[data-testid^="gbrain-account-"]').first()).toBeChecked();
   });
 
   test("can navigate to Queue tab", async () => {
@@ -430,9 +488,8 @@ test.describe("Settings Panel - Persistence", () => {
 });
 
 // These tests use ONLY the opencode + backgroundAgentProvider config keys.
-// The electron-store config is shared across parallel e2e workers (only the
-// DB is per-worker), and tests/e2e/hostler-settings.spec.ts owns the hostler
-// key — touching it here would let fullyParallel workers race on it.
+// tests/e2e/hostler-settings.spec.ts owns the hostler key, and each parallel
+// worker has an isolated electron-store file so their staged saves cannot race.
 test.describe("Settings Panel - Agent Drafter runtime picker", () => {
   test.describe.configure({ mode: "serial" });
   let electronApp: ElectronApplication;

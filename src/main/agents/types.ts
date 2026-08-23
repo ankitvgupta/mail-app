@@ -19,6 +19,15 @@ import type {
   AgentContext,
 } from "../../shared/agent-types";
 
+const AGENT_PROVIDERS_WITHOUT_KNOWLEDGE_CONTEXT = new Set(["openclaw-agent"]);
+
+/** Whether at least one selected provider can safely consume recalled GBrain context. */
+export function canAnyAgentProviderUseKnowledgeContext(providerIds: readonly string[]): boolean {
+  return providerIds.some(
+    (providerId) => !AGENT_PROVIDERS_WITHOUT_KNOWLEDGE_CONTEXT.has(providerId),
+  );
+}
+
 // --- Provider Interface ---
 
 export interface AgentProvider {
