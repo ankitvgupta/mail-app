@@ -1463,7 +1463,7 @@ function InlineReply({
     const shouldArchive =
       sendAndArchive && (composeMode === "reply" || composeMode === "reply-all");
 
-    if (!form.canSend || form.isSending) return;
+    if (!form.canSend || form.isSending || isRefining) return;
 
     if (undoSendDelaySeconds > 0) {
       const optimisticId = `pending-${Date.now()}`;
@@ -1562,14 +1562,15 @@ function InlineReply({
         .archiveThread(threadId, accountId)
         .catch((err: unknown) => console.error("[Send & Archive] archive failed", err));
     }
-  }, [form, composeMode, replyToEmailId, replyInfo, isForward, onSend, accountId]);
+  }, [form, composeMode, replyToEmailId, replyInfo, isForward, onSend, accountId, isRefining]);
 
   const handleScheduleSend = useCallback(
     async (scheduledAt: number) => {
+      if (isRefining) return;
       const success = await form.scheduleSend(scheduledAt);
       if (success) onCancel();
     },
-    [form.scheduleSend, onCancel],
+    [form.scheduleSend, onCancel, isRefining],
   );
 
   const [showQuotedContent, setShowQuotedContent] = useState(false);
@@ -1694,6 +1695,7 @@ function InlineReply({
             )}
             <button
               onClick={onDiscardDraft ?? onCancel}
+              disabled={isRefining}
               className="text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 p-1"
               data-testid="inline-compose-close"
               title="Discard draft"
@@ -1793,6 +1795,7 @@ function InlineReply({
         <ComposeEditor
           initialContent={editorInitialContent}
           onChange={handleEditorChange}
+          disabled={isRefining}
           placeholder={isForward ? "Add a message..." : "Write your reply..."}
           autoFocus={!isForward && !restoredDraft?.skipAutoFocus}
           onAddToCc={handleMentionAddToCc}
@@ -2022,7 +2025,7 @@ function InlineReply({
             onPickFiles={form.handlePickFiles}
             isSending={form.isSending}
             isScheduling={form.isScheduling}
-            canSend={form.canSend}
+            canSend={form.canSend && !isRefining}
             activeSignatureId={form.activeSignatureId}
             onSignatureChange={form.setActiveSignatureId}
             availableSignatures={form.availableSignatures}

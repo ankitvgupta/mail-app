@@ -418,9 +418,10 @@ export const DEFAULT_HOSTLER_HARNESS = "opencode";
 
 export const GBrainConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  endpoint: z.string().default(""),
-  token: z.string().default(""),
+  endpoint: z.string().max(2_048).default(""),
+  token: z.string().max(8_192).default(""),
   includeInDrafts: z.boolean().default(true),
+  accountIds: z.array(z.string().min(1).max(512)).max(50).default([]),
 });
 
 export type GBrainConfig = z.infer<typeof GBrainConfigSchema>;
@@ -430,6 +431,7 @@ export const DEFAULT_GBRAIN_CONFIG: GBrainConfig = {
   endpoint: "",
   token: "",
   includeInDrafts: true,
+  accountIds: [],
 };
 
 // Config schema

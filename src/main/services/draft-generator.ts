@@ -12,7 +12,11 @@ import {
   type GeneratedDraftResponse,
   type LlmProvider,
 } from "../../shared/types";
-import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/prompt-safety";
+import {
+  UNTRUSTED_DATA_INSTRUCTION,
+  UNTRUSTED_KNOWLEDGE_INSTRUCTION,
+  wrapUntrustedEmail,
+} from "../../shared/prompt-safety";
 import { createLogger } from "./logger";
 
 const log = createLogger("draft-generator");
@@ -148,7 +152,12 @@ Do NOT propose specific times yourself - defer to the assistant.`;
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",
@@ -212,7 +221,12 @@ ${profile.summary}
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",
@@ -274,7 +288,12 @@ ${profile.summary}
       {
         model: this.model,
         max_tokens: 1024,
-        system: [{ type: "text", text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}` }],
+        system: [
+          {
+            type: "text",
+            text: `${this.prompt}\n\n${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+          },
+        ],
         messages: [
           {
             role: "user",

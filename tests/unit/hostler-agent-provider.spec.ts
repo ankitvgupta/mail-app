@@ -455,6 +455,7 @@ test("follow-up reuses the live session: no create, no preamble, resumed cursor"
           accountId: "acc1",
           userEmail: "user@example.com",
           providerConversationIds: { hostler: "ses_prior" },
+          knowledgeContext: "<personal_knowledge>Relevant Acme history.</personal_knowledge>",
         },
       }),
     ),
@@ -462,8 +463,11 @@ test("follow-up reuses the live session: no create, no preamble, resumed cursor"
 
   expect(created).toBe(0);
   expect(result).toEqual({ state: "completed", providerTaskId: "ses_prior" });
-  // Follow-ups send the raw prompt — context is already in-session.
-  expect(session.sentMessages).toEqual(["Now archive it"]);
+  // Stable context is already in-session, while freshly recalled GBrain
+  // knowledge must travel with each follow-up turn.
+  expect(session.sentMessages).toHaveLength(1);
+  expect(session.sentMessages[0]).toContain("Relevant Acme history.");
+  expect(session.sentMessages[0]).toContain("User request: Now archive it");
   // Stream resumes past the log the sidebar already rendered.
   expect(session.streamOptions?.since).toBe(7);
 });
@@ -1323,6 +1327,7 @@ test("buildFirstMessage includes context, memory, and replayed history", () => {
       currentEmailId: "e42",
       currentThreadId: "t7",
       memoryContext: "## Memory\nPrefers short replies.",
+      knowledgeContext: "<personal_knowledge>Met at Acme Summit.</personal_knowledge>",
       conversationHistory: "User: hi\nAssistant: hello",
     },
     "Reply to this",
@@ -1332,6 +1337,7 @@ test("buildFirstMessage includes context, memory, and replayed history", () => {
   expect(message).toContain("Currently viewing email ID: e42");
   expect(message).toContain("Current thread ID: t7");
   expect(message).toContain("Prefers short replies.");
+  expect(message).toContain("Met at Acme Summit.");
   expect(message).toContain("## Previous conversation");
   expect(message).toContain("User request: Reply to this");
 });

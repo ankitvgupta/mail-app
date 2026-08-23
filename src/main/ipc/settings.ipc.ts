@@ -23,6 +23,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_HOSTLER_HARNESS,
   DEFAULT_GBRAIN_CONFIG,
+  GBrainConfigSchema,
   type GBrainConfig,
 } from "../../shared/types";
 import { resetAnalyzer } from "./analysis.ipc";
@@ -46,9 +47,9 @@ import { getEnrichmentBySender } from "../extensions/enrichment-store";
 import { autoUpdateService } from "../services/auto-updater";
 
 import { existsSync } from "fs";
-import { getDataDir } from "../data-dir";
+import { getConfigStoreName, getDataDir } from "../data-dir";
 import { createLogger } from "../services/logger";
-import { GBrainService } from "../services/gbrain-service";
+import { GBrainService, normalizeGBrainEndpoint } from "../services/gbrain-service";
 
 const log = createLogger("settings-ipc");
 
@@ -68,7 +69,7 @@ let _store: Store<{ config: Config }> | null = null;
 function getStore(): Store<{ config: Config }> {
   if (!_store) {
     _store = new Store<{ config: Config }>({
-      name: "exo-config",
+      name: getConfigStoreName(),
       encryptionKey: "exo-encryption-key",
       cwd: getDataDir(),
       defaults: {
@@ -344,8 +345,20 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(
     "settings:test-gbrain",
     async (_, connection: Pick<GBrainConfig, "endpoint" | "token">): Promise<IpcResponse<void>> => {
+      if (process.env.EXO_TEST_MODE === "true" || process.env.EXO_DEMO_MODE === "true") {
+        return { success: true, data: undefined };
+      }
       try {
-        await new GBrainService(connection).testConnection();
+        const parsed = GBrainConfigSchema.pick({ endpoint: true, token: true }).safeParse(
+          connection,
+        );
+        if (!parsed.success || !normalizeGBrainEndpoint(parsed.data.endpoint)) {
+          return {
+            success: false,
+            error: "Enter a local loopback or HTTPS Tailscale Serve GBrain endpoint.",
+          };
+        }
+        await new GBrainService(parsed.data).testConnection();
         return { success: true, data: undefined };
       } catch (error) {
         return {
@@ -371,6 +384,9 @@ export function registerSettingsIpc(): void {
   // Update config
   ipcMain.handle("settings:set", async (_, config: Partial<Config>): Promise<IpcResponse<void>> => {
     try {
+      if (!config || typeof config !== "object" || Array.isArray(config)) {
+        return { success: false, error: "Invalid settings payload." };
+      }
       const currentConfig = getConfig();
       // Shallow-merge most fields. Deep-merge ollamaCloud so partial updates from
       // different UIs don't clobber each other — ExtensionsTab writes
@@ -445,12 +461,31 @@ export function registerSettingsIpc(): void {
         if (incoming === undefined) {
           newConfig = { ...newConfig, gbrain: undefined };
         } else {
+          if (typeof incoming !== "object" || Array.isArray(incoming)) {
+            return { success: false, error: "Invalid GBrain settings." };
+          }
+          const parsed = GBrainConfigSchema.safeParse({
+            ...DEFAULT_GBRAIN_CONFIG,
+            ...existing,
+            ...incoming,
+          });
+          if (!parsed.success) {
+            return { success: false, error: "Invalid GBrain settings." };
+          }
+          const endpoint = parsed.data.endpoint.trim()
+            ? normalizeGBrainEndpoint(parsed.data.endpoint)
+            : null;
+          if (parsed.data.endpoint.trim() && !endpoint) {
+            return {
+              success: false,
+              error: "GBrain requires a local loopback or HTTPS Tailscale Serve endpoint.",
+            };
+          }
           newConfig = {
             ...newConfig,
             gbrain: {
-              ...DEFAULT_GBRAIN_CONFIG,
-              ...existing,
-              ...incoming,
+              ...parsed.data,
+              endpoint: endpoint?.toString() ?? "",
             },
           };
         }

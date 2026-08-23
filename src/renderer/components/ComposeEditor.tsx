@@ -35,6 +35,7 @@ interface ComposeEditorProps {
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
+  disabled?: boolean;
   /** Called when a contact is selected via @mention or +mention in the body */
   onAddToCc?: (email: string, name?: string) => void;
   /** Recipient email for snippet variable resolution */
@@ -679,6 +680,7 @@ export function ComposeEditor({
   placeholder = "Write your message...",
   className = "",
   autoFocus = false,
+  disabled = false,
   onAddToCc,
   recipientEmail,
 }: ComposeEditorProps) {
@@ -751,6 +753,7 @@ export function ComposeEditor({
       }),
     ],
     content: initialContent,
+    editable: !disabled,
     autofocus: autoFocus ? "end" : false,
     editorProps: {
       attributes: {
@@ -833,9 +836,14 @@ export function ComposeEditor({
     }
   }, [initialContent, editor]);
 
+  useEffect(() => {
+    editor?.setEditable(!disabled);
+  }, [disabled, editor]);
+
   return (
     <div
-      className={`border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 ${className}`}
+      aria-disabled={disabled}
+      className={`border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 ${disabled ? "opacity-60 pointer-events-none" : ""} ${className}`}
     >
       <Toolbar editor={editor} />
       <div className="dark:text-gray-100">

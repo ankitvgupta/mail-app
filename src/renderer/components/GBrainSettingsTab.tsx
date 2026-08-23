@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DEFAULT_GBRAIN_CONFIG,
@@ -6,6 +6,7 @@ import {
   type GBrainConfig,
   type IpcResponse,
 } from "../../shared/types";
+import { useAppStore } from "../store";
 
 type ConnectionState =
   | { status: "idle" }
@@ -15,32 +16,79 @@ type ConnectionState =
 
 export function GBrainSettingsTab() {
   const queryClient = useQueryClient();
+  const accounts = useAppStore((state) => state.accounts);
   const [settings, setSettings] = useState<GBrainConfig>(DEFAULT_GBRAIN_CONFIG);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [connection, setConnection] = useState<ConnectionState>({ status: "idle" });
+  const settingsInitialized = useRef(false);
+  const connectionRequest = useRef(0);
 
-  const { data: config, isLoading } = useQuery({
+  const {
+    data: config,
+    isLoading,
+    isError: configLoadError,
+    isFetchedAfterMount: configFresh,
+  } = useQuery({
     queryKey: ["general-config"],
     queryFn: async () => {
       const result = (await window.api.settings.get()) as IpcResponse<Config>;
       if (!result.success) throw new Error(result.error);
       return result.data;
     },
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
-    if (!config) return;
+    if (!config || !configFresh || configLoadError || settingsInitialized.current) return;
+    settingsInitialized.current = true;
     setSettings({ ...DEFAULT_GBRAIN_CONFIG, ...config.gbrain });
-  }, [config]);
+  }, [config, configFresh, configLoadError]);
+
+  useEffect(
+    () => () => {
+      connectionRequest.current += 1;
+    },
+    [],
+  );
 
   const update = <Key extends keyof GBrainConfig>(key: Key, value: GBrainConfig[Key]) => {
+    connectionRequest.current += 1;
     setSettings((current) => ({ ...current, [key]: value }));
     setSaveMessage("");
     setConnection({ status: "idle" });
   };
 
+  const updateEnabled = (enabled: boolean) => {
+    connectionRequest.current += 1;
+    setSettings((current) => ({
+      ...current,
+      enabled,
+      accountIds:
+        enabled && current.accountIds.length === 0
+          ? accounts.filter((account) => account.isConnected).map((account) => account.id)
+          : current.accountIds,
+    }));
+    setSaveMessage("");
+    setConnection({ status: "idle" });
+  };
+
+  const updateAccount = (accountId: string, included: boolean) => {
+    const next = included
+      ? [...new Set([...settings.accountIds, accountId])]
+      : settings.accountIds.filter((id) => id !== accountId);
+    update("accountIds", next);
+  };
+
   const save = async () => {
+    if (!configFresh || configLoadError) {
+      setSaveMessage("Could not load current settings. Close and reopen Settings to retry.");
+      return;
+    }
+    if (settings.enabled && settings.accountIds.length === 0) {
+      setSaveMessage("Select at least one mailbox before enabling GBrain.");
+      return;
+    }
     setIsSaving(true);
     setSaveMessage("");
     try {
@@ -59,18 +107,21 @@ export function GBrainSettingsTab() {
   };
 
   const testConnection = async () => {
+    const requestId = ++connectionRequest.current;
     setConnection({ status: "testing" });
     try {
       const result = (await window.api.settings.testGBrain(
         settings.endpoint,
         settings.token,
       )) as IpcResponse<void>;
+      if (requestId !== connectionRequest.current) return;
       setConnection(
         result.success
           ? { status: "success", message: "Connected. The read-only recall tool is available." }
           : { status: "error", message: result.error },
       );
     } catch (error) {
+      if (requestId !== connectionRequest.current) return;
       setConnection({
         status: "error",
         message: error instanceof Error ? error.message : "Could not connect to GBrain",
@@ -78,7 +129,7 @@ export function GBrainSettingsTab() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || (!configFresh && !configLoadError)) {
     return (
       <div className="max-w-3xl mx-auto" aria-busy="true">
         <p className="text-sm text-gray-500 dark:text-gray-400">Loading personal brain settings…</p>
@@ -89,12 +140,12 @@ export function GBrainSettingsTab() {
   return (
     <div className="max-w-3xl mx-auto space-y-6" data-testid="gbrain-settings">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
           Personal Brain
-        </h2>
+        </h3>
         <p className="text-gray-600 dark:text-gray-400">
           Let Exo retrieve relevant people, company, project, and conversation context from your
-          GBrain before it writes. GBrain stays separate from Exo&apos;s learned AI Memories.
+          GBrain before it writes. GBrain stays separate from Exo Memories.
         </p>
       </div>
 
@@ -108,9 +159,10 @@ export function GBrainSettingsTab() {
           </div>
           <Switch
             checked={settings.enabled}
-            onChange={(checked) => update("enabled", checked)}
+            onChange={updateEnabled}
             label="Enable GBrain"
             testId="gbrain-enabled"
+            disabled={isSaving}
           />
         </div>
       </section>
@@ -158,6 +210,7 @@ export function GBrainSettingsTab() {
             spellCheck={false}
             value={settings.endpoint}
             onChange={(event) => update("endpoint", event.target.value)}
+            disabled={isSaving}
             placeholder="http://127.0.0.1:3131/mcp"
             className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
@@ -181,6 +234,7 @@ export function GBrainSettingsTab() {
             spellCheck={false}
             value={settings.token}
             onChange={(event) => update("token", event.target.value)}
+            disabled={isSaving}
             placeholder="Read-only GBrain token"
             className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
@@ -199,15 +253,51 @@ export function GBrainSettingsTab() {
             onChange={(checked) => update("includeInDrafts", checked)}
             label="Use GBrain in AI drafts"
             testId="gbrain-use-in-drafts"
-            disabled={!settings.enabled}
+            disabled={!settings.enabled || isSaving}
           />
         </div>
 
+        <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Mailboxes</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Choose which mailboxes may send bounded email context to this GBrain. Newly connected
+            mailboxes stay off until you select them here.
+          </p>
+          {accounts.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {accounts.map((account) => (
+                <label
+                  key={account.id}
+                  className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"
+                >
+                  <input
+                    type="checkbox"
+                    checked={settings.accountIds.includes(account.id)}
+                    onChange={(event) => updateAccount(account.id, event.target.checked)}
+                    disabled={!settings.enabled || isSaving || !account.isConnected}
+                    data-testid={`gbrain-account-${account.id}`}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>{account.displayName ? `${account.displayName} — ` : ""}</span>
+                  <span>{account.email}</span>
+                  {!account.isConnected && (
+                    <span className="text-xs text-gray-400 dark:text-gray-500">Disconnected</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+              Connect an email account before enabling GBrain recall for drafting.
+            </p>
+          )}
+        </div>
+
         <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 p-3 text-xs text-blue-800 dark:text-blue-300">
-          Each request sends GBrain the relevant sender or recipients, subject, and a short message
-          excerpt or instruction. Exo includes matching snippets in its normal AI writing request,
-          keeps at most six, limits their size, and marks them as reference data that must never be
-          followed as instructions.
+          For a selected mailbox, each request sends GBrain the mailbox identity, relevant sender or
+          recipients, subject, and a short current-message excerpt or instruction. Exo includes
+          matching snippets in its normal AI writing request, keeps at most six, limits their size,
+          and marks them as reference data that must never be followed as instructions.
         </div>
 
         {connection.status === "success" && (
@@ -220,12 +310,23 @@ export function GBrainSettingsTab() {
             {connection.message}
           </p>
         )}
+        {configLoadError && (
+          <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+            Could not load current settings. Saving is disabled so stored GBrain credentials are not
+            overwritten. Close and reopen Settings to retry.
+          </p>
+        )}
 
         <div className="flex items-center gap-3 pt-1">
           <button
             type="button"
             onClick={save}
-            disabled={isSaving}
+            disabled={
+              isSaving ||
+              !configFresh ||
+              configLoadError ||
+              (settings.enabled && settings.accountIds.length === 0)
+            }
             className="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 transition-colors"
           >
             {isSaving ? "Saving…" : "Save settings"}
@@ -234,7 +335,10 @@ export function GBrainSettingsTab() {
             type="button"
             onClick={testConnection}
             disabled={
-              connection.status === "testing" || !settings.endpoint.trim() || !settings.token.trim()
+              connection.status === "testing" ||
+              !settings.endpoint.trim() ||
+              !settings.token.trim() ||
+              isSaving
             }
             className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
           >

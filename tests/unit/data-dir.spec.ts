@@ -21,16 +21,44 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * trigger it.
  */
 test("data-dir.ts has no prod-to-dev copy bootstrap", () => {
-  const source = readFileSync(
-    join(__dirname, "..", "..", "src", "main", "data-dir.ts"),
-    "utf8",
-  );
+  const source = readFileSync(join(__dirname, "..", "..", "src", "main", "data-dir.ts"), "utf8");
 
   expect(source).not.toContain("initDevData");
   expect(source).not.toContain("BOOTSTRAP_MARKER");
   expect(source).not.toContain("copyFileSync");
   expect(source).not.toContain("mkdirSync");
   expect(source).not.toContain("writeFileSync");
+});
+
+test.describe("test config store isolation", () => {
+  const savedNodeEnv = process.env.NODE_ENV;
+  const savedWorkerIndex = process.env.TEST_WORKER_INDEX;
+
+  test.afterEach(() => {
+    if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedNodeEnv;
+    if (savedWorkerIndex === undefined) delete process.env.TEST_WORKER_INDEX;
+    else process.env.TEST_WORKER_INDEX = savedWorkerIndex;
+  });
+
+  test("uses one config filename per numeric Playwright worker", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.TEST_WORKER_INDEX = "7";
+    const { getConfigStoreName } = await import("../../src/main/data-dir");
+    expect(getConfigStoreName()).toBe("exo-config-w7");
+  });
+
+  test("keeps the production filename outside a validated test worker", async () => {
+    const { getConfigStoreName } = await import("../../src/main/data-dir");
+
+    process.env.NODE_ENV = "production";
+    process.env.TEST_WORKER_INDEX = "7";
+    expect(getConfigStoreName()).toBe("exo-config");
+
+    process.env.NODE_ENV = "test";
+    process.env.TEST_WORKER_INDEX = "../../other";
+    expect(getConfigStoreName()).toBe("exo-config");
+  });
 });
 
 /**

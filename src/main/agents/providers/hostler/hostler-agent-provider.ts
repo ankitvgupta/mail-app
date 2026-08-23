@@ -33,6 +33,7 @@ import {
 import { createHostlerEventMapper } from "./event-mapper";
 import { createLogger } from "../../../services/logger";
 import { DEFAULT_HOSTLER_HARNESS } from "../../../../shared/types";
+import { buildKnowledgeUserPrompt } from "../../../../shared/prompt-safety";
 
 const log = createLogger("hostler-agent");
 
@@ -304,7 +305,15 @@ export class HostlerAgentProvider implements AgentProvider {
         session = await client.sessions.get(priorId).catch(() => null);
         if (session) {
           const info = await session.info().catch(() => null);
-          if (!info || info.status === "terminated") session = null;
+          const pinnedToCurrentAgent =
+            info?.agentId === agentRef.id && info.agentVersion === agentRef.version;
+          if (!info || info.status === "terminated" || !pinnedToCurrentAgent) {
+            if (info && info.status !== "terminated" && !pinnedToCurrentAgent) {
+              await session.terminate().catch(() => undefined);
+              this.sessionSeq.delete(session.id);
+            }
+            session = null;
+          }
         }
         if (session) this.clearIdleTimer(priorId);
       }
@@ -349,7 +358,9 @@ export class HostlerAgentProvider implements AgentProvider {
       // --- Send the message. A reused session can die between the info()
       // check and send() (Hostler sessions are ephemeral across platform
       // restarts) — recreate once and resend rather than failing the run. ---
-      const message = isNewSession ? buildFirstMessage(context, prompt) : prompt;
+      const message = isNewSession
+        ? buildFirstMessage(context, prompt)
+        : buildFollowUpMessage(context, prompt);
       try {
         await session.send(message, { signal: abortController.signal });
       } catch (err) {
@@ -821,6 +832,10 @@ export function buildFirstMessage(context: AgentContext, prompt: string): string
     lines.push("", context.memoryContext);
   }
 
+  if (context.knowledgeContext) {
+    lines.push("", context.knowledgeContext);
+  }
+
   // Present when this conversation started on a session that has since been
   // reaped/terminated — replay the transcript so the fresh sandbox has the
   // history the user can still see in the sidebar.
@@ -830,6 +845,15 @@ export function buildFirstMessage(context: AgentContext, prompt: string): string
 
   lines.push("", "---", "", `User request: ${prompt}`);
   return lines.join("\n");
+}
+
+/**
+ * Follow-up turns reuse the session's stable account and thread context, but
+ * GBrain recall is refreshed for every user request and must travel with the
+ * current turn rather than being left behind in the first session message.
+ */
+export function buildFollowUpMessage(context: AgentContext, prompt: string): string {
+  return buildKnowledgeUserPrompt(prompt, context.knowledgeContext);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -131,9 +131,9 @@ clean_test_dbs() {
     # Note: this intentionally resets any settings configured via `npm run
     # dev` in this worktree — .dev-data/ is disposable test-account state,
     # and e2e suites need a deterministic default config.
-    if [ -f "$dev_data/exo-config.json" ]; then
-        rm -f "$dev_data/exo-config.json" && cleaned=$((cleaned + 1))
-    fi
+    for f in "$dev_data/exo-config.json" "$dev_data"/exo-config-w*.json; do
+        [ -f "$f" ] && rm -f "$f" && cleaned=$((cleaned + 1))
+    done
     if [ $cleaned -gt 0 ]; then
         log_info "Cleaned up $cleaned test artifact file(s)"
     fi

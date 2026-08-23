@@ -2,6 +2,7 @@ import { ipcMain } from "electron";
 import { createMessage } from "../services/llm-service";
 import {
   getEmail,
+  getAccounts,
   deleteDraft,
   deleteAgentTrace,
   clearInboxPendingDraftsAndTraces,
@@ -17,11 +18,18 @@ import { getConfig, getFeatureModelConfig, getBackgroundAgentProviderId } from "
 import { buildMemoryContext } from "../services/memory-context";
 import { prefetchService } from "../services/prefetch-service";
 import { agentCoordinator } from "../agents/agent-coordinator";
-import { UNTRUSTED_DATA_INSTRUCTION, wrapUntrustedEmail } from "../../shared/prompt-safety";
+import {
+  UNTRUSTED_DATA_INSTRUCTION,
+  UNTRUSTED_KNOWLEDGE_INSTRUCTION,
+  wrapUntrustedEmail,
+} from "../../shared/prompt-safety";
 import type { IpcResponse } from "../../shared/types";
 import { DEMO_INBOX_EMAILS } from "../demo/fake-inbox";
 import { createLogger } from "../services/logger";
-import { buildGBrainEmailQuery, fetchGBrainKnowledgeContext } from "../services/gbrain-service";
+import {
+  buildGBrainRefinementQuery,
+  fetchGBrainKnowledgeContext,
+} from "../services/gbrain-service";
 
 const log = createLogger("drafts-ipc");
 
@@ -107,8 +115,20 @@ export function registerDraftsIpc(): void {
         if (!email) {
           return { success: false, error: "Email not found" };
         }
+        if (!email.draft) {
+          return { success: false, error: "This draft no longer exists." };
+        }
+
+        // Capture the persisted draft revision before either optional recall or
+        // the LLM yields control. A send, discard, thread switch, or external
+        // save during refinement changes one of these values.
+        const expectedDraftBody = email.draft.body;
+        const expectedDraftCreatedAt = email.draft.createdAt;
 
         const config = getConfig();
+        const accountId = email.accountId || "default";
+        const mailbox =
+          getAccounts().find((account) => account.id === accountId)?.email ?? accountId;
 
         // Include relevant memories so refinement doesn't contradict saved preferences
         const senderMatch = email.from.match(/<([^>]+)>/) ?? email.from.match(/([^\s<]+@[^\s>]+)/);
@@ -119,11 +139,13 @@ export function registerDraftsIpc(): void {
         const memorySection = memoryContext ? `\n${memoryContext}\n---\n` : "";
         const knowledgeContext = await fetchGBrainKnowledgeContext(
           config.gbrain,
-          buildGBrainEmailQuery({
-            from: email.from,
-            subject: email.subject,
-            body: email.body ?? "",
-          }),
+          buildGBrainRefinementQuery(
+            { from: email.from, subject: email.subject, body: email.body ?? "" },
+            currentDraft,
+            critique,
+            mailbox,
+          ),
+          accountId,
         );
         const knowledgeSection = knowledgeContext ? `\n${knowledgeContext}\n---\n` : "";
 
@@ -132,7 +154,12 @@ export function registerDraftsIpc(): void {
           {
             model: refinementConfig.model,
             max_tokens: 1024,
-            system: [{ type: "text", text: UNTRUSTED_DATA_INSTRUCTION }],
+            system: [
+              {
+                type: "text",
+                text: `${UNTRUSTED_DATA_INSTRUCTION}\n\n${UNTRUSTED_KNOWLEDGE_INSTRUCTION}`,
+              },
+            ],
             messages: [
               {
                 role: "user",
@@ -171,6 +198,19 @@ FORMATTING: Write plain text paragraphs separated by blank lines. Do NOT use HTM
         }
 
         const refinedDraft = textBlock.text.trim();
+
+        const latestDraft = getEmail(emailId)?.draft;
+        if (
+          !latestDraft ||
+          latestDraft.body !== expectedDraftBody ||
+          latestDraft.createdAt !== expectedDraftCreatedAt
+        ) {
+          return {
+            success: false,
+            error:
+              "The draft changed while refinement was running. Review the current draft and try again.",
+          };
+        }
 
         // Save refined draft and sync to Gmail
         saveDraftAndSync(emailId, refinedDraft, "edited");

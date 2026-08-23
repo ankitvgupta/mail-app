@@ -271,6 +271,7 @@ export function AgentCommandPalette({ isOpen, onClose }: AgentCommandPaletteProp
       const fallbackAccountId =
         currentAccountId ??
         selectedEmail?.accountId ??
+        selectedDraft?.accountId ??
         accounts.find((a) => a.isPrimary)?.id ??
         accounts[0]?.id ??
         "";

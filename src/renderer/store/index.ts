@@ -35,6 +35,7 @@ export type SettingsTab =
   | "prompts"
   | "style"
   | "assistant"
+  | "context"
   | "memories"
   | "gbrain"
   | "queue"

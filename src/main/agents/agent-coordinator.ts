@@ -193,6 +193,8 @@ export class AgentCoordinator {
       const emailMatch = primaryRecipient.match(/<([^>]+)>/);
       const primaryEmail = emailMatch ? emailMatch[1] : primaryRecipient;
       const gmailClient = getEmailSyncService().getClientForAccount(accountId);
+      const mailbox =
+        db.getAccounts().find((account) => account.id === accountId)?.email ?? accountId;
       const [styleContext, knowledgeContext] = await Promise.all([
         primaryEmail
           ? buildStyleContext(
@@ -204,7 +206,8 @@ export class AgentCoordinator {
           : Promise.resolve(""),
         fetchGBrainKnowledgeContext(
           config.gbrain,
-          buildGBrainComposeQuery(to, subject, instructions),
+          buildGBrainComposeQuery(to, subject, instructions, mailbox),
+          accountId,
         ),
       ]);
 
@@ -378,13 +381,16 @@ export class AgentCoordinator {
     prompt: string,
     context: AgentContext,
     modelOverride?: string,
+    preflightSignal?: AbortSignal,
   ): Promise<void> {
+    if (preflightSignal?.aborted) return;
     const worker = this.ensureWorker();
 
     // Wait for worker init (including private provider config enrichment) to complete
     if (this.workerReady) {
       await this.workerReady;
     }
+    if (preflightSignal?.aborted) return;
 
     // Build memory context in the main process (where DB access is available)
     // and attach it to context so the worker can include it in the system prompt

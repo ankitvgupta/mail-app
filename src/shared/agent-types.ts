@@ -83,6 +83,8 @@ export interface AgentContext {
   memoryContext?: string;
   /** Bounded, read-only GBrain recall context for the current interactive request. */
   knowledgeContext?: string;
+  /** Raw current user request used for retrieval when the provider prompt also contains history. */
+  knowledgeQuery?: string;
 }
 
 // --- Store-level types ---
