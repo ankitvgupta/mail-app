@@ -60,6 +60,7 @@ import type {
 import type { ScopedAgentEvent, AgentProviderConfig } from "../shared/agent-types";
 import { mergeAndThreadSearchResults } from "./utils/searchResults";
 import { getRecentEmailIds } from "./utils/recent-email-ids";
+import { createSearchResponseGuard } from "./utils/search-response-guard";
 import type { EmailThread } from "./store";
 
 function decodeHtmlEntities(text: string): string {
@@ -270,7 +271,9 @@ function SearchResultsView() {
 
   const retryRemoteSearch = useCallback(() => {
     if (!activeSearchQuery || !currentAccountId || !isOnline) return;
+    if (useAppStore.getState().remoteSearchStatus === "searching") return;
     const query = activeSearchQuery;
+    const isCurrentSearch = createSearchResponseGuard();
 
     // Reset to searching state
     useAppStore.getState().setRemoteSearching();
@@ -283,7 +286,7 @@ function SearchResultsView() {
           data?: { emails: DashboardEmail[]; nextPageToken?: string };
           error?: string;
         }) => {
-          if (useAppStore.getState().activeSearchQuery !== query) return;
+          if (!isCurrentSearch()) return;
           if (response.success && response.data) {
             setRemoteSearchResults(response.data.emails);
             useAppStore
@@ -295,7 +298,7 @@ function SearchResultsView() {
         },
       )
       .catch((err: Error) => {
-        if (useAppStore.getState().activeSearchQuery !== query) return;
+        if (!isCurrentSearch()) return;
         setRemoteSearchError(err.message || "Gmail search failed");
       });
   }, [activeSearchQuery, currentAccountId, isOnline, setRemoteSearchResults, setRemoteSearchError]);
@@ -310,6 +313,7 @@ function SearchResultsView() {
       currentAccountId: accountId,
     } = state;
     if (!query || !pageToken || loading || !accountId) return;
+    const isCurrentSearch = createSearchResponseGuard();
     useAppStore.getState().setRemoteSearchLoadingMore(true);
 
     window.api.emails
@@ -320,7 +324,7 @@ function SearchResultsView() {
           data?: { emails: DashboardEmail[]; nextPageToken?: string };
           error?: string;
         }) => {
-          if (useAppStore.getState().activeSearchQuery !== query) return;
+          if (!isCurrentSearch()) return;
           if (response.success && response.data) {
             useAppStore.getState().appendRemoteSearchResults(response.data.emails);
             useAppStore
@@ -333,7 +337,7 @@ function SearchResultsView() {
         // Silently fail load-more — user can scroll down again to retry
       })
       .finally(() => {
-        useAppStore.getState().setRemoteSearchLoadingMore(false);
+        if (isCurrentSearch()) useAppStore.getState().setRemoteSearchLoadingMore(false);
       });
   }, []);
 

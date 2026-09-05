@@ -235,6 +235,7 @@ interface AppState {
 
   // Search state
   isSearchOpen: boolean;
+  activeSearchRequestId: number;
   activeSearchQuery: string | null;
   activeSearchResults: DashboardEmail[];
   remoteSearchResults: DashboardEmail[];
@@ -558,6 +559,33 @@ interface AppState {
   markThreadAsRead: (threadId: string) => void;
 }
 
+function clearedSearchState(
+  requestId: number,
+): Pick<
+  AppState,
+  | "activeSearchRequestId"
+  | "activeSearchQuery"
+  | "activeSearchResults"
+  | "isSearchOpen"
+  | "remoteSearchResults"
+  | "remoteSearchStatus"
+  | "remoteSearchError"
+  | "remoteSearchNextPageToken"
+  | "remoteSearchLoadingMore"
+> {
+  return {
+    activeSearchRequestId: requestId + 1,
+    activeSearchQuery: null,
+    activeSearchResults: [],
+    isSearchOpen: false,
+    remoteSearchResults: [],
+    remoteSearchStatus: "idle",
+    remoteSearchError: null,
+    remoteSearchNextPageToken: null,
+    remoteSearchLoadingMore: false,
+  };
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   emails: [],
   selectedEmailId: null,
@@ -605,6 +633,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Search state
   isSearchOpen: false,
   activeSearchQuery: null,
+  activeSearchRequestId: 0,
   activeSearchResults: [],
   remoteSearchResults: [],
   remoteSearchStatus: "idle",
@@ -886,21 +915,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   // Multi-account actions
   setAccounts: (accounts) =>
-    set({
-      accounts,
-      // Set current to primary or first account if not set. `??` (not `||`)
-      // is critical: `||` treats `null` as falsy, which would silently
-      // overwrite the user's intentional unified ("All Inboxes") selection
-      // every time setAccounts fires — including on re-auth, add account,
-      // and remove account. Only undefined (never-set) should fall through.
-      currentAccountId:
-        get().currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null,
+    set((state) => {
+      // Account initialization restores the persisted selection after loading
+      // the list; until then, use the primary account as the fallback.
+      const currentAccountId =
+        state.currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
+      const scopeChanged =
+        currentAccountId !== state.currentAccountId ||
+        (currentAccountId === null &&
+          (accounts.length !== state.accounts.length ||
+            accounts.some((account) => !state.accounts.some((a) => a.id === account.id))));
+      return {
+        ...(scopeChanged ? clearedSearchState(state.activeSearchRequestId) : {}),
+        accounts,
+        currentAccountId,
+      };
     }),
   addAccount: (account) =>
     set((state) => {
       const exists = state.accounts.some((a) => a.id === account.id);
       if (exists) return state;
-      return { accounts: [...state.accounts, account] };
+      return {
+        ...(state.currentAccountId === null ? clearedSearchState(state.activeSearchRequestId) : {}),
+        accounts: [...state.accounts, account],
+      };
     }),
   removeAccount: (accountId) =>
     set((state) => {
@@ -977,6 +1015,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         (i) => i.sendOptions.accountId !== accountId,
       );
       return {
+        ...(state.currentAccountId === accountId || state.currentAccountId === null
+          ? clearedSearchState(state.activeSearchRequestId)
+          : {}),
         accounts: newAccounts,
         currentAccountId: newCurrentId,
         syncStatuses: newSyncStatuses,
@@ -1028,6 +1069,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     // until the next user action. The multi-select set across accounts is
     // also meaningless — every batch action is scoped per-account.
     set({
+      ...(get().currentAccountId !== accountId
+        ? clearedSearchState(get().activeSearchRequestId)
+        : {}),
       currentAccountId: accountId,
       selectedEmailId: null,
       selectedThreadId: null,
@@ -1094,7 +1138,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   openSearch: () => set({ isSearchOpen: true }),
   closeSearch: () => set({ isSearchOpen: false }),
   setActiveSearch: (query, results) =>
-    set({
+    set((state) => ({
+      activeSearchRequestId: state.activeSearchRequestId + 1,
       activeSearchQuery: query,
       activeSearchResults: results,
       isSearchOpen: false,
@@ -1103,18 +1148,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       remoteSearchError: null,
       remoteSearchNextPageToken: null,
       remoteSearchLoadingMore: false,
-    }),
+    })),
   setActiveSearchResults: (results) => set({ activeSearchResults: results }),
-  clearActiveSearch: () =>
-    set({
-      activeSearchQuery: null,
-      activeSearchResults: [],
-      remoteSearchResults: [],
-      remoteSearchStatus: "idle",
-      remoteSearchError: null,
-      remoteSearchNextPageToken: null,
-      remoteSearchLoadingMore: false,
-    }),
+  clearActiveSearch: () => set((state) => clearedSearchState(state.activeSearchRequestId)),
   removeSearchResult: (emailId) =>
     set((state) => ({
       activeSearchResults: state.activeSearchResults.filter((e) => e.id !== emailId),
@@ -1141,6 +1177,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       remoteSearchStatus: "searching",
       remoteSearchResults: [],
       remoteSearchError: null,
+      remoteSearchNextPageToken: null,
+      remoteSearchLoadingMore: false,
     }),
   setRemoteSearchNextPageToken: (token) => set({ remoteSearchNextPageToken: token }),
   appendRemoteSearchResults: (results) =>

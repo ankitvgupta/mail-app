@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useAppStore } from "../store";
 import type { IpcResponse, DashboardEmail } from "../../shared/types";
 import { trackEvent } from "../services/posthog";
+import { createSearchResponseGuard } from "../utils/search-response-guard";
 
 type SearchResult = {
   id: string;
@@ -172,6 +173,7 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
     // Close modal immediately and show SearchResultsView with loading state.
     // setActiveSearch closes the modal, sets remoteSearchStatus: 'searching'.
     setActiveSearch(query, []);
+    const isCurrentSearch = createSearchResponseGuard();
 
     // Fire local search across every target account in parallel
     Promise.all(
@@ -186,7 +188,7 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
       ),
     )
       .then((perAccount) => {
-        if (useAppStore.getState().activeSearchQuery !== query) return;
+        if (!isCurrentSearch()) return;
         useAppStore.getState().setActiveSearchResults(mergeUniqueById(perAccount));
       })
       .catch((error: unknown) => {
@@ -233,7 +235,7 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
         ),
       )
         .then((results) => {
-          if (useAppStore.getState().activeSearchQuery !== query) return;
+          if (!isCurrentSearch()) return;
           const successes = results.filter((r): r is Extract<RemoteOutcome, { ok: true }> => r.ok);
           if (successes.length === 0) {
             const firstError = results.find(
@@ -250,7 +252,7 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
             );
         })
         .catch((error: unknown) => {
-          if (useAppStore.getState().activeSearchQuery !== query) return;
+          if (!isCurrentSearch()) return;
           setRemoteSearchError(error instanceof Error ? error.message : "Gmail search failed");
         });
     } else {
