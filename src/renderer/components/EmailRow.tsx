@@ -35,9 +35,12 @@ const densityStyles = {
   },
 } as const;
 
+const rowDateFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+
 // Format relative date compactly
 function formatRelativeDate(dateStr: string): string {
   const date = new Date(dateStr);
+  if (!Number.isFinite(date.getTime())) return "";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -48,7 +51,7 @@ function formatRelativeDate(dateStr: string): string {
   if (diffMins < 60) return `${diffMins}m`;
   if (diffHours < 24) return `${diffHours}h`;
   if (diffDays < 7) return `${diffDays}d`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return rowDateFormatter.format(date);
 }
 
 function formatSnoozeCountdown(snoozeUntil: number): string {
@@ -61,7 +64,7 @@ function formatSnoozeCountdown(snoozeUntil: number): string {
   if (diffMins < 60) return `${diffMins}m`;
   if (diffHours < 24) return `${diffHours}h`;
   if (diffDays < 7) return `${diffDays}d`;
-  return new Date(snoozeUntil).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return rowDateFormatter.format(snoozeUntil);
 }
 
 // Extract sender name from email address
@@ -72,6 +75,7 @@ function extractSenderName(from: string): string {
 
 // Decode HTML entities (Gmail API returns snippets/subjects with entities like &#39;)
 function decodeHtmlEntities(text: string): string {
+  if (!text.includes("&")) return text;
   const textarea = document.createElement("textarea");
   textarea.innerHTML = text;
   return textarea.value;
@@ -145,7 +149,7 @@ export const EmailRow = memo(
         data-selected={isSelected ? "true" : undefined}
         className={`
         w-full ${ds.row} flex items-center text-left
-        border-b border-gray-100 dark:border-gray-700/50 transition-colors group
+        border-b border-gray-100 dark:border-gray-700/50 group
         ${
           isSelected && !isChecked
             ? "bg-blue-600 text-white"

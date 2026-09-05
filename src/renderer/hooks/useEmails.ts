@@ -8,8 +8,8 @@ export function useEmails() {
     setLoading: _setLoading,
     setError: _setError,
     updateEmail,
-    currentAccountId,
-  } = useAppStore();
+  } = useAppStore.getState();
+  const currentAccountId = useAppStore((state) => state.currentAccountId);
 
   const fetchEmailsQuery = useQuery({
     queryKey: ["emails", currentAccountId],

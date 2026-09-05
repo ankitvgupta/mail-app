@@ -1,5 +1,6 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp , closeApp } from "./launch-helpers";
+import { launchElectronApp, closeApp, waitForEmailListReady } from "./launch-helpers";
+import type { useAppStore } from "../../src/renderer/store";
 
 /** Best-effort screenshot */
 async function screenshot(page: Page, name: string) {
@@ -28,6 +29,15 @@ test.describe("Arrow Key Navigation", () => {
     const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
     electronApp = result.app;
     page = result.page;
+    await waitForEmailListReady(page);
+    // Worker databases can contain persisted compose drafts from earlier tests.
+    // This suite exercises email-row navigation; a draft would correctly be
+    // selected first but has no data-thread-id for getSelectedThreadId to read.
+    await page.evaluate(() => {
+      (window as unknown as { __ZUSTAND_STORE__: typeof useAppStore }).__ZUSTAND_STORE__
+        .getState()
+        .setLocalDrafts([]);
+    });
 
     page.on("console", (msg) => {
       if (msg.type() === "error") {

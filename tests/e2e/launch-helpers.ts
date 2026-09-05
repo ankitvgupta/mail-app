@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = path.join(__dirname, "../../tests/screenshots");
 
 export type LaunchOptions = {
+  extraArgs?: string[];
   workerIndex?: number;
   extraEnv?: Record<string, string>;
   waitAfterLoad?: number;
@@ -21,7 +22,7 @@ export type LaunchOptions = {
 export async function launchElectronApp(
   options: LaunchOptions = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  const { workerIndex = 0, extraEnv = {}, waitAfterLoad } = options;
+  const { workerIndex = 0, extraEnv = {}, extraArgs = [], waitAfterLoad } = options;
 
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -37,7 +38,7 @@ export async function launchElectronApp(
   delete env.EXO_USER_DATA_DIR;
 
   const app = await electron.launch({
-    args: [path.join(__dirname, "../../out/main/index.js")],
+    args: [path.join(__dirname, "../../out/main/index.js"), ...extraArgs],
     env,
   });
 

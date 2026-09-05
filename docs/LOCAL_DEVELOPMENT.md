@@ -9,6 +9,9 @@ repo; it lives only in your local `.env*` files.
 
 ## Quick start (fresh worktree)
 
+Use **Node.js 22.12 or newer**. Electron 41's installer requires this minimum;
+check `node --version` before installing dependencies.
+
 ```bash
 # 1. Install dependencies
 npm install

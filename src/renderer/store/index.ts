@@ -1,4 +1,6 @@
-import { useMemo } from "react";
+import { replaceEqualDeep } from "@tanstack/react-query";
+import { shareEmail, updateEmails, reconcileAccountEmails } from "../utils/email-updates";
+import { memoizeLast } from "../utils/memoize-last";
 import { create } from "zustand";
 import { clearPendingLabelUpdates } from "../hooks-bridge";
 import { applyOptimisticReads, addOptimisticReads } from "../optimistic-reads";
@@ -233,6 +235,7 @@ interface AppState {
 
   // Search state
   isSearchOpen: boolean;
+  activeSearchRequestId: number;
   activeSearchQuery: string | null;
   activeSearchResults: DashboardEmail[];
   remoteSearchResults: DashboardEmail[];
@@ -556,6 +559,33 @@ interface AppState {
   markThreadAsRead: (threadId: string) => void;
 }
 
+function clearedSearchState(
+  requestId: number,
+): Pick<
+  AppState,
+  | "activeSearchRequestId"
+  | "activeSearchQuery"
+  | "activeSearchResults"
+  | "isSearchOpen"
+  | "remoteSearchResults"
+  | "remoteSearchStatus"
+  | "remoteSearchError"
+  | "remoteSearchNextPageToken"
+  | "remoteSearchLoadingMore"
+> {
+  return {
+    activeSearchRequestId: requestId + 1,
+    activeSearchQuery: null,
+    activeSearchResults: [],
+    isSearchOpen: false,
+    remoteSearchResults: [],
+    remoteSearchStatus: "idle",
+    remoteSearchError: null,
+    remoteSearchNextPageToken: null,
+    remoteSearchLoadingMore: false,
+  };
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   emails: [],
   selectedEmailId: null,
@@ -603,6 +633,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Search state
   isSearchOpen: false,
   activeSearchQuery: null,
+  activeSearchRequestId: 0,
   activeSearchResults: [],
   remoteSearchResults: [],
   remoteSearchStatus: "idle",
@@ -716,7 +747,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         for (const e of arr) pendingIds.add(e.id);
       }
       const filtered = pendingIds.size > 0 ? emails.filter((e) => !pendingIds.has(e.id)) : emails;
-      const patched = applyOptimisticReads(filtered);
+      const previous = new Map(state.emails.map((email) => [email.id, email]));
+      const patched = replaceEqualDeep(
+        state.emails,
+        applyOptimisticReads(filtered).map((email) => {
+          const existing = previous.get(email.id);
+          return existing ? shareEmail(existing, email) : email;
+        }),
+      );
       if (
         state.viewMode === "full" &&
         state.selectedEmailId &&
@@ -730,7 +768,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           selectedThreadId: null,
         };
       }
-      return { emails: patched };
+      return patched === state.emails ? state : { emails: patched };
     });
   },
   replaceEmailsForAccount: (accountId, emails) => {
@@ -748,8 +786,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         for (const e of arr) pendingIds.add(e.id);
       }
       const incoming = pendingIds.size > 0 ? emails.filter((e) => !pendingIds.has(e.id)) : emails;
-      const other = state.emails.filter((e) => e.accountId !== accountId);
-      const patched = applyOptimisticReads([...other, ...incoming]);
+      const patched = reconcileAccountEmails(
+        state.emails,
+        accountId,
+        applyOptimisticReads(incoming),
+      );
       if (
         state.viewMode === "full" &&
         state.selectedEmailId &&
@@ -763,13 +804,13 @@ export const useAppStore = create<AppState>((set, get) => ({
           selectedThreadId: null,
         };
       }
-      return { emails: patched };
+      return patched === state.emails ? state : { emails: patched };
     });
   },
   replaceSentEmailsForAccount: (accountId, emails) =>
     set((state) => {
-      const other = state.sentEmails.filter((e) => e.accountId !== accountId);
-      return { sentEmails: [...other, ...emails] };
+      const sentEmails = reconcileAccountEmails(state.sentEmails, accountId, emails);
+      return sentEmails === state.sentEmails ? state : { sentEmails };
     }),
   addEmails: (newEmails) => {
     set((state) => {
@@ -787,33 +828,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const filteredNewEmails =
         pendingIds.size > 0 ? newEmails.filter((e) => !pendingIds.has(e.id)) : newEmails;
-      // Merge new emails: add new ones, update existing ones (e.g. triage adds analysis)
-      const existingMap = new Map(state.emails.map((e) => [e.id, e]));
-      const toAdd: DashboardEmail[] = [];
-      for (const email of filteredNewEmails) {
-        const existing = existingMap.get(email.id);
-        if (existing) {
-          // Merge: prefer new values but preserve fields that may have been
-          // loaded separately (body from prefetch, analysis/draft from triage)
-          existingMap.set(email.id, {
-            ...existing,
-            ...email,
-            body: email.body || existing.body,
-            analysis: email.analysis ?? existing.analysis,
-            draft: email.draft ?? existing.draft,
-          });
-        } else {
-          toAdd.push(email);
-        }
+      const remaining = new Map(filteredNewEmails.map((email) => [email.id, email]));
+      let result = state.emails;
+      for (let i = 0; i < state.emails.length; i++) {
+        const existing = state.emails[i];
+        const email = remaining.get(existing.id);
+        if (!email) continue;
+        remaining.delete(existing.id);
+        const next = shareEmail(existing, {
+          ...existing,
+          ...email,
+          ...(existing.analysis && !email.analysis ? { analysis: existing.analysis } : {}),
+          ...(existing.draft && !email.draft ? { draft: existing.draft } : {}),
+        });
+        if (next === existing) continue;
+        if (result === state.emails) result = state.emails.slice();
+        result[i] = next;
       }
-      let result: DashboardEmail[];
-      if (toAdd.length === 0 && filteredNewEmails.every((e) => existingMap.has(e.id))) {
-        // Only updates, rebuild from map
-        result = state.emails.map((e) => existingMap.get(e.id) ?? e);
-      } else {
-        result = [...state.emails.map((e) => existingMap.get(e.id) ?? e), ...toAdd];
-      }
-      return { emails: applyOptimisticReads(result) };
+      if (remaining.size > 0) result = [...result, ...remaining.values()];
+      result = applyOptimisticReads(result);
+      return result === state.emails ? state : { emails: result };
     });
   },
   removeEmails: (emailIds) =>
@@ -871,29 +905,42 @@ export const useAppStore = create<AppState>((set, get) => ({
       highlightMemoryIds: show ? get().highlightMemoryIds : [],
     }),
   updateEmail: (id, updates) =>
-    set((state) => ({
-      emails: state.emails.map((email) => (email.id === id ? { ...email, ...updates } : email)),
-      sentEmails: state.sentEmails.map((email) =>
-        email.id === id ? { ...email, ...updates } : email,
-      ),
-    })),
+    set((state) => {
+      const changes = new Map([[id, updates]]);
+      const emails = updateEmails(state.emails, changes);
+      const sentEmails = updateEmails(state.sentEmails, changes);
+      return emails === state.emails && sentEmails === state.sentEmails
+        ? state
+        : { emails, sentEmails };
+    }),
   // Multi-account actions
   setAccounts: (accounts) =>
-    set({
-      accounts,
-      // Set current to primary or first account if not set. `??` (not `||`)
-      // is critical: `||` treats `null` as falsy, which would silently
-      // overwrite the user's intentional unified ("All Inboxes") selection
-      // every time setAccounts fires — including on re-auth, add account,
-      // and remove account. Only undefined (never-set) should fall through.
-      currentAccountId:
-        get().currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null,
+    set((state) => {
+      // Only choose a default on the first account load. Once accounts exist,
+      // null is the user's All Inboxes selection and must survive metadata refreshes.
+      const currentAccountId =
+        state.accounts.length === 0 && state.currentAccountId === null
+          ? (accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null)
+          : state.currentAccountId;
+      const scopeChanged =
+        currentAccountId !== state.currentAccountId ||
+        (currentAccountId === null &&
+          (accounts.length !== state.accounts.length ||
+            accounts.some((account) => !state.accounts.some((a) => a.id === account.id))));
+      return {
+        ...(scopeChanged ? clearedSearchState(state.activeSearchRequestId) : {}),
+        accounts,
+        currentAccountId,
+      };
     }),
   addAccount: (account) =>
     set((state) => {
       const exists = state.accounts.some((a) => a.id === account.id);
       if (exists) return state;
-      return { accounts: [...state.accounts, account] };
+      return {
+        ...(state.currentAccountId === null ? clearedSearchState(state.activeSearchRequestId) : {}),
+        accounts: [...state.accounts, account],
+      };
     }),
   removeAccount: (accountId) =>
     set((state) => {
@@ -970,6 +1017,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         (i) => i.sendOptions.accountId !== accountId,
       );
       return {
+        ...(state.currentAccountId === accountId || state.currentAccountId === null
+          ? clearedSearchState(state.activeSearchRequestId)
+          : {}),
         accounts: newAccounts,
         currentAccountId: newCurrentId,
         syncStatuses: newSyncStatuses,
@@ -1021,6 +1071,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     // until the next user action. The multi-select set across accounts is
     // also meaningless — every batch action is scoped per-account.
     set({
+      ...(get().currentAccountId !== accountId
+        ? clearedSearchState(get().activeSearchRequestId)
+        : {}),
       currentAccountId: accountId,
       selectedEmailId: null,
       selectedThreadId: null,
@@ -1087,7 +1140,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   openSearch: () => set({ isSearchOpen: true }),
   closeSearch: () => set({ isSearchOpen: false }),
   setActiveSearch: (query, results) =>
-    set({
+    set((state) => ({
+      activeSearchRequestId: state.activeSearchRequestId + 1,
       activeSearchQuery: query,
       activeSearchResults: results,
       isSearchOpen: false,
@@ -1096,18 +1150,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       remoteSearchError: null,
       remoteSearchNextPageToken: null,
       remoteSearchLoadingMore: false,
-    }),
+    })),
   setActiveSearchResults: (results) => set({ activeSearchResults: results }),
-  clearActiveSearch: () =>
-    set({
-      activeSearchQuery: null,
-      activeSearchResults: [],
-      remoteSearchResults: [],
-      remoteSearchStatus: "idle",
-      remoteSearchError: null,
-      remoteSearchNextPageToken: null,
-      remoteSearchLoadingMore: false,
-    }),
+  clearActiveSearch: () => set((state) => clearedSearchState(state.activeSearchRequestId)),
   removeSearchResult: (emailId) =>
     set((state) => ({
       activeSearchResults: state.activeSearchResults.filter((e) => e.id !== emailId),
@@ -1134,6 +1179,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       remoteSearchStatus: "searching",
       remoteSearchResults: [],
       remoteSearchError: null,
+      remoteSearchNextPageToken: null,
+      remoteSearchLoadingMore: false,
     }),
   setRemoteSearchNextPageToken: (token) => set({ remoteSearchNextPageToken: token }),
   appendRemoteSearchResults: (results) =>
@@ -1911,26 +1958,52 @@ export function groupByThread(
   currentUserEmail?: string,
   userEmailByAccount?: Map<string, string>,
 ): EmailThread[] {
-  const threadMap = new Map<string, DashboardEmail[]>();
+  return groupThreads(emails, currentUserEmail, userEmailByAccount);
+}
 
-  // Pre-compute timestamps once to avoid creating Date objects in every sort
-  // comparison. With 1000+ emails and multiple sorts, this avoids tens of
-  // thousands of redundant Date allocations per groupByThread call.
-  //
-  // CRITICAL: substitute `0` for any email whose `date` doesn't parse to a
-  // finite number. `new Date("").getTime()` (or any malformed date string)
-  // returns `NaN`, and a single NaN in the sort comparator
-  // `(a, b) => b.latestReceivedDate - a.latestReceivedDate` returns NaN — which
-  // JavaScript's Array.sort treats as "no preference," partially scrambling
-  // the surrounding region of the array. In unified ("All Inboxes") view a
-  // single email with a bad date string would push the freshest threads
-  // arbitrarily far down the list. Substituting 0 sends bad-date threads to
-  // the end of a DESC sort, where they cause no further damage.
-  const dateCache = new Map<string, number>();
-  for (const email of emails) {
-    const ts = new Date(email.date).getTime();
-    dateCache.set(email.id, Number.isFinite(ts) ? ts : 0);
-  }
+interface CachedThread {
+  input: DashboardEmail[];
+  thread: EmailThread;
+}
+
+// Each consumer owns a cache of only its current threads. Changed messages
+// rebuild their conversation; removed conversations are released on the next call.
+function createThreadGrouper() {
+  let previous = new Map<string, CachedThread>();
+  let previousUser: string | undefined;
+  let previousUsers: Map<string, string> | undefined;
+  return (
+    emails: DashboardEmail[],
+    currentUserEmail?: string,
+    userEmailByAccount?: Map<string, string>,
+  ) => {
+    if (previousUser !== currentUserEmail || previousUsers !== userEmailByAccount) previous.clear();
+    previousUser = currentUserEmail;
+    previousUsers = userEmailByAccount;
+    const next = new Map<string, CachedThread>();
+    const threads = groupThreads(emails, currentUserEmail, userEmailByAccount, { previous, next });
+    previous = next;
+    return threads;
+  };
+}
+
+const emailTimestamp = new WeakMap<DashboardEmail, { date: string; ts: number }>();
+function getEmailTimestamp(email: DashboardEmail): number {
+  const cached = emailTimestamp.get(email);
+  if (cached?.date === email.date) return cached.ts;
+  const parsed = Date.parse(email.date);
+  const ts = Number.isFinite(parsed) ? parsed : 0;
+  emailTimestamp.set(email, { date: email.date, ts });
+  return ts;
+}
+
+function groupThreads(
+  emails: DashboardEmail[],
+  currentUserEmail?: string,
+  userEmailByAccount?: Map<string, string>,
+  cache?: { previous: Map<string, CachedThread>; next: Map<string, CachedThread> },
+): EmailThread[] {
+  const threadMap = new Map<string, DashboardEmail[]>();
 
   // Group emails by threadId
   for (const email of emails) {
@@ -1942,8 +2015,19 @@ export function groupByThread(
   // Convert to threads, sorted by date within each thread
   const threads: EmailThread[] = [];
   for (const [threadId, threadEmails] of threadMap) {
+    const cached = cache?.previous.get(threadId);
+    if (
+      cached &&
+      cached.input.length === threadEmails.length &&
+      threadEmails.every((email, index) => email === cached.input[index])
+    ) {
+      threads.push(cached.thread);
+      cache!.next.set(threadId, cached);
+      continue;
+    }
+    const input = cache ? threadEmails.slice() : undefined;
     // Sort emails within thread by date (oldest first for conversation view)
-    threadEmails.sort((a, b) => dateCache.get(a.id)! - dateCache.get(b.id)!);
+    threadEmails.sort((a, b) => getEmailTimestamp(a) - getEmailTimestamp(b));
 
     const latestEmail = threadEmails[threadEmails.length - 1];
 
@@ -1987,7 +2071,7 @@ export function groupByThread(
       emails: threadEmails,
       latestEmail,
       latestReceivedEmail,
-      latestReceivedDate: dateCache.get(latestReceivedEmail.id)!,
+      latestReceivedDate: getEmailTimestamp(latestReceivedEmail),
       // Use oldest email's subject. Strip Re: if the oldest email is a reply
       // (has inReplyTo, or subject starts with Re: for pre-backfill data).
       // Fwd: is never stripped — a forward IS the original from the recipient's view.
@@ -2002,6 +2086,7 @@ export function groupByThread(
       userReplied,
       displaySender,
     });
+    if (cache && input) cache.next.set(threadId, { input, thread: threads[threads.length - 1] });
   }
 
   // Sort threads by latest RECEIVED email date (most recent first)
@@ -2017,52 +2102,113 @@ const REPLY_GRACE_PERIOD_MS = 3 * 60 * 1000; // 3 minutes
 
 // Selector for threaded and filtered emails
 export function useThreadedEmails() {
-  const emails = useAppStore((state) => state.emails);
-  const currentAccountId = useAppStore((state) => state.currentAccountId);
-  const accounts = useAppStore((state) => state.accounts);
-  const snoozedThreadIds = useAppStore((state) => state.snoozedThreadIds);
-  const recentlyRepliedThreadIds = useAppStore((state) => state.recentlyRepliedThreadIds);
-
-  // Get current user's email for sent detection (single-account fast path).
-  const currentAccount = accounts.find((a) => a.id === currentAccountId);
-  const currentUserEmail = currentAccount?.email;
-
-  // Per-account map for sent detection in unified ("All Inboxes") mode:
-  // currentUserEmail above is undefined when currentAccountId is null, so
-  // sent-detection-by-from-field would fail for emails without the SENT
-  // label. The map lets isSentEmail resolve "Me" per email's accountId.
-  const userEmailByAccount = useMemo(
-    () => new Map(accounts.map((a) => [a.id, a.email])),
-    [accounts],
+  return useAppStore((state) =>
+    selectThreadedEmails(
+      state.emails,
+      state.currentAccountId,
+      state.accounts,
+      state.snoozedThreadIds,
+      state.recentlyRepliedThreadIds,
+    ),
   );
+}
 
-  // Memoize the expensive thread computation. j/k navigation only changes
-  // selectedEmailId — none of these deps change, so the memo short-circuits
-  // and avoids re-running groupByThread + categorization on every keypress.
-  return useMemo(() => {
-    // Filter emails by current account (if set) AND by INBOX label
-    // Include emails without labelIds for backwards compatibility (older synced emails)
-    // Exclude emails that explicitly have labelIds but don't include INBOX (archived/sent-only)
-    const isInboxEmail = (e: DashboardEmail) => {
-      if (!e.labelIds) return true; // No labels = legacy inbox email
-      return e.labelIds.includes("INBOX");
-    };
+const selectAccountEmails = memoizeLast(
+  (accounts: AppState["accounts"]) =>
+    new Map(accounts.map((account) => [account.id, account.email])),
+);
+const EMPTY_EMAILS: DashboardEmail[] = [];
 
-    const accountEmails = currentAccountId
-      ? emails.filter(
-          (e) =>
-            e.accountId === currentAccountId && (isInboxEmail(e) || e.labelIds?.includes("SENT")),
-        )
-      : emails.filter((e) => isInboxEmail(e) || e.labelIds?.includes("SENT"));
+// Retain only the current partition of the inbox. Unchanged accounts keep
+// their array identity even when sync updates another account's messages.
+let previousInboxPartitions = new Map<string | null, DashboardEmail[]>();
+const partitionInbox = memoizeLast((emails: DashboardEmail[]) => {
+  const partitions = new Map<string | null, DashboardEmail[]>([[null, []]]);
+  for (const email of emails) {
+    if (email.labelIds && !email.labelIds.includes("INBOX") && !email.labelIds.includes("SENT"))
+      continue;
+    partitions.get(null)!.push(email);
+    if (email.accountId) {
+      let accountEmails = partitions.get(email.accountId);
+      if (!accountEmails) {
+        accountEmails = [];
+        partitions.set(email.accountId, accountEmails);
+      }
+      accountEmails.push(email);
+    }
+  }
+  for (const [accountId, next] of partitions) {
+    const previous = previousInboxPartitions.get(accountId);
+    if (
+      previous &&
+      previous.length === next.length &&
+      next.every((email, i) => email === previous[i])
+    ) {
+      partitions.set(accountId, previous);
+    }
+  }
+  previousInboxPartitions = partitions;
+  return partitions;
+});
 
-    // Group into threads first, passing current user email for sent detection
-    // Then filter out sent-only threads — threads where no email has the INBOX label.
-    // Sent emails within inbox threads are kept (for conversation context), but threads
-    // consisting solely of sent emails belong in the Sent view, not the inbox.
-    const allThreads = groupByThread(accountEmails, currentUserEmail, userEmailByAccount).filter(
-      (t) => t.emails.some((e) => !e.labelIds || e.labelIds.includes("INBOX")),
-    );
+function createInboxThreadSelector() {
+  const group = createThreadGrouper();
+  return memoizeLast(
+    (emails: DashboardEmail[], userEmail: string | undefined, users: Map<string, string>) =>
+      group(emails, userEmail, users).filter((thread) =>
+        thread.emails.some((email) => !email.labelIds || email.labelIds.includes("INBOX")),
+      ),
+  );
+}
+const inboxSelectors = new Map<string | null, ReturnType<typeof createInboxThreadSelector>>();
 
+function selectInboxThreads(
+  emails: DashboardEmail[],
+  accountId: string | null,
+  accounts: Account[],
+) {
+  const partitions = partitionInbox(emails);
+  // Account removal / clearing the inbox must also release cached bodies.
+  for (const key of inboxSelectors.keys()) {
+    if (!partitions.get(key)?.length) inboxSelectors.delete(key);
+  }
+  let select = inboxSelectors.get(accountId);
+  if (!select) {
+    select = createInboxThreadSelector();
+    inboxSelectors.set(accountId, select);
+  }
+  const users = selectAccountEmails(accounts);
+  return select(
+    partitions.get(accountId) ?? EMPTY_EMAILS,
+    accountId ? users.get(accountId) : undefined,
+    users,
+  );
+}
+
+// Multiple mounted consumers (list, tabs, keyboard navigation, detail) need
+// identical threads. A component-local useMemo repeated the full grouping
+// for each consumer on every email update. Retain only the current inputs.
+export const selectThreadedEmails = memoizeLast(
+  (
+    emails: AppState["emails"],
+    currentAccountId: AppState["currentAccountId"],
+    accounts: AppState["accounts"],
+    snoozedThreadIds: AppState["snoozedThreadIds"],
+    recentlyRepliedThreadIds: AppState["recentlyRepliedThreadIds"],
+  ) =>
+    categorizeThreads(
+      selectInboxThreads(emails, currentAccountId, accounts),
+      snoozedThreadIds,
+      recentlyRepliedThreadIds,
+    ),
+);
+
+const categorizeThreads = memoizeLast(
+  (
+    allThreads: EmailThread[],
+    snoozedThreadIds: AppState["snoozedThreadIds"],
+    recentlyRepliedThreadIds: AppState["recentlyRepliedThreadIds"],
+  ) => {
     // Separate snoozed threads from active threads
     const activeThreads = allThreads.filter((t) => !snoozedThreadIds.has(t.threadId));
     const snoozed = allThreads.filter((t) => snoozedThreadIds.has(t.threadId));
@@ -2110,15 +2256,8 @@ export function useThreadedEmails() {
       snoozed,
       snoozedCount: snoozed.length,
     };
-  }, [
-    emails,
-    currentAccountId,
-    currentUserEmail,
-    userEmailByAccount,
-    snoozedThreadIds,
-    recentlyRepliedThreadIds,
-  ]);
-}
+  },
+);
 
 // Local thin wrapper around the shared threadMatchesSplit util so the rest
 // of this file can keep passing EmailThread objects around without exposing
@@ -2141,7 +2280,31 @@ export function useSplitFilteredThreads() {
   const unsnoozedReturnTimes = useAppStore((state) => state.unsnoozedReturnTimes);
   const sentEmails = useAppStore((state) => state.sentEmails);
 
-  return useMemo(() => {
+  return selectSplitFilteredThreads(
+    baseResult,
+    allSplits,
+    currentAccountId,
+    accounts,
+    currentSplitId,
+    archiveReadyThreadIds,
+    recentlyUnsnoozedThreadIds,
+    unsnoozedReturnTimes,
+    sentEmails,
+  );
+}
+
+export const selectSplitFilteredThreads = memoizeLast(
+  (
+    baseResult: ReturnType<typeof selectThreadedEmails>,
+    allSplits: AppState["splits"],
+    currentAccountId: AppState["currentAccountId"],
+    accounts: AppState["accounts"],
+    currentSplitId: AppState["currentSplitId"],
+    archiveReadyThreadIds: AppState["archiveReadyThreadIds"],
+    recentlyUnsnoozedThreadIds: AppState["recentlyUnsnoozedThreadIds"],
+    unsnoozedReturnTimes: AppState["unsnoozedReturnTimes"],
+    sentEmails: AppState["sentEmails"],
+  ) => {
     // Filter splits for current account. In unified mode (null) we consider
     // every account's splits — threadMatchesSplit enforces the per-account
     // scope so an exclusive split from one account won't hide threads from
@@ -2335,18 +2498,8 @@ export function useSplitFilteredThreads() {
       snoozed: baseResult.snoozed,
       snoozedCount: baseResult.snoozedCount,
     };
-  }, [
-    baseResult,
-    allSplits,
-    currentAccountId,
-    accounts,
-    currentSplitId,
-    archiveReadyThreadIds,
-    recentlyUnsnoozedThreadIds,
-    unsnoozedReturnTimes,
-    sentEmails,
-  ]);
-}
+  },
+);
 
 // Legacy selector for backwards compatibility
 export function useFilteredEmails() {

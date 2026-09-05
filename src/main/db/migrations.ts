@@ -11,6 +11,7 @@
 import type BetterSqlite3 from "better-sqlite3";
 import { createLogger } from "../services/logger";
 import { stripLargeDataUris, DATA_URI_STRIP_THRESHOLD } from "../../shared/body-sanitizer";
+import { FTS5_TRIGGERS } from "./schema";
 
 const log = createLogger("db-migrations");
 
@@ -435,6 +436,22 @@ export const NUMBERED_MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_emails_all_light
           ON emails(account_id, thread_id, message_id, in_reply_to, date, label_ids, id);
       `);
+    },
+  },
+  {
+    version: 9,
+    name: "index_inbox_and_avoid_reindexing_label_changes",
+    up: (db) => {
+      const emailsExist = db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'emails'").get();
+      if (!emailsExist) return;
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_emails_inbox ON emails(account_id, thread_id)
+        WHERE label_ids IS NULL OR instr(label_ids, '"INBOX"') > 0`);
+      const ftsExists = db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'emails_fts'").get();
+      if (ftsExists) {
+        // Existing installations retain the old trigger until explicitly replaced.
+        db.exec("DROP TRIGGER IF EXISTS emails_fts_update");
+        db.exec(FTS5_TRIGGERS);
+      }
     },
   },
 ];

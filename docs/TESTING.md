@@ -15,6 +15,8 @@ All tests use [Playwright Test](https://playwright.dev/) as the test runner (not
 
 ## Running Tests
 
+For measurements against large synthetic mailboxes using the production database and Electron UI, see [the performance audit](./PERFORMANCE_AUDIT.md). Run `npm run perf:audit -- 10000 50000` with the native SQLite addon built for system Node; no Gmail or AI credentials are needed.
+
 ```bash
 npm test                    # All tests (unit + e2e + integration)
 npm run test:unit           # Unit tests only

@@ -209,12 +209,14 @@ export function closeDatabase(): void {
     log.error({ err: e }, "[DB] Error closing database");
   }
   db = null;
+  invalidateThreadMergeCache();
 }
 
 /**
  * Test-only: inject a database instance (e.g. in-memory) for unit tests.
  */
 export function _testSetDatabase(testDb: DatabaseInstance): void {
+  invalidateThreadMergeCache();
   db = testDb;
 }
 
@@ -267,7 +269,7 @@ export function sanitizeFtsQuery(query: string): string {
         return token;
       }
       // If token has FTS5 special chars, quote it
-      if (/[*"():^{}+\-]/.test(token)) {
+      if (/[^\p{L}\p{N}_]/u.test(token)) {
         // Escape internal double quotes
         return `"${token.replace(/"/g, '""')}"`;
       }
@@ -295,9 +297,19 @@ export function saveEmail(email: Email, accountId: string = "default"): void {
   // synchronous main-process scan into a multi-second freeze (see migration 8).
   const body = stripLargeDataUris(email.body);
   const bodyText = stripHtmlForSearch(body);
+  // Preserve rowid: REPLACE can bypass the FTS delete trigger and leave old
+  // postings behind. UPSERT also lets unchanged text skip reindexing.
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO emails (id, account_id, thread_id, subject, from_address, to_address, cc_address, bcc_address, body, body_text, snippet, date, fetched_at, label_ids, attachments, message_id, in_reply_to)
+    INSERT INTO emails (id, account_id, thread_id, subject, from_address, to_address, cc_address, bcc_address, body, body_text, snippet, date, fetched_at, label_ids, attachments, message_id, in_reply_to)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      account_id = excluded.account_id, thread_id = excluded.thread_id,
+      subject = excluded.subject, from_address = excluded.from_address,
+      to_address = excluded.to_address, cc_address = excluded.cc_address,
+      bcc_address = excluded.bcc_address, body = excluded.body, body_text = excluded.body_text,
+      snippet = excluded.snippet, date = excluded.date, fetched_at = excluded.fetched_at,
+      label_ids = excluded.label_ids, attachments = excluded.attachments,
+      message_id = excluded.message_id, in_reply_to = excluded.in_reply_to
   `);
   stmt.run(
     email.id,
@@ -320,9 +332,7 @@ export function saveEmail(email: Email, accountId: string = "default"): void {
   );
 
   // New email may create new In-Reply-To links that change thread merge groups
-  if (email.inReplyTo || email.messageIdHeader) {
-    invalidateThreadMergeCache(accountId);
-  }
+  invalidateThreadMergeCache(accountId);
 }
 
 export function updateEmailLabelIds(emailId: string, labelIds: string[]): void {
@@ -411,8 +421,6 @@ export function getInboxEmails(accountId?: string): DashboardEmail[] {
   const t0 = performance.now();
   const db = getDatabase();
 
-  // Two-query approach: fast inbox query + targeted sent query, merged in JS.
-  // A single query with a subquery for sent-in-inbox-threads is O(n²) in SQLite.
   const selectCols = `
       e.id, e.account_id as accountId, e.thread_id as threadId, e.subject, e.from_address as "from",
       e.to_address as "to", e.cc_address as "cc", e.bcc_address as "bcc", '' as body, e.snippet, e.date, e.label_ids as labelIds, e.attachments as attachmentsJson,
@@ -426,108 +434,57 @@ export function getInboxEmails(accountId?: string): DashboardEmail[] {
 
   const tQuery = performance.now();
 
-  // Query 1: inbox emails (the original fast query)
-  const inboxQuery = accountId
-    ? `SELECT ${selectCols} ${fromJoins} WHERE (e.label_ids IS NULL OR e.label_ids LIKE '%"INBOX"%') AND e.account_id = ?`
-    : `SELECT ${selectCols} ${fromJoins} WHERE (e.label_ids IS NULL OR e.label_ids LIKE '%"INBOX"%')`;
-  const inboxRows = accountId
-    ? (db.prepare(inboxQuery).all(accountId) as Record<string, unknown>[])
-    : (db.prepare(inboxQuery).all() as Record<string, unknown>[]);
-
-  // Lightweight query for ALL emails: only thread/message linkage fields.
-  // Includes archived emails so canonical thread selection is stable across
-  // views (getInboxEmails and getEmailsByThread agree on the same canonical ID).
-  // Always includes account_id so we can scope merge maps per-account.
-  const allLightQuery = accountId
-    ? `SELECT e.id, e.account_id as accountId, e.thread_id as threadId, e.message_id as messageId, e.in_reply_to as inReplyTo, e.date, e.label_ids as labelIds FROM emails e WHERE e.account_id = ?`
-    : `SELECT e.id, e.account_id as accountId, e.thread_id as threadId, e.message_id as messageId, e.in_reply_to as inReplyTo, e.date, e.label_ids as labelIds FROM emails e`;
-  const allLightRows = accountId
-    ? (db.prepare(allLightQuery).all(accountId) as Array<{
-        id: string;
-        accountId: string;
-        threadId: string;
-        messageId: string | null;
-        inReplyTo: string | null;
-        date: string;
-        labelIds: string | null;
-      }>)
-    : (db.prepare(allLightQuery).all() as Array<{
-        id: string;
-        accountId: string;
-        threadId: string;
-        messageId: string | null;
-        inReplyTo: string | null;
-        date: string;
-        labelIds: string | null;
-      }>);
+  // Match the partial inbox index so archived rows never enter this query.
+  const inboxQuery = `SELECT ${selectCols} ${fromJoins}
+    WHERE (e.label_ids IS NULL OR instr(e.label_ids, '"INBOX"') > 0)
+    ${accountId ? "AND e.account_id = ?" : ""}`;
+  const inboxRows = db.prepare(inboxQuery).all(...(accountId ? [accountId] : [])) as Record<
+    string,
+    unknown
+  >[];
   const queryTime = performance.now() - tQuery;
-
-  // Map inbox rows to DashboardEmail
   const tMap = performance.now();
-  const inboxEmails = (inboxRows as Record<string, unknown>[]).map(rowToDashboardEmail);
+  const inboxEmails = inboxRows.map(rowToDashboardEmail);
+  const inboxIds = new Set(inboxEmails.map((email) => email.id));
 
-  // Build per-account merge maps to avoid cross-account thread merging.
-  // When no accountId filter is applied, emails from different accounts may share
-  // Message-IDs; merging them would corrupt threadIds across account boundaries.
-  const lightByAccount = new Map<string, typeof allLightRows>();
-  for (const r of allLightRows) {
-    const acct = r.accountId;
-    const arr = lightByAccount.get(acct);
-    if (arr) arr.push(r);
-    else lightByAccount.set(acct, [r]);
-  }
-  // Per-account merge maps to avoid cross-account threadId collisions
-  const mergeMaps = new Map<string, Map<string, string>>();
-  for (const [acct, accountRows] of lightByAccount) {
-    const mergeInputs: Array<
-      Pick<DashboardEmail, "threadId" | "messageId" | "inReplyTo" | "date">
-    > = accountRows.map((r) => ({
-      threadId: r.threadId,
-      messageId: r.messageId ?? undefined,
-      inReplyTo: r.inReplyTo ?? undefined,
-      date: r.date,
-    }));
-    const accountMergeMap = buildThreadMergeMap(mergeInputs);
-    if (accountMergeMap.size > 0) mergeMaps.set(acct, accountMergeMap);
-  }
-
-  // Apply merge to inbox emails, scoped by account
+  // Resolve canonical IDs once per account, then load sent context only for
+  // visible conversations. The archive-wide linkage index is reused until
+  // messages change; label updates do not change conversation membership.
+  const threadsByAccount = new Map<string, Set<string>>();
   for (const email of inboxEmails) {
-    const acctMap = mergeMaps.get(email.accountId ?? "default");
-    if (!acctMap) continue;
-    const canonical = acctMap.get(email.threadId);
-    if (canonical) email.threadId = canonical;
-  }
-
-  // Now build inbox thread IDs from merged inbox emails
-  const inboxThreadIds = new Set(inboxEmails.map((e) => e.threadId));
-  const inboxIds = new Set(inboxEmails.map((e) => e.id));
-
-  // Find sent emails whose threads (after merging) overlap with inbox threads
-  const sentIdsForInbox: string[] = [];
-  for (const r of allLightRows) {
-    if (!r.labelIds?.includes('"SENT"')) continue;
-    const acctMap = mergeMaps.get(r.accountId);
-    const mergedThreadId = acctMap?.get(r.threadId) ?? r.threadId;
-    if (inboxThreadIds.has(mergedThreadId) && !inboxIds.has(r.id)) {
-      sentIdsForInbox.push(r.id);
+    const acct = email.accountId ?? "default";
+    const index = getThreadMergeIndex(acct);
+    let threads = threadsByAccount.get(acct);
+    if (!threads) {
+      threads = new Set();
+      threadsByAccount.set(acct, threads);
     }
+    if (!threads.has(email.threadId)) {
+      // A merged conversation can have many inbox messages. Expand its Gmail
+      // thread IDs only once, keeping refresh linear in conversation size.
+      for (const thread of index.groups.get(email.threadId) ?? [email.threadId]) {
+        threads.add(thread);
+      }
+    }
+    email.threadId = index.canonical.get(email.threadId) ?? email.threadId;
   }
 
-  // Load full data only for the sent emails we actually need
-  let fullSentEmails: DashboardEmail[] = [];
-  if (sentIdsForInbox.length > 0) {
-    const placeholders = sentIdsForInbox.map(() => "?").join(",");
-    const fullSentRows = db
-      .prepare(`SELECT ${selectCols} ${fromJoins} WHERE e.id IN (${placeholders})`)
-      .all(...sentIdsForInbox) as Record<string, unknown>[];
-    fullSentEmails = fullSentRows.map(rowToDashboardEmail);
-    // Apply thread merge to the full sent emails too, scoped by account
-    for (const email of fullSentEmails) {
-      const acctMap = mergeMaps.get(email.accountId ?? "default");
-      if (!acctMap) continue;
-      const canonical = acctMap.get(email.threadId);
-      if (canonical) email.threadId = canonical;
+  const fullSentEmails: DashboardEmail[] = [];
+  for (const [acct, threads] of threadsByAccount) {
+    // json_each avoids SQLite's bound-variable limit on very large inboxes.
+    const sentRows = db
+      .prepare(
+        `SELECT ${selectCols} ${fromJoins}
+      WHERE e.account_id = ? AND e.thread_id IN (SELECT value FROM json_each(?))
+        AND e.label_ids LIKE '%"SENT"%'`,
+      )
+      .all(acct, JSON.stringify([...threads])) as Record<string, unknown>[];
+    const index = getThreadMergeIndex(acct);
+    for (const row of sentRows) {
+      if (inboxIds.has(String(row.id))) continue;
+      const email = rowToDashboardEmail(row);
+      email.threadId = index.canonical.get(email.threadId) ?? email.threadId;
+      fullSentEmails.push(email);
     }
   }
 
@@ -609,7 +566,10 @@ export function getEmailsByThread(threadId: string, accountId?: string): Dashboa
 /**
  * Get multiple emails by ID in a single query (batch alternative to N individual getEmail() calls)
  */
-export function getEmailsByIds(ids: string[]): DashboardEmail[] {
+export function getEmailsByIds(
+  ids: string[],
+  { includeBody = true }: { includeBody?: boolean } = {},
+): DashboardEmail[] {
   if (ids.length === 0) return [];
   const db = getDatabase();
   const placeholders = ids.map(() => "?").join(",");
@@ -618,7 +578,7 @@ export function getEmailsByIds(ids: string[]): DashboardEmail[] {
       `
     SELECT
       e.id, e.account_id as accountId, e.thread_id as threadId, e.subject, e.from_address as "from",
-      e.to_address as "to", e.cc_address as "cc", e.bcc_address as "bcc", e.body, e.snippet, e.date, e.label_ids as labelIds, e.attachments as attachmentsJson,
+      e.to_address as "to", e.cc_address as "cc", e.bcc_address as "bcc", ${includeBody ? "e.body" : "'' AS body"}, e.snippet, e.date, e.label_ids as labelIds, e.attachments as attachmentsJson,
       e.message_id as messageId, e.in_reply_to as inReplyTo,
       a.needs_reply as needsReply, a.reason, a.analyzed_at as analyzedAt,
       d.draft_body as draftBody, d.gmail_draft_id as gmailDraftId, d.status as draftStatus, d.created_at as draftCreatedAt, d.agent_task_id as agentTaskId, d.to_recipients as draftTo, d.cc as draftCc, d.bcc as draftBcc, d.compose_mode as draftComposeMode
@@ -835,181 +795,58 @@ function applyThreadMerge(emails: DashboardEmail[]): void {
   }
 }
 
-// ── Thread merge group cache ──
-//
-// Instead of running per-thread BFS queries (which took 33s for 555 threads
-// during initial sync), we precompute ALL merge groups in a single O(N) pass
-// using Union-Find over (thread_id, message_id, in_reply_to) triples.
-//
-// The cache maps threadId → canonical threadId[]. Invalidated when emails
-// are inserted (new In-Reply-To links may create new merge groups).
+// Linkage depends on message content, not read/archive/star labels. Keep only
+// merged groups; singleton threads need no cache entry. Both list and detail
+// queries use the same canonical selection and account boundaries.
+type ThreadMergeIndex = {
+  canonical: Map<string, string>;
+  groups: Map<string, string[]>;
+};
+const threadMergeIndexes = new Map<string, ThreadMergeIndex>();
 
-// Per-account merge group cache: accountKey → (threadId → threadId[])
-// accountKey is accountId or "" for all-accounts queries.
-const _mergeGroupsByAccount = new Map<string, Map<string, string[]>>();
+function getThreadMergeIndex(accountId: string): ThreadMergeIndex {
+  const cached = threadMergeIndexes.get(accountId);
+  if (cached) return cached;
 
-function ufFind(parent: Map<string, string>, x: string): string {
-  // Initialize if not yet in the parent map (defensive — callers should
-  // pre-populate, but avoids infinite loops if they don't).
-  if (!parent.has(x)) {
-    parent.set(x, x);
-    return x;
+  const rows = getDatabase()
+    .prepare(
+      `
+    SELECT thread_id AS threadId, message_id AS messageId,
+      in_reply_to AS inReplyTo, date FROM emails WHERE account_id = ?
+  `,
+    )
+    .all(accountId) as Array<Pick<DashboardEmail, "threadId" | "messageId" | "inReplyTo" | "date">>;
+  const canonical = buildThreadMergeMap(rows);
+  const members = new Map<string, string[]>();
+  for (const [threadId, canonicalId] of canonical) {
+    const group = members.get(canonicalId);
+    if (group) group.push(threadId);
+    else members.set(canonicalId, [canonicalId, threadId]);
   }
-  let root = x;
-  while (parent.get(root) !== root) root = parent.get(root)!;
-  // Path compression
-  let cur = x;
-  while (cur !== root) {
-    const next = parent.get(cur)!;
-    parent.set(cur, root);
-    cur = next;
-  }
-  return root;
-}
-
-function ufUnion(
-  parent: Map<string, string>,
-  rank: Map<string, number>,
-  a: string,
-  b: string,
-): void {
-  const ra = ufFind(parent, a);
-  const rb = ufFind(parent, b);
-  if (ra === rb) return;
-  const rankA = rank.get(ra) || 0;
-  const rankB = rank.get(rb) || 0;
-  if (rankA < rankB) {
-    parent.set(ra, rb);
-  } else if (rankA > rankB) {
-    parent.set(rb, ra);
-  } else {
-    parent.set(rb, ra);
-    rank.set(ra, rankA + 1);
-  }
-}
-
-/**
- * Build the thread merge map for all emails of an account in one pass.
- * Uses Union-Find to group threadIds connected by In-Reply-To → Message-ID links.
- */
-function buildMergeCache(accountId?: string): Map<string, string[]> {
-  const t0 = performance.now();
-  const db = getDatabase();
-  const accountKey = accountId || "";
-
-  const accountFilter = accountId ? " WHERE account_id = ?" : "";
-  const params = accountId ? [accountId] : [];
-
-  const rows = db
-    .prepare(`SELECT thread_id, message_id, in_reply_to FROM emails${accountFilter}`)
-    .all(...params) as {
-    thread_id: string;
-    message_id: string | null;
-    in_reply_to: string | null;
-  }[];
-
-  // Build message_id → threadId[] index (a message_id can appear in
-  // multiple threads in rare cases — we need to union all of them)
-  const msgToThread = new Map<string, string[]>();
-  for (const r of rows) {
-    if (r.message_id) {
-      const existing = msgToThread.get(r.message_id);
-      if (existing) {
-        existing.push(r.thread_id);
-      } else {
-        msgToThread.set(r.message_id, [r.thread_id]);
-      }
-    }
-  }
-
-  // Initialize Union-Find with all threadIds
-  const parent = new Map<string, string>();
-  const rank = new Map<string, number>();
-  const allThreadIds = new Set<string>();
-  for (const r of rows) {
-    allThreadIds.add(r.thread_id);
-    if (!parent.has(r.thread_id)) {
-      parent.set(r.thread_id, r.thread_id);
-    }
-  }
-
-  // Union threads connected by In-Reply-To links
-  for (const r of rows) {
-    if (r.in_reply_to) {
-      const replyToThreads = msgToThread.get(r.in_reply_to);
-      if (replyToThreads) {
-        for (const replyToThread of replyToThreads) {
-          if (replyToThread !== r.thread_id) {
-            if (!parent.has(replyToThread)) {
-              parent.set(replyToThread, replyToThread);
-            }
-            ufUnion(parent, rank, r.thread_id, replyToThread);
-          }
-        }
-      }
-    }
-  }
-
-  // Build groups: root → threadId[]
   const groups = new Map<string, string[]>();
-  for (const tid of allThreadIds) {
-    const root = ufFind(parent, tid);
-    let group = groups.get(root);
-    if (!group) {
-      group = [];
-      groups.set(root, group);
-    }
-    group.push(tid);
+  for (const group of members.values()) {
+    for (const threadId of group) groups.set(threadId, group);
   }
-
-  // Build lookup: threadId → group
-  const mergeGroups = new Map<string, string[]>();
-  for (const group of groups.values()) {
-    for (const tid of group) {
-      mergeGroups.set(tid, group);
-    }
-  }
-
-  _mergeGroupsByAccount.set(accountKey, mergeGroups);
-
-  log.info(
-    `[ThreadMerge] Built merge cache for account=${accountKey || "(all)"}: ${rows.length} emails, ` +
-      `${allThreadIds.size} threads, ${groups.size} groups in ${(performance.now() - t0).toFixed(1)}ms`,
-  );
-
-  return mergeGroups;
+  const index = { canonical, groups };
+  threadMergeIndexes.set(accountId, index);
+  return index;
 }
 
-/** Invalidate thread-merge cache. Called when new emails are inserted. */
 export function invalidateThreadMergeCache(accountId?: string): void {
-  if (accountId !== undefined) {
-    _mergeGroupsByAccount.delete(accountId);
-    // Also invalidate the "all-accounts" key since it overlaps
-    _mergeGroupsByAccount.delete("");
-  } else {
-    _mergeGroupsByAccount.clear();
-  }
+  if (accountId !== undefined) threadMergeIndexes.delete(accountId);
+  else threadMergeIndexes.clear();
 }
 
-/**
- * Given a threadId, find all Gmail thread IDs that belong to the same
- * merge group via In-Reply-To links.
- *
- * Uses a precomputed Union-Find cache (built in one O(N) pass over all emails)
- * instead of per-thread BFS queries. The cache is lazily built on first call
- * and invalidated when new emails are inserted.
- *
- * Falls back to returning just [threadId] if the cache doesn't know the thread
- * (e.g. for a brand-new email that arrived after cache was built — the cache
- * will be rebuilt on next invalidation).
- */
 function getMergedGmailThreadIds(threadId: string, accountId?: string): string[] {
-  const accountKey = accountId || "";
-  let groups = _mergeGroupsByAccount.get(accountKey);
-  if (!groups) {
-    groups = buildMergeCache(accountId);
+  if (accountId) return getThreadMergeIndex(accountId).groups.get(threadId) ?? [threadId];
+  const accounts = getDatabase()
+    .prepare("SELECT DISTINCT account_id AS id FROM emails WHERE thread_id = ?")
+    .all(threadId) as Array<{ id: string }>;
+  const threadIds = new Set([threadId]);
+  for (const account of accounts) {
+    for (const id of getThreadMergeIndex(account.id).groups.get(threadId) ?? []) threadIds.add(id);
   }
-  return groups.get(threadId) || [threadId];
+  return [...threadIds];
 }
 
 /**
@@ -1695,6 +1532,7 @@ export function clearStaleData(): void {
     DELETE FROM analyses WHERE email_id IN (SELECT id FROM emails WHERE fetched_at < ${thirtyDaysAgo});
     DELETE FROM emails WHERE fetched_at < ${thirtyDaysAgo};
   `);
+  invalidateThreadMergeCache();
 }
 
 // ============================================
@@ -1807,6 +1645,7 @@ export function removeAccount(accountId: string): void {
     db.prepare("DELETE FROM accounts WHERE id = ?").run(accountId);
   });
   run();
+  invalidateThreadMergeCache(accountId);
 }
 
 export function setPrimaryAccount(accountId: string): void {
@@ -2676,25 +2515,30 @@ export function searchEmails(query: string, options: SearchOptions = {}): Search
   // Parse special operators
   let ftsQuery = query;
   const additionalFilters: string[] = [];
+  const quoteFilter = (value: string): string => {
+    const prefix = value.endsWith("*");
+    const literal = prefix ? value.slice(0, -1) : value;
+    return `"${literal.replace(/"/g, '""')}"${prefix ? "*" : ""}`;
+  };
 
   // Handle from: operator
   const fromMatch = query.match(/from:([^\s]+)/i);
   if (fromMatch) {
-    additionalFilters.push(`from_address:${fromMatch[1]}`);
+    additionalFilters.push(`from_address:${quoteFilter(fromMatch[1])}`);
     ftsQuery = ftsQuery.replace(fromMatch[0], "").trim();
   }
 
   // Handle to: operator
   const toMatch = query.match(/to:([^\s]+)/i);
   if (toMatch) {
-    additionalFilters.push(`to_address:${toMatch[1]}`);
+    additionalFilters.push(`to_address:${quoteFilter(toMatch[1])}`);
     ftsQuery = ftsQuery.replace(toMatch[0], "").trim();
   }
 
   // Handle subject: operator
   const subjectMatch = query.match(/subject:([^\s]+)/i);
   if (subjectMatch) {
-    additionalFilters.push(`subject:${subjectMatch[1]}`);
+    additionalFilters.push(`subject:${quoteFilter(subjectMatch[1])}`);
     ftsQuery = ftsQuery.replace(subjectMatch[0], "").trim();
   }
 
@@ -2720,7 +2564,7 @@ export function searchEmails(query: string, options: SearchOptions = {}): Search
         e.date, e.snippet,
         rank
       FROM emails_fts
-      JOIN emails e ON emails_fts.rowid = e.rowid
+      CROSS JOIN emails e ON emails_fts.rowid = e.rowid
       WHERE emails_fts MATCH ?
     `;
 
@@ -2734,6 +2578,8 @@ export function searchEmails(query: string, options: SearchOptions = {}): Search
     sql += ` ORDER BY rank, e.date DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
+    // Keep FTS as the outer loop. With an account filter SQLite otherwise
+    // chooses the account index and re-runs MATCH for every cached email.
     const stmt = db.prepare(sql);
     rows = stmt.all(...params) as Array<Record<string, unknown>>;
   } catch (error) {

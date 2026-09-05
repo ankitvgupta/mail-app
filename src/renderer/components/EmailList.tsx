@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useCallback, useMemo, useDeferredValue, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { threadQueryOptions } from "../utils/thread-query";
+import React, { useEffect, useRef, useCallback, useMemo, memo } from "react";
 import type { InboxDensity, SnoozedEmail, DashboardEmail, LocalDraft } from "../../shared/types";
 import { useAppStore, useSplitFilteredThreads, type EmailThread } from "../store";
 import { EmailRow } from "./EmailRow";
@@ -47,22 +49,7 @@ function EmailListImpl() {
   const syncProgress = useAppStore((s) => s.syncProgress);
   const inboxDensity = useAppStore((s) => s.inboxDensity);
   const snoozedThreads = useAppStore((s) => s.snoozedThreads);
-  // Defer currentAccountId in EmailList so the deferred threads array (below)
-  // and the local id stay consistent during the 1-frame deferred window. The
-  // store-side id updates synchronously — anything that needs the live id
-  // (incoming IPC event filters, see callbacks below) reads it via
-  // `useAppStore.getState()` at call time. Without this deferral the urgent
-  // re-render fires all account-scoped useEffects + IPC responses while the
-  // 700+ item virtualizer is mid-commit, which is what produced the original
-  // ~9s blocking window.
-  //
-  // Expected tradeoff: `SplitTabs` (and `useKeyboardShortcuts`) read the live
-  // account id + live threads from the store, so for ~1 frame after an account
-  // switch the split tab counts/keyboard-target reflect the new account while
-  // the visible thread list still shows the old. This self-resolves on the
-  // next frame and is the price of unblocking the click.
-  const _liveAccountId = useAppStore((s) => s.currentAccountId);
-  const currentAccountId = useDeferredValue(_liveAccountId);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
   const selectedThreadIds = useAppStore((s) => s.selectedThreadIds);
   const currentSplitId = useAppStore((s) => s.currentSplitId);
   const selectedDraftId = useAppStore((s) => s.selectedDraftId);
@@ -94,12 +81,22 @@ function EmailListImpl() {
     markThreadAsRead,
     openCompose,
   } = useAppStore.getState();
-  const _sft = useSplitFilteredThreads();
-  // useDeferredValue marks `threads` as non-urgent so the (heavy) render
-  // of 700+ items doesn't block the click handler. React renders the
-  // chrome (header / split tabs) with the new account immediately, and
-  // updates the thread list in a separate concurrent pass.
-  const threads = useDeferredValue(_sft.threads);
+  // The per-account selector caches keep this synchronous: list, tabs, and
+  // keyboard navigation all switch to the same account in the same commit.
+  const { threads } = useSplitFilteredThreads();
+  const queryClient = useQueryClient();
+  // Warm only the selected conversation after a brief pause. Rapid j/k repeats
+  // cancel the timer, so browsing doesn't fetch every thread passed along the way.
+  useEffect(() => {
+    if (!selectedThreadId) return;
+    const thread = threads.find((item) => item.threadId === selectedThreadId);
+    const accountId = thread?.latestEmail.accountId ?? currentAccountId;
+    if (!thread || !accountId) return;
+    const timer = setTimeout(() => {
+      void queryClient.prefetchQuery(threadQueryOptions(thread.threadId, accountId));
+    }, 75);
+    return () => clearTimeout(timer);
+  }, [selectedThreadId, threads, currentAccountId, queryClient]);
 
   // In unified ("All Inboxes") mode we fan out per-account loaders + listeners.
   // The list of account IDs to load is recomputed each render but its identity

@@ -8,6 +8,9 @@
     "url": "https://github.com/ankitvgupta/exo.git"
   },
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "./out/main/index.js",
   "workspaces": [
     "src/extensions-private/*"
@@ -32,6 +35,7 @@
     "test:integration": "./scripts/run-tests.sh integration",
     "test:problematic": "playwright test --project=problematic",
     "test:bench": "playwright test --project=benchmark",
+    "perf:audit": "NODE_ENV=production tsx scripts/perf-audit.ts",
     "test:headed": "playwright test --headed",
     "test:quick": "playwright test --project=unit --project=integration",
     "lint": "eslint src/",
@@ -65,6 +69,7 @@
     "@types/dompurify": "^3.0.5",
     "algoliasearch": "^5.50.0",
     "better-sqlite3": "^12.8.0",
+    "dequal": "2.0.3",
     "dompurify": "^3.3.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.7.3",
@@ -100,7 +105,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "axe-core": "^4.11.4",
-    "electron": "^39.8.5",
+    "electron": "^41.10.7",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
     "eslint": "^10.1.0",

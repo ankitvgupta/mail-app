@@ -167,6 +167,8 @@ https://github.com/user-attachments/assets/442f5320-2bec-4348-937d-48ad2100552e
 
 ### 1. Install Dependencies
 
+Use Node.js **22.12 or newer**, required by Electron 41's installer.
+
 ```bash
 npm install
 ```
