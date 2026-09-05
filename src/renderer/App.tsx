@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, memo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery } from "@tanstack/react-query";
 import {
   useAppStore,
@@ -61,10 +62,13 @@ import { mergeAndThreadSearchResults } from "./utils/searchResults";
 import type { EmailThread } from "./store";
 
 function decodeHtmlEntities(text: string): string {
+  if (!text.includes("&")) return text;
   const textarea = document.createElement("textarea");
   textarea.innerHTML = text;
   return textarea.value;
 }
+
+const searchDateFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
 function formatSearchDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -75,22 +79,22 @@ function formatSearchDate(dateStr: string): string {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMs < 0) return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (diffMs < 0) return searchDateFormatter.format(date);
   if (diffMins < 1) return "now";
   if (diffMins < 60) return `${diffMins}m`;
   if (diffHours < 24) return `${diffHours}h`;
   if (diffDays < 7) return `${diffDays}d`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return searchDateFormatter.format(date);
 }
 
-function SearchResultThreadRow({
+const SearchResultThreadRow = memo(function SearchResultThreadRow({
   thread,
   isSelected,
   onClick,
 }: {
   thread: EmailThread;
   isSelected: boolean;
-  onClick: () => void;
+  onClick: (thread: EmailThread) => void;
 }) {
   const senderName = thread.displaySender.split("<")[0].trim() || thread.displaySender;
   const latestEmail = thread.latestEmail;
@@ -101,8 +105,8 @@ function SearchResultThreadRow({
       data-thread-id={thread.threadId}
       data-email-id={thread.latestEmail.id}
       data-selected={isSelected || undefined}
-      onClick={onClick}
-      className={`w-full h-8 px-3 gap-1.5 text-xs flex items-center text-left border-b border-gray-100 dark:border-gray-700/50 transition-colors cursor-pointer ${
+      onClick={() => onClick(thread)}
+      className={`w-full h-8 px-3 gap-1.5 text-xs flex items-center text-left border-b border-gray-100 dark:border-gray-700/50 cursor-pointer ${
         isSelected
           ? "bg-blue-600 text-white"
           : "hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-900 dark:text-gray-100"
@@ -223,43 +227,33 @@ function SearchResultThreadRow({
       </div>
     </button>
   );
-}
+});
 
 function SearchResultsView() {
+  const activeSearchQuery = useAppStore((s) => s.activeSearchQuery);
+  const activeSearchResults = useAppStore((s) => s.activeSearchResults);
+  const remoteSearchResults = useAppStore((s) => s.remoteSearchResults);
+  const remoteSearchStatus = useAppStore((s) => s.remoteSearchStatus);
+  const selectedThreadId = useAppStore((s) => s.selectedThreadId);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const accounts = useAppStore((s) => s.accounts);
+  const isOnline = useAppStore((s) => s.isOnline);
+  const remoteSearchNextPageToken = useAppStore((s) => s.remoteSearchNextPageToken);
+  const remoteSearchLoadingMore = useAppStore((s) => s.remoteSearchLoadingMore);
   const {
-    activeSearchQuery,
-    activeSearchResults,
-    remoteSearchResults,
-    remoteSearchStatus,
-    remoteSearchError: _remoteSearchError,
     clearActiveSearch,
     addEmails,
     setSelectedEmailId,
     setSelectedThreadId,
     setSelectedDraftId,
     setViewMode,
-    selectedThreadId,
     setRemoteSearchResults,
     setRemoteSearchError,
-    currentAccountId,
-    accounts,
-    isOnline,
-    remoteSearchNextPageToken,
-    remoteSearchLoadingMore,
-  } = useAppStore();
+  } = useAppStore.getState();
 
   const currentUserEmail = accounts.find((a) => a.id === currentAccountId)?.email;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-
-  // Scroll selected result into view
-  useEffect(() => {
-    if (!selectedThreadId) return;
-    const el = document.querySelector(`[data-thread-id="${selectedThreadId}"]`);
-    if (el) {
-      el.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedThreadId]);
 
   const handleThreadClick = useCallback(
     (thread: EmailThread) => {
@@ -281,7 +275,7 @@ function SearchResultsView() {
     useAppStore.getState().setRemoteSearching();
 
     window.api.emails
-      .searchRemote(query, currentAccountId, 500)
+      .searchRemote(query, currentAccountId, 50)
       .then(
         (response: {
           success: boolean;
@@ -318,7 +312,7 @@ function SearchResultsView() {
     useAppStore.getState().setRemoteSearchLoadingMore(true);
 
     window.api.emails
-      .searchRemote(query, accountId, 500, pageToken)
+      .searchRemote(query, accountId, 50, pageToken)
       .then(
         (response: {
           success: boolean;
@@ -366,6 +360,24 @@ function SearchResultsView() {
     () => mergeAndThreadSearchResults(activeSearchResults, remoteSearchResults, currentUserEmail),
     [activeSearchResults, remoteSearchResults, currentUserEmail],
   );
+
+  const selectedIndex = useMemo(
+    () => searchThreads.findIndex((thread) => thread.threadId === selectedThreadId),
+    [searchThreads, selectedThreadId],
+  );
+  const getScrollElement = useCallback(() => scrollContainerRef.current, []);
+  const getItemKey = useCallback((index: number) => searchThreads[index].threadId, [searchThreads]);
+  const virtualizer = useVirtualizer({
+    count: searchThreads.length,
+    getScrollElement,
+    estimateSize: () => 32,
+    getItemKey,
+    overscan: 8,
+    initialOffset: Math.max(0, selectedIndex - 4) * 32,
+  });
+  useEffect(() => {
+    if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
+  }, [selectedIndex, virtualizer]);
 
   const hasMoreResults = !!remoteSearchNextPageToken && remoteSearchStatus === "complete";
 
@@ -445,15 +457,29 @@ function SearchResultsView() {
 
         {/* Threaded results sorted by date */}
         {searchThreads.length > 0 && (
-          <div>
-            {searchThreads.map((thread) => (
-              <SearchResultThreadRow
-                key={thread.threadId}
-                thread={thread}
-                isSelected={thread.threadId === selectedThreadId}
-                onClick={() => handleThreadClick(thread)}
-              />
-            ))}
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const thread = searchThreads[item.index];
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: item.size,
+                    transform: `translateY(${item.start}px)`,
+                  }}
+                >
+                  <SearchResultThreadRow
+                    thread={thread}
+                    isSelected={thread.threadId === selectedThreadId}
+                    onClick={handleThreadClick}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -560,9 +586,9 @@ function SearchResultsView() {
 }
 
 /**
- * After the inbox loads with body-less emails, backfill bodies in batches
- * so they're ready when the user clicks an email. Each batch is small enough
- * (~50 IDs → ~10-20ms) that it doesn't block the main thread.
+ * Warm the newest messages only. Prefetching every body kept rewriting the
+ * entire inbox during sync and retained the whole mailbox's HTML in memory.
+ * Other conversations load on demand when selected or opened.
  *
  * If called while a previous prefetch is still running, the previous one is
  * cancelled to avoid redundant IPC calls.
@@ -575,12 +601,19 @@ async function prefetchEmailBodies(emailIds: string[]): Promise<void> {
   const controller = new AbortController();
   activePrefetchController = controller;
 
-  const BATCH_SIZE = 50;
+  const BATCH_SIZE = 30;
   const BATCH_DELAY_MS = 50;
+  const loaded = new Set(
+    useAppStore
+      .getState()
+      .emails.filter((email) => email.body)
+      .map((email) => email.id),
+  );
+  const nearbyIds = emailIds.slice(0, 60).filter((id) => !loaded.has(id));
 
-  for (let i = 0; i < emailIds.length; i += BATCH_SIZE) {
+  for (let i = 0; i < nearbyIds.length; i += BATCH_SIZE) {
     if (controller.signal.aborted) return;
-    const batch = emailIds.slice(i, i + BATCH_SIZE);
+    const batch = nearbyIds.slice(i, i + BATCH_SIZE);
     const result = (await window.api.sync.prefetchBodies(batch)) as {
       success: boolean;
       data?: Array<{ id: string; body: string }>;
@@ -590,7 +623,7 @@ async function prefetchEmailBodies(emailIds: string[]): Promise<void> {
       bufferUpdateEmails(result.data.map(({ id, body }) => ({ emailId: id, changes: { body } })));
     }
     // Yield to the event loop between batches to keep the UI responsive
-    if (i + BATCH_SIZE < emailIds.length) {
+    if (i + BATCH_SIZE < nearbyIds.length) {
       await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
     }
   }
@@ -657,7 +690,6 @@ export default function App() {
   const outboxStats = useAppStore((s) => s.outboxStats);
   const scheduledMessageStats = useAppStore((s) => s.scheduledMessageStats);
   const resolvedTheme = useAppStore((s) => s.resolvedTheme);
-  const syncProgress = useAppStore((s) => s.syncProgress);
 
   // Actions — individual selectors so useAppStore() without selector doesn't subscribe to all state
   const setEmails = useAppStore((s) => s.setEmails);
@@ -1456,24 +1488,14 @@ export default function App() {
     }
   }, [needsSetup, initializeSync]);
 
-  // Fetch emails query — disabled during progressive sync to prevent
-  // setEmails (full replace) from wiping incrementally-loaded emails.
-  // Also disabled in unified ("All Inboxes") mode: gmail.fetchUnread takes
-  // a single accountId and falls back to "default" when none is provided,
-  // so running it with currentAccountId=null would return only the default
-  // account's unread set and then setEmails would WIPE every other
-  // account's emails (the visible "All Inboxes only renders one account"
-  // bug). In unified mode, initializeSync's per-account fetch fan-out is
-  // the authoritative loader; on explicit refresh, handleRefresh does its
-  // own per-account fan-out with replaceEmailsForAccount.
-  const hasActiveProgressiveSync = Object.values(syncProgress).some(
-    (p) => p !== null && p.fetched < p.total,
-  );
+  // initializeSync and handleAccountSwitch already load cached inboxes and
+  // start background sync. Automatically running this legacy Gmail fetch on
+  // each query-key change duplicated that work, fetched messages serially,
+  // and kept the list in a loading state while switching accounts.
   const { refetch: fetchEmails, isFetching } = useQuery({
     queryKey: ["emails", currentAccountId],
     queryFn: async () => {
-      // currentAccountId can't be null here — the `enabled` guard below
-      // disables the query in unified mode. Narrow defensively anyway.
+      // This explicit fallback is only meaningful for a single account.
       if (currentAccountId == null) return [];
       const result = await window.api.gmail.fetchUnread(100, currentAccountId);
       if (result.success) {
@@ -1486,7 +1508,7 @@ export default function App() {
       }
       throw new Error(result.error);
     },
-    enabled: needsSetup === false && !hasActiveProgressiveSync && currentAccountId !== null,
+    enabled: false,
     // Disable auto-refetch on window focus — the sync loop + sync buffer
     // handle keeping emails up to date. Window-focus refetch does a full
     // refetch from DB which overwrites optimistic label updates (e.g.
@@ -1680,19 +1702,9 @@ export default function App() {
   // Build list of expired accounts with their email addresses for the banner
   const expiredAccounts = accounts.filter((a) => expiredAccountIds.has(a.id));
 
-  // Handle account switch. We always reload each target account's emails
-  // from the local DB on switch — the previous heuristic ("only refresh if
-  // we have zero emails for this account") wasn't enough: an account with
-  // even one stale email in memory would skip the refresh, so optimistic
-  // archives from a prior session, partial syncs, or just a long-lived
-  // session with churn would leave the inbox visibly incomplete after
-  // switching back. DB reads via sync.getEmails are cheap (sub-100ms),
-  // so always-fetching is the simple right answer. We use
-  // replaceEmailsForAccount so the per-account writes are atomic and
-  // concurrent unified-mode loads don't race on a read-modify-write.
-  //
-  // `accountId === null` means switch to the unified "All Inboxes" view —
-  // refresh + sync every connected account in parallel.
+  // Display the cached account immediately, then always reconcile it with the
+  // local DB and background sync. Yield a paint before the IPC fan-out so fast
+  // responses from several accounts cannot delay showing All Inboxes.
   const handleAccountSwitch = (accountId: string | null) => {
     setCurrentAccountId(accountId);
     setAccountMenuOpen(false);
@@ -1704,29 +1716,42 @@ export default function App() {
 
     const targetAccountIds = accountId === null ? accounts.map((a) => a.id) : [accountId];
 
-    for (const aid of targetAccountIds) {
-      window.api.sync
-        .getEmails(aid)
-        .then((result: IpcResponse<DashboardEmail[]>) => {
-          if (result.success && result.data) {
-            useAppStore.getState().replaceEmailsForAccount(aid, result.data);
-            prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
-          }
-        })
-        .catch(console.error);
-      window.api.sync
-        .getSentEmails(aid)
-        .then((sentResult: IpcResponse<DashboardEmail[]>) => {
-          if (sentResult.success && sentResult.data) {
-            useAppStore.getState().replaceSentEmailsForAccount(aid, sentResult.data);
-          }
-        })
-        .catch(console.error);
-      // Trigger background sync to pick up any new emails (non-blocking).
-      // Safe to call on every click: getHistoryChanges yields to the event
-      // loop between Gmail History API pages so a stale account walking
-      // many empty pages no longer monopolises the main thread.
-      window.api.sync.now(aid).catch(console.error);
+    const refresh = () => {
+      for (const aid of targetAccountIds) {
+        window.api.sync
+          .getEmails(aid)
+          .then((result: IpcResponse<DashboardEmail[]>) => {
+            if (result.success && result.data) {
+              useAppStore.getState().replaceEmailsForAccount(aid, result.data);
+              const visibleAccount = useAppStore.getState().currentAccountId;
+              if (visibleAccount === aid || visibleAccount === null) {
+                prefetchEmailBodies(result.data.map((email) => email.id)).catch(console.error);
+              }
+            }
+          })
+          .catch(console.error);
+        window.api.sync
+          .getSentEmails(aid)
+          .then((sentResult: IpcResponse<DashboardEmail[]>) => {
+            if (sentResult.success && sentResult.data) {
+              useAppStore.getState().replaceSentEmailsForAccount(aid, sentResult.data);
+            }
+          })
+          .catch(console.error);
+        // Trigger background sync to pick up any new emails (non-blocking).
+        // Safe to call on every click: getHistoryChanges yields to the event
+        // loop between Gmail History API pages so a stale account walking
+        // many empty pages no longer monopolises the main thread.
+        window.api.sync.now(aid).catch(console.error);
+      }
+    };
+    const hasCachedInbox = useAppStore
+      .getState()
+      .emails.some((email) => accountId === null || email.accountId === accountId);
+    if (hasCachedInbox) {
+      requestAnimationFrame(() => requestAnimationFrame(refresh));
+    } else {
+      refresh();
     }
   };
 
@@ -2286,18 +2311,20 @@ export default function App() {
       <SearchBar isOpen={isSearchOpen} onClose={closeSearch} />
 
       {/* Command Palette */}
-      <CommandPalette
-        isOpen={isCommandPaletteOpen}
-        onClose={() => {
-          closeCommandPalette();
-          // When closing a palette while compose is open, the palette's input is
-          // removed and focus falls to <body>. Restore focus to the compose editor
-          // so the next Escape properly closes compose via its container handler.
-          if (composeState?.isOpen) {
-            setTimeout(() => document.querySelector<HTMLElement>(".ProseMirror")?.focus(), 0);
-          }
-        }}
-      />
+      {isCommandPaletteOpen && (
+        <CommandPalette
+          isOpen={isCommandPaletteOpen}
+          onClose={() => {
+            closeCommandPalette();
+            // When closing a palette while compose is open, the palette's input is
+            // removed and focus falls to <body>. Restore focus to the compose editor
+            // so the next Escape properly closes compose via its container handler.
+            if (composeState?.isOpen) {
+              setTimeout(() => document.querySelector<HTMLElement>(".ProseMirror")?.focus(), 0);
+            }
+          }}
+        />
+      )}
 
       {/* Agent Command Palette */}
       <AgentCommandPalette
@@ -2329,6 +2356,11 @@ export default function App() {
 }
 
 function SnoozeOverlay() {
+  const show = useAppStore((s) => s.showSnoozeMenu);
+  return show ? <OpenSnoozeOverlay /> : null;
+}
+
+function OpenSnoozeOverlay() {
   const {
     selectedEmailId,
     selectedThreadId,

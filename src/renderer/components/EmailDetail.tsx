@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useAppStore, useSplitFilteredThreads } from "../store";
+import { useQuery } from "@tanstack/react-query";
+import { threadQueryOptions } from "../utils/thread-query";
 import DOMPurify from "dompurify";
 import {
   emailBodyCache,
@@ -2459,10 +2461,13 @@ export function EmailDetail({ isFullView = false }: EmailDetailProps) {
 }
 
 function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
+  const emails = useAppStore((s) => s.emails);
+  const selectedEmailId = useAppStore((s) => s.selectedEmailId);
+  const selectedThreadId = useAppStore((s) => s.selectedThreadId);
+  const accounts = useAppStore((s) => s.accounts);
+  const currentAccountId = useAppStore((s) => s.currentAccountId);
+  const composeState = useAppStore((s) => s.composeState);
   const {
-    emails,
-    selectedEmailId,
-    selectedThreadId,
     setSelectedEmailId,
     setSelectedThreadId: _setSelectedThreadId,
     updateEmail,
@@ -2470,14 +2475,11 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
     removeEmailsAndAdvance,
     markThreadAsRead,
     setViewMode,
-    accounts,
-    currentAccountId,
-    composeState,
     closeCompose,
     openCompose,
     removeLocalDraft,
     addLocalDraft,
-  } = useAppStore();
+  } = useAppStore.getState();
 
   const addRecentlyRepliedThread = useAppStore((s) => s.addRecentlyRepliedThread);
   const addUndoAction = useAppStore((s) => s.addUndoAction);
@@ -2590,7 +2592,7 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
     };
   }, [selectedEmailId, storeEmail, addEmails]);
 
-  const selectedEmail = storeEmail ?? fetchedEmail;
+  const selectedEmail = storeEmail ?? (fetchedEmail?.id === selectedEmailId ? fetchedEmail : null);
 
   // The account that owns the currently-open thread. In single-account mode
   // this equals currentAccountId; in unified ("All Inboxes") mode currentAccountId
@@ -2611,36 +2613,22 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
   const newComposeAccountId: string | null =
     currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
 
-  // State to hold full thread emails fetched from Gmail (includes sent replies)
-  const [fullThreadEmails, setFullThreadEmails] = useState<DashboardEmail[]>([]);
-  const [_isLoadingThread, setIsLoadingThread] = useState(false);
+  const { data: fullThreadEmails } = useQuery({
+    ...threadQueryOptions(selectedEmail?.threadId ?? "", threadAccountId ?? ""),
+    enabled: !!selectedEmail && !!threadAccountId,
+  });
 
-  // Fetch full thread when thread changes
   useEffect(() => {
-    if (!selectedEmail || !threadAccountId) {
-      setFullThreadEmails([]);
-      return;
-    }
-
-    const fetchThread = async () => {
-      setIsLoadingThread(true);
-      try {
-        const response = await window.api.emails.getThread(selectedEmail.threadId, threadAccountId);
-        if (response.success && response.data) {
-          setFullThreadEmails(response.data);
-          // Push into the store so the sidebar can also resolve these emails
-          // (e.g. when focusedThreadEmailId points to one not yet in the store)
-          addEmails(response.data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch thread:", error);
-      } finally {
-        setIsLoadingThread(false);
-      }
-    };
-
-    fetchThread();
-  }, [selectedEmail?.threadId, threadAccountId]);
+    if (!fullThreadEmails) return;
+    const current = new Map(useAppStore.getState().emails.map((email) => [email.id, email]));
+    // Cached thread bodies must not roll back newer sync/optimistic metadata.
+    addEmails(
+      fullThreadEmails.map((email) => {
+        const existing = current.get(email.id);
+        return existing ? { ...email, ...existing, body: email.body || existing.body } : email;
+      }),
+    );
+  }, [fullThreadEmails, addEmails]);
 
   // Mark-as-read is handled imperatively in the Enter/click handlers
   // (store.markThreadAsRead) — not here — so it fires instantly before render.
@@ -2651,13 +2639,15 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
     if (!selectedEmail) return [];
 
     // Start with emails from the store
-    const storeEmails = emails.filter((e) => e.threadId === selectedEmail.threadId);
+    const storeEmails = emails.filter(
+      (e) => e.threadId === selectedEmail.threadId && e.accountId === selectedEmail.accountId,
+    );
 
     // Merge with full thread emails. Store versions have analysis/draft info,
     // but may have empty bodies (bulk queries exclude body for performance).
     // Backfill body from fullThreadEmails when the store version lacks it.
     const storeEmailIds = new Set(storeEmails.map((e) => e.id));
-    const fullThreadMap = new Map(fullThreadEmails.map((e) => [e.id, e]));
+    const fullThreadMap = new Map((fullThreadEmails ?? []).map((e) => [e.id, e]));
     const mergedEmails = storeEmails.map((e) => {
       const full = fullThreadMap.get(e.id);
       return full && !e.body ? { ...e, body: full.body } : e;
@@ -2666,7 +2656,7 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
     // Add any emails from fullThreadEmails that aren't in the store.
     // Filter by threadId to prevent stale emails from a previous thread
     // leaking in during the render before the fetch effect fires.
-    for (const email of fullThreadEmails) {
+    for (const email of fullThreadEmails ?? []) {
       if (!storeEmailIds.has(email.id) && email.threadId === selectedEmail.threadId) {
         mergedEmails.push(email);
       }

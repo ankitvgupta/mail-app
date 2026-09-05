@@ -74,15 +74,15 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
     setSelectedEmailId,
     setSelectedThreadId,
     setSelectedDraftId,
-    currentAccountId,
-    accounts,
     setActiveSearch,
     setViewMode,
-    isOnline,
     setRemoteSearchResults,
     setRemoteSearchError,
     setCurrentSplitId,
-  } = useAppStore();
+  } = useAppStore.getState();
+  const currentAccountId = useAppStore((state) => state.currentAccountId);
+  const accounts = useAppStore((state) => state.accounts);
+  const isOnline = useAppStore((state) => state.isOnline);
 
   // The "search all mail" affordance is at index === results.length
   const searchAllMailIndex = results.length;
@@ -117,13 +117,15 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
 
   // Debounced search
   useEffect(() => {
-    if (!query.trim()) {
+    if (!isOpen || !query.trim()) {
       setResults([]);
+      setIsSearching(false);
       setSelectedIndex(-1);
       setHasNavigated(false);
       return;
     }
 
+    let cancelled = false;
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
@@ -131,19 +133,22 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
           accountId: currentAccountId || undefined,
           limit: 20,
         });
-        if (response.success) {
+        if (!cancelled && response.success) {
           setResults(response.data);
           // Don't auto-select, keep selection at -1 unless user navigates
         }
       } catch (error) {
         console.error("Search failed:", error);
       } finally {
-        setIsSearching(false);
+        if (!cancelled) setIsSearching(false);
       }
-    }, 150);
+    }, 60);
 
-    return () => clearTimeout(timer);
-  }, [query, currentAccountId]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, currentAccountId, isOpen]);
 
   // Perform full Gmail search and show results (local + remote in parallel).
   // In unified ("all inboxes") mode, currentAccountId is null and we fan out
@@ -199,7 +204,9 @@ export function SearchBar({ isOpen, onClose }: SearchBarProps) {
         targetAccountIds.map(
           (accountId): Promise<RemoteOutcome> =>
             window.api.emails
-              .searchRemote(query, accountId, 500)
+              // A single account can page through additional results. Fetch
+              // the first screen promptly instead of waiting for 500 bodies.
+              .searchRemote(query, accountId, targetAccountIds.length === 1 ? 50 : 500)
               .then(
                 (
                   response: IpcResponse<{

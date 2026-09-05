@@ -1,5 +1,11 @@
 import { test, expect, Page, ElectronApplication } from "@playwright/test";
-import { launchElectronApp, pressKeyUntilVisible , closeApp } from "./launch-helpers";
+import {
+  launchElectronApp,
+  pressKeyUntilVisible,
+  closeApp,
+  waitForEmailListReady,
+} from "./launch-helpers";
+import type { useAppStore } from "../../src/renderer/store";
 
 /**
  * E2E Tests for the sender profile panel.
@@ -20,6 +26,14 @@ test.describe("Sender Profile - Display", () => {
     const result = await launchElectronApp({ workerIndex: testInfo.workerIndex });
     electronApp = result.app;
     page = result.page;
+    await waitForEmailListReady(page);
+    // The display tests open the first email with j/Enter. Persisted compose
+    // drafts from earlier worker tests would instead open a compose editor.
+    await page.evaluate(() => {
+      (window as unknown as { __ZUSTAND_STORE__: typeof useAppStore }).__ZUSTAND_STORE__
+        .getState()
+        .setLocalDrafts([]);
+    });
 
     page.on("console", (msg) => {
       if (msg.type() === "error") {

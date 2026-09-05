@@ -16,11 +16,15 @@ const optimisticReadIds = new Set<string>();
 /** Strip UNREAD from emails that were optimistically marked as read. */
 export function applyOptimisticReads(emails: DashboardEmail[]): DashboardEmail[] {
   if (optimisticReadIds.size === 0) return emails;
-  return emails.map((e) =>
-    optimisticReadIds.has(e.id) && e.labelIds?.includes("UNREAD")
-      ? { ...e, labelIds: e.labelIds.filter((l) => l !== "UNREAD") }
-      : e,
-  );
+  let result = emails;
+  for (let i = 0; i < emails.length; i++) {
+    const email = emails[i];
+    if (optimisticReadIds.has(email.id) && email.labelIds?.includes("UNREAD")) {
+      if (result === emails) result = emails.slice();
+      result[i] = { ...email, labelIds: email.labelIds.filter((label) => label !== "UNREAD") };
+    }
+  }
+  return result;
 }
 
 /** Register email IDs as optimistically read. Persists until explicitly

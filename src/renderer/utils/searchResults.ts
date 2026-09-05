@@ -1,3 +1,4 @@
+import { memoizeLast } from "./memoize-last";
 import type { DashboardEmail } from "../../shared/types";
 import { groupByThread, type EmailThread } from "../store";
 
@@ -36,7 +37,7 @@ export function mergeAndSortSearchResults(
  * Merge, deduplicate, and group search results into threads.
  * Uses the same groupByThread logic as the main inbox view.
  */
-export function mergeAndThreadSearchResults(
+export const mergeAndThreadSearchResults = memoizeLast(function mergeAndThreadSearchResults(
   localResults: readonly DashboardEmail[],
   remoteResults: readonly DashboardEmail[],
   currentUserEmail?: string,
@@ -50,4 +51,4 @@ export function mergeAndThreadSearchResults(
     (a, b) => new Date(b.latestEmail.date).getTime() - new Date(a.latestEmail.date).getTime(),
   );
   return threads;
-}
+});

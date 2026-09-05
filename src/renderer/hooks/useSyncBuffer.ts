@@ -13,6 +13,7 @@
  * to inbox keyboard navigation.
  */
 
+import { updateEmails } from "../utils/email-updates";
 import { useAppStore } from "../store";
 import { applyOptimisticReads } from "../optimistic-reads";
 import type { DashboardEmail } from "../../shared/types";
@@ -168,10 +169,7 @@ function flush(): void {
 
     // 2. In-place updates (label changes, analysis, etc.)
     if (updates.size > 0) {
-      emails = emails.map((email) => {
-        const changes = updates.get(email.id);
-        return changes ? { ...email, ...changes } : email;
-      });
+      emails = updateEmails(emails, updates);
     }
 
     // 3. Additions — deduplicate against current store AND pending removals
@@ -232,10 +230,7 @@ function flush(): void {
 
       // Apply in-place merges for re-emitted emails
       if (reEmitUpdates.size > 0) {
-        emails = emails.map((email) => {
-          const changes = reEmitUpdates.get(email.id);
-          return changes ? { ...email, ...changes } : email;
-        });
+        emails = updateEmails(emails, reEmitUpdates);
       }
 
       if (brandNew.length > 0) {
@@ -263,7 +258,7 @@ function flush(): void {
       }
     }
 
-    return { emails };
+    return emails === state.emails ? state : { emails };
   });
 }
 
