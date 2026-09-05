@@ -916,10 +916,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Multi-account actions
   setAccounts: (accounts) =>
     set((state) => {
-      // Account initialization restores the persisted selection after loading
-      // the list; until then, use the primary account as the fallback.
+      // Only choose a default on the first account load. Once accounts exist,
+      // null is the user's All Inboxes selection and must survive metadata refreshes.
       const currentAccountId =
-        state.currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
+        state.accounts.length === 0 && state.currentAccountId === null
+          ? (accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null)
+          : state.currentAccountId;
       const scopeChanged =
         currentAccountId !== state.currentAccountId ||
         (currentAccountId === null &&

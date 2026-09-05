@@ -104,6 +104,12 @@ async function startSearch(page: Page) {
   await expect(page.getByTestId("search-results-header")).toContainText(searchQuery);
 }
 
+async function selectAllInboxes(page: Page) {
+  await page.getByRole("button", { name: "a@example.test", exact: true }).click();
+  await page.getByRole("button", { name: /^All Inboxes\s*2$/ }).click();
+  await expect(page.getByRole("button", { name: "All Inboxes", exact: true })).toBeVisible();
+}
+
 function readSearch(page: Page) {
   return page.evaluate(() => {
     const state = (
@@ -309,6 +315,141 @@ test("obsolete pagination cannot overwrite current results, page token, or loadi
         status: "complete",
       });
     await expect(page.getByText("obsolete-page", { exact: true })).toHaveCount(0);
+    await controls.dispose();
+  } finally {
+    await closeApp(app);
+  }
+});
+
+test("unified search survives account metadata refreshes while both accounts are loading", async ({}, testInfo) => {
+  const { app, page } = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+  try {
+    const controls = await installSearchControls(app, page);
+    await selectAllInboxes(page);
+    await startSearch(page);
+    await expect
+      .poll(() => controls.evaluate((r) => [r.local.length, r.remote.length]))
+      .toEqual([2, 2]);
+    expect(await controls.evaluate((r) => r.remote.map((request) => request.accountId))).toEqual([
+      "search-a",
+      "search-b",
+    ]);
+    await page.evaluate(() => {
+      const state = (
+        window as unknown as { __ZUSTAND_STORE__: typeof useAppStore }
+      ).__ZUSTAND_STORE__.getState();
+      state.setAccounts(
+        [...state.accounts].reverse().map((account, index) => ({
+          ...account,
+          isPrimary: index === 0,
+          displayName: `Renamed account ${index}`,
+        })),
+      );
+    });
+    expect(await readSearch(page)).toMatchObject({
+      account: null,
+      query: searchQuery,
+      status: "searching",
+    });
+    await expect(page.getByRole("button", { name: "All Inboxes", exact: true })).toBeVisible();
+    await expect(page.getByTestId("search-results-header")).toContainText(searchQuery);
+    // Resolve the original requests after metadata changed, in reverse account
+    // order, to verify the original two-account search still accepts both.
+    for (const index of [1, 0]) {
+      const accountId = index === 0 ? "search-a" : "search-b";
+      await resolveRequest(controls, "local", index, {
+        emails: [email(`unified-local-${index}`, accountId)],
+      });
+      await resolveRequest(controls, "remote", index, {
+        emails: [email(`unified-remote-${index}`, accountId)],
+      });
+    }
+    await expect
+      .poll(() => readSearch(page))
+      .toMatchObject({
+        account: null,
+        query: searchQuery,
+        local: ["unified-local-0", "unified-local-1"],
+        remote: ["unified-remote-0", "unified-remote-1"],
+        status: "complete",
+        error: null,
+      });
+    await expect(page.getByText("unified-local-0", { exact: true })).toBeVisible();
+    await expect(page.getByText("unified-remote-1", { exact: true })).toBeVisible();
+    await controls.dispose();
+  } finally {
+    await closeApp(app);
+  }
+});
+
+test("changed unified account membership clears search and rejects the old account scope", async ({}, testInfo) => {
+  const { app, page } = await launchElectronApp({ workerIndex: testInfo.workerIndex });
+  try {
+    const controls = await installSearchControls(app, page);
+    await selectAllInboxes(page);
+    await startSearch(page);
+    await expect
+      .poll(() => controls.evaluate((r) => [r.local.length, r.remote.length]))
+      .toEqual([2, 2]);
+    await page.evaluate(() => {
+      const state = (
+        window as unknown as { __ZUSTAND_STORE__: typeof useAppStore }
+      ).__ZUSTAND_STORE__.getState();
+      // Replace A with C while retaining two accounts. Equal list length must
+      // not hide that the in-flight unified search has a different scope.
+      state.setAccounts([
+        ...state.accounts.filter((account) => account.id === "search-b"),
+        { id: "search-c", email: "c@example.test", isPrimary: true, isConnected: true },
+      ]);
+    });
+    expect(await readSearch(page)).toMatchObject({
+      account: null,
+      query: null,
+      local: [],
+      remote: [],
+      status: "idle",
+      error: null,
+      token: null,
+      loading: false,
+    });
+    await expect(page.getByTestId("search-results-header")).toHaveCount(0);
+    await startSearch(page);
+    await expect
+      .poll(() => controls.evaluate((r) => [r.local.length, r.remote.length]))
+      .toEqual([4, 4]);
+    expect(
+      await controls.evaluate((r) => r.remote.slice(2).map((request) => request.accountId)),
+    ).toEqual(["search-b", "search-c"]);
+    for (const index of [2, 3]) {
+      const accountId = index === 2 ? "search-b" : "search-c";
+      await resolveRequest(controls, "local", index, {
+        emails: [email(`new-scope-local-${index}`, accountId)],
+      });
+      await resolveRequest(controls, "remote", index, {
+        emails: [email(`new-scope-remote-${index}`, accountId)],
+      });
+    }
+    await expect.poll(() => readSearch(page)).toMatchObject({ status: "complete" });
+    for (const index of [0, 1]) {
+      const accountId = index === 0 ? "search-a" : "search-b";
+      await resolveRequest(controls, "local", index, {
+        emails: [email(`old-scope-local-${index}`, accountId)],
+      });
+      await resolveRequest(controls, "remote", index, {
+        emails: [email(`old-scope-remote-${index}`, accountId)],
+      });
+    }
+    await flushResponses(page);
+    expect(await readSearch(page)).toMatchObject({
+      account: null,
+      query: searchQuery,
+      local: ["new-scope-local-2", "new-scope-local-3"],
+      remote: ["new-scope-remote-2", "new-scope-remote-3"],
+      status: "complete",
+      error: null,
+    });
+    await expect(page.getByText("old-scope-remote-0", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("new-scope-remote-3", { exact: true })).toBeVisible();
     await controls.dispose();
   } finally {
     await closeApp(app);
