@@ -59,6 +59,7 @@ import type {
 } from "../shared/types";
 import type { ScopedAgentEvent, AgentProviderConfig } from "../shared/agent-types";
 import { mergeAndThreadSearchResults } from "./utils/searchResults";
+import { getRecentEmailIds } from "./utils/recent-email-ids";
 import type { EmailThread } from "./store";
 
 function decodeHtmlEntities(text: string): string {
@@ -595,7 +596,7 @@ function SearchResultsView() {
  */
 let activePrefetchController: AbortController | null = null;
 
-async function prefetchEmailBodies(emailIds: string[]): Promise<void> {
+async function prefetchEmailBodies(emails: readonly DashboardEmail[]): Promise<void> {
   // Cancel any in-flight prefetch run
   activePrefetchController?.abort();
   const controller = new AbortController();
@@ -609,7 +610,7 @@ async function prefetchEmailBodies(emailIds: string[]): Promise<void> {
       .emails.filter((email) => email.body)
       .map((email) => email.id),
   );
-  const nearbyIds = emailIds.slice(0, 60).filter((id) => !loaded.has(id));
+  const nearbyIds = getRecentEmailIds(emails).filter((id) => !loaded.has(id));
 
   for (let i = 0; i < nearbyIds.length; i += BATCH_SIZE) {
     if (controller.signal.aborted) return;
@@ -948,7 +949,7 @@ export default function App() {
             addEmails(allEmails);
             // Backfill bodies in the background — emails were loaded without
             // body content to avoid blocking the main thread on SQLite overflow reads.
-            prefetchEmailBodies(allEmails.map((e) => e.id)).catch((err) =>
+            prefetchEmailBodies(allEmails).catch((err) =>
               console.error("Body prefetch failed:", err),
             );
           }
@@ -1503,7 +1504,7 @@ export default function App() {
         // every other account's emails from the store — fine when there
         // was only one account, broken when more than one is loaded.
         useAppStore.getState().replaceEmailsForAccount(currentAccountId, result.data);
-        prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
+        prefetchEmailBodies(result.data).catch(console.error);
         return result.data;
       }
       throw new Error(result.error);
@@ -1589,7 +1590,7 @@ export default function App() {
         const result = await window.api.sync.getEmails(aid);
         if (result.success && result.data) {
           useAppStore.getState().replaceEmailsForAccount(aid, result.data);
-          prefetchEmailBodies(result.data.map((e: DashboardEmail) => e.id)).catch(console.error);
+          prefetchEmailBodies(result.data).catch(console.error);
         }
         await reloadSentEmailsForAccount(aid);
       }),
@@ -1632,7 +1633,7 @@ export default function App() {
             .emails.filter((e) => e.accountId !== accountId);
           const loadedEmails = er.data as DashboardEmail[];
           setEmails([...otherAccountEmails, ...loadedEmails]);
-          prefetchEmailBodies(loadedEmails.map((e) => e.id)).catch(console.error);
+          prefetchEmailBodies(loadedEmails).catch(console.error);
         }
 
         // Load sent emails
@@ -1725,7 +1726,7 @@ export default function App() {
               useAppStore.getState().replaceEmailsForAccount(aid, result.data);
               const visibleAccount = useAppStore.getState().currentAccountId;
               if (visibleAccount === aid || visibleAccount === null) {
-                prefetchEmailBodies(result.data.map((email) => email.id)).catch(console.error);
+                prefetchEmailBodies(result.data).catch(console.error);
               }
             }
           })

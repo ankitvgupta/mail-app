@@ -6,13 +6,16 @@ import { queryOptions } from "@tanstack/react-query";
 export function threadQueryOptions(threadId: string, accountId: string) {
   return queryOptions({
     queryKey: ["email-thread", accountId, threadId],
-    queryFn: async (): Promise<DashboardEmail[]> => {
+    queryFn: async () => {
+      // Keep the request start with cached metadata: a prefetch may complete
+      // after its messages were archived/deleted and a new detail view mounted.
+      const requestedAt = performance.now();
       const response: IpcResponse<DashboardEmail[]> = await window.api.emails.getThread(
         threadId,
         accountId,
       );
       if (!response.success) throw new Error(response.error || "Unable to load conversation");
-      return response.data;
+      return { emails: response.data, requestedAt };
     },
     staleTime: 15_000,
     gcTime: 60_000,

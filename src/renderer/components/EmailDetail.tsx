@@ -2613,14 +2613,30 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
   const newComposeAccountId: string | null =
     currentAccountId ?? accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
 
-  const { data: fullThreadEmails } = useQuery({
+  const threadMountTimeRef = useRef(performance.now());
+  const { data: threadData, refetch: refetchThread } = useQuery({
     ...threadQueryOptions(selectedEmail?.threadId ?? "", threadAccountId ?? ""),
     enabled: !!selectedEmail && !!threadAccountId,
   });
+  const fullThreadEmails = threadData?.emails;
+  const validatingCachedThreadRef = useRef<DashboardEmail[] | null>(null);
 
   useEffect(() => {
-    if (!fullThreadEmails) return;
+    if (!threadData || !fullThreadEmails) return;
     const current = new Map(useAppStore.getState().emails.map((email) => [email.id, email]));
+    // An absent cached member may have been archived/deleted since prefetch.
+    // Verify membership and labels before importing it; otherwise reopening a
+    // search result can resurrect the rest of an archived thread in the inbox.
+    if (
+      threadData.requestedAt <= threadMountTimeRef.current &&
+      fullThreadEmails.some((email) => !current.has(email.id))
+    ) {
+      if (validatingCachedThreadRef.current !== fullThreadEmails) {
+        validatingCachedThreadRef.current = fullThreadEmails;
+        void refetchThread();
+      }
+      return;
+    }
     // Cached thread bodies must not roll back newer sync/optimistic metadata.
     addEmails(
       fullThreadEmails.map((email) => {
@@ -2628,7 +2644,7 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
         return existing ? { ...email, ...existing, body: email.body || existing.body } : email;
       }),
     );
-  }, [fullThreadEmails, addEmails]);
+  }, [threadData, fullThreadEmails, refetchThread, addEmails]);
 
   // Mark-as-read is handled imperatively in the Enter/click handlers
   // (store.markThreadAsRead) — not here — so it fires instantly before render.
@@ -2646,21 +2662,14 @@ function EmailDetailInner({ isFullView = false }: EmailDetailProps) {
     // Merge with full thread emails. Store versions have analysis/draft info,
     // but may have empty bodies (bulk queries exclude body for performance).
     // Backfill body from fullThreadEmails when the store version lacks it.
-    const storeEmailIds = new Set(storeEmails.map((e) => e.id));
     const fullThreadMap = new Map((fullThreadEmails ?? []).map((e) => [e.id, e]));
     const mergedEmails = storeEmails.map((e) => {
       const full = fullThreadMap.get(e.id);
       return full && !e.body ? { ...e, body: full.body } : e;
     });
 
-    // Add any emails from fullThreadEmails that aren't in the store.
-    // Filter by threadId to prevent stale emails from a previous thread
-    // leaking in during the render before the fetch effect fires.
-    for (const email of fullThreadEmails ?? []) {
-      if (!storeEmailIds.has(email.id) && email.threadId === selectedEmail.threadId) {
-        mergedEmails.push(email);
-      }
-    }
+    // The effect above imports verified missing members. Until then, cached
+    // bodies can hydrate existing messages but cannot restore removed rows.
 
     return mergedEmails.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [emails, selectedEmail, fullThreadEmails]);

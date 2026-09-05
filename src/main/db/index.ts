@@ -459,8 +459,12 @@ export function getInboxEmails(accountId?: string): DashboardEmail[] {
       threads = new Set();
       threadsByAccount.set(acct, threads);
     }
-    for (const thread of index.groups.get(email.threadId) ?? [email.threadId]) {
-      threads.add(thread);
+    if (!threads.has(email.threadId)) {
+      // A merged conversation can have many inbox messages. Expand its Gmail
+      // thread IDs only once, keeping refresh linear in conversation size.
+      for (const thread of index.groups.get(email.threadId) ?? [email.threadId]) {
+        threads.add(thread);
+      }
     }
     email.threadId = index.canonical.get(email.threadId) ?? email.threadId;
   }

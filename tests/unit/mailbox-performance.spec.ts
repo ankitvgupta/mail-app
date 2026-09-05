@@ -138,6 +138,45 @@ test("linkage invalidates on insert, replacement and deletion", () => {
   expect(getInboxEmails("a")[0].threadId).toBe("received");
 });
 
+test("warm inbox refresh expands a large merged conversation only once", () => {
+  const count = 128;
+  for (let i = 0; i < count; i++) {
+    seed(`linked-${i}`, {
+      threadId: `merged-thread-${i}`,
+      date: i === 0 ? "2025-01-01T00:00:00Z" : "2026-01-01T00:00:00Z",
+      inReplyTo: i > 0 ? `<linked-${i - 1}@example.test>` : undefined,
+    });
+  }
+  seed("linked-sent", {
+    threadId: "merged-thread-sent",
+    inReplyTo: `<linked-${count - 1}@example.test>`,
+    labelIds: ["SENT"],
+  });
+  getInboxEmails("a");
+
+  // Count actual work instead of timing it: expanding the same group for
+  // every inbox message performs count * (count + 1) insertions. Restrict
+  // counting to thread IDs so unrelated sets do not affect this assertion.
+  let threadInsertions = 0;
+  const originalAdd = Set.prototype.add;
+  Set.prototype.add = function <T>(this: Set<T>, value: T): Set<T> {
+    if (typeof value === "string" && value.startsWith("merged-thread-")) {
+      threadInsertions++;
+    }
+    return originalAdd.call(this, value);
+  };
+  let inbox: ReturnType<typeof getInboxEmails>;
+  try {
+    inbox = getInboxEmails("a");
+  } finally {
+    Set.prototype.add = originalAdd;
+  }
+
+  expect(inbox).toHaveLength(count + 1);
+  expect(inbox.every((email) => email.threadId === "merged-thread-0")).toBe(true);
+  expect(threadInsertions).toBe(count + 1);
+});
+
 test("unified inbox does not pull another account's sent mail into colliding threads", () => {
   seed("a-inbox", { threadId: "shared" });
   seed("b-sent", { threadId: "shared", labelIds: ["SENT"] }, "b");
